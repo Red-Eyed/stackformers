@@ -75,15 +75,15 @@ class RotaryEmbedding1D(nn.Module):
 
     @torch.no_grad()
     def _freqs_from_padded_positions(self, positions: Tensor) -> Tensor:
-        """positions: b n → freqs: b n dh"""
-        pos = positions.to(dtype=self.inv_freq.dtype)  # type: ignore[attr-defined]
+        """positions: b n c → freqs: b n dh (first coordinate only)"""
+        pos = positions[..., 0].to(dtype=self.inv_freq.dtype)  # type: ignore[attr-defined]
         freqs = torch.einsum("b n, d -> b n d", pos, self.inv_freq)  # type: ignore[attr-defined]
         return torch.cat([freqs, freqs], dim=-1)
 
     @torch.no_grad()
     def _freqs_from_packed_positions(self, positions: Tensor) -> Tensor:
-        """positions: nt → freqs: nt dh"""
-        pos = positions.to(dtype=self.inv_freq.dtype)  # type: ignore[attr-defined]
+        """positions: nt c → freqs: nt dh (first coordinate only)"""
+        pos = positions[..., 0].to(dtype=self.inv_freq.dtype)  # type: ignore[attr-defined]
         freqs = torch.einsum("n, d -> n d", pos, self.inv_freq)  # type: ignore[attr-defined]
         return torch.cat([freqs, freqs], dim=-1)
 

@@ -6,13 +6,15 @@ from jaxtyping import Float
 from torch import Tensor
 
 from stackformers.positional.rope1d import _apply_rope_padded_unbatched as _apply_rope
+from stackformers.sequence import SequenceInput
 
 
 class RotaryEmbedding2D(nn.Module):
     """2-D Rotary Position Embedding for (height, width) grids.
 
-    Splits dim_head evenly: first half encodes row position, second half column.
-    Grid positions passed as (row_ids, col_ids) tensors of shape (n,).
+    Conforms to PosEncoding: abs_positions must have c=2 (row, col per token).
+    Splits dim_head evenly: first half encodes row, second half column.
+    Positions are assumed identical across the batch (standard grid layout).
     """
 
     def __init__(self, dim_head: int, base: int = 10_000) -> None:
@@ -25,35 +27,30 @@ class RotaryEmbedding2D(nn.Module):
 
     @torch.no_grad()
     def _build_freqs(
-        self,
-        ids: Float[Tensor, "n"],
-        device: torch.device,
+        self, ids: Float[Tensor, "n"], device: torch.device
     ) -> Float[Tensor, "n dh_half"]:
         ids = ids.to(device=device, dtype=self.inv_freq.dtype)  # type: ignore[attr-defined]
         freqs = torch.einsum("n, d -> n d", ids, self.inv_freq)  # type: ignore[attr-defined]
-        return torch.cat([freqs, freqs], dim=-1)  # (n, half_dh)
+        return torch.cat([freqs, freqs], dim=-1)
 
     def forward(
         self,
         q: Float[Tensor, "b h n dh"],
         k: Float[Tensor, "b h s dh"],
-        row_ids: Float[Tensor, "n"],
-        col_ids: Float[Tensor, "n"],
-        kv_row_ids: Float[Tensor, "s"] | None = None,
-        kv_col_ids: Float[Tensor, "s"] | None = None,
+        q_input: SequenceInput,
+        k_input: SequenceInput,
     ) -> tuple[Float[Tensor, "b h n dh"], Float[Tensor, "b h s dh"]]:
-        device = q.device
-        kv_row_ids = kv_row_ids if kv_row_ids is not None else row_ids
-        kv_col_ids = kv_col_ids if kv_col_ids is not None else col_ids
+        # abs_positions: b n 2 — take first batch item (grid is shared across batch)
+        q_pos = q_input.abs_positions[0]  # n 2
+        k_pos = k_input.abs_positions[0]  # s 2
 
-        freqs_row_q = self._build_freqs(row_ids, device)
-        freqs_col_q = self._build_freqs(col_ids, device)
-        freqs_row_k = self._build_freqs(kv_row_ids, device)
-        freqs_col_k = self._build_freqs(kv_col_ids, device)
+        freqs_q = torch.cat(
+            [self._build_freqs(q_pos[:, 0], q.device), self._build_freqs(q_pos[:, 1], q.device)],
+            dim=-1,
+        )
+        freqs_k = torch.cat(
+            [self._build_freqs(k_pos[:, 0], k.device), self._build_freqs(k_pos[:, 1], k.device)],
+            dim=-1,
+        )
 
-        freqs_q = torch.cat([freqs_row_q, freqs_col_q], dim=-1)  # (n, dh)
-        freqs_k = torch.cat([freqs_row_k, freqs_col_k], dim=-1)
-
-        q_out = _apply_rope(q, freqs_q)
-        k_out = _apply_rope(k, freqs_k)
-        return q_out, k_out
+        return _apply_rope(q, freqs_q), _apply_rope(k, freqs_k)

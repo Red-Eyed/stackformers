@@ -8,7 +8,7 @@ from stackformers.positional.config import RoPE1DConfig, YaRNConfig
 from stackformers.positional.none import NoPosEncoding
 from stackformers.positional.rope1d import RotaryEmbedding1D
 from stackformers.positional.rope2d import RotaryEmbedding2D
-from stackformers.sequence import make_padded_input
+from stackformers.sequence import PaddedInput, make_padded_input
 from tests.conftest import atol
 
 B, H, N, DH = 2, 4, 8, 32
@@ -114,9 +114,13 @@ def test_rope2d_output_shape(
     device, dtype = device_dtype
     q = torch.randn(B, H, N, DH, device=device, dtype=dtype)
     k = torch.randn(B, H, N, DH, device=device, dtype=dtype)
+    x = torch.zeros(B, N, 1, device=device, dtype=dtype)
+    mask = torch.ones(B, N, dtype=torch.bool, device=device)
     row_ids = torch.arange(N, dtype=dtype, device=device)
     col_ids = torch.arange(N, dtype=dtype, device=device)
-    q_out, k_out = rope2d(q, k, row_ids, col_ids)
+    pos = torch.stack([row_ids, col_ids], dim=-1).unsqueeze(0).expand(B, -1, -1)  # b n 2
+    inp = PaddedInput(x=x, mask=mask, abs_positions=pos)
+    q_out, k_out = rope2d(q, k, inp, inp)
     assert q_out.shape == q.shape
     assert k_out.shape == k.shape
 

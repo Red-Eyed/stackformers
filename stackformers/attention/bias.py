@@ -87,9 +87,9 @@ class ALiBiBuilder(nn.Module):
     ) -> Tensor | None:
         if isinstance(q_input, PaddedInput):
             assert isinstance(k_input, PaddedInput)
-            q_pos = q_input.abs_positions
-            k_pos = k_input.abs_positions
-            dist = (q_pos[:, :, None] - k_pos[:, None, :]).abs().float()  # b n s
+            q_pos = q_input.abs_positions  # b n c
+            k_pos = k_input.abs_positions  # b s c
+            dist = (q_pos[:, :, None, :] - k_pos[:, None, :, :]).norm(dim=-1).float()  # b n s
             slopes = self.slopes.to(device=q_pos.device)  # h
             return -(slopes[None, :, None, None] * dist[:, None, :, :])  # b h n s
         if isinstance(q_input, int):

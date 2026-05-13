@@ -34,14 +34,14 @@ SequenceInfo = PaddedSequence | PackedSequence
 class PaddedInput(NamedTuple):
     x: Float[Tensor, "b n d"]
     mask: Bool[Tensor, "b n"]
-    abs_positions: Float[Tensor, "b n"]
+    abs_positions: Float[Tensor, "b n c"]  # c=1 for 1-D (text), c=2 for grids, c=3 for 3-D
 
 
 class PackedInput(NamedTuple):
     x: Float[Tensor, "nt d"]
     cu_seqlens: Int[Tensor, "bp1"]
     max_seqlen: int
-    abs_positions: Float[Tensor, "nt"]
+    abs_positions: Float[Tensor, "nt c"]  # c matches PaddedInput convention
 
 
 SequenceInput = PaddedInput | PackedInput
@@ -56,15 +56,19 @@ def to_seq_info(inp: SequenceInput) -> SequenceInfo:
 
 
 def make_padded_input(x: Tensor, mask: Bool[Tensor, "b n"]) -> PaddedInput:
+    """Build PaddedInput with sequential 1-D positions (shape b n 1)."""
     n = x.shape[1]
-    positions = torch.arange(n, device=x.device, dtype=x.dtype).unsqueeze(0).expand(x.shape[0], -1)
+    pos = torch.arange(n, device=x.device, dtype=x.dtype)
+    positions = pos.unsqueeze(0).unsqueeze(-1).expand(x.shape[0], -1, -1)  # b n 1
     return PaddedInput(x=x, mask=mask, abs_positions=positions)
 
 
 def make_packed_input(x: Tensor, cu_seqlens: Int[Tensor, "bp1"], max_seqlen: int) -> PackedInput:
+    """Build PackedInput with per-token sequential 1-D positions (shape nt 1)."""
     cu = cu_seqlens
     lengths = (cu[1:] - cu[:-1]).tolist()
-    positions = torch.cat([torch.arange(int(n), device=cu.device, dtype=x.dtype) for n in lengths])
+    pos = torch.cat([torch.arange(int(n), device=cu.device, dtype=x.dtype) for n in lengths])
+    positions = pos.unsqueeze(-1)  # nt 1
     return PackedInput(x=x, cu_seqlens=cu_seqlens, max_seqlen=max_seqlen, abs_positions=positions)
 
 
