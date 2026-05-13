@@ -6,7 +6,7 @@ import torch
 from stackformers.v1.attention.bias import NoBiasBuilder
 from stackformers.v1.attention.kernels import SDPAKernel
 from stackformers.v1.attention.self_attn import SelfAttention
-from stackformers.v1.configs import AttentionConfig
+from stackformers.v1.attention.config import AttentionConfig
 from stackformers.v1.positional.none import NoPosEncoding
 from stackformers.v1.positional.rope1d import RotaryEmbedding1D
 from stackformers.v1.sequence import PaddedSequence, make_padded

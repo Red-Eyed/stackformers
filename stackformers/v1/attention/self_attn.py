@@ -6,8 +6,9 @@ from einops import rearrange, repeat
 from jaxtyping import Bool, Float
 from torch import Tensor
 
-from stackformers.v1.configs import AttentionConfig
-from stackformers.v1.protocols import AttnBiasBuilder, AttnKernel, PosEncoding
+from stackformers.v1.attention.config import AttentionConfig
+from stackformers.v1.attention.protocols import AttnBiasBuilder, AttnKernel
+from stackformers.v1.positional.protocols import PosEncoding
 from stackformers.v1.sequence import PaddedSequence, SequenceInfo
 
 

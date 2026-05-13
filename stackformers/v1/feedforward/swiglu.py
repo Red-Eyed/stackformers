@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from jaxtyping import Float
 from torch import Tensor
 
-from stackformers.v1.configs import FeedForwardConfig
+from stackformers.v1.feedforward.config import FeedForwardConfig
 
 
 class SwiGLU(nn.Module):

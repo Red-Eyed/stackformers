@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from stackformers.v1.attention.bias import NoBiasBuilder
+from stackformers.v1.attention.config import AttentionConfig
 from stackformers.v1.attention.cross_attn import CrossAttention
 from stackformers.v1.attention.kernels import SDPAKernel
 from stackformers.v1.attention.self_attn import SelfAttention
-from stackformers.v1.configs import AttentionConfig, DecoderConfig, EncoderConfig, FeedForwardConfig
+from stackformers.v1.config import DecoderConfig, EncoderConfig
 from stackformers.v1.decoder import Decoder, DecoderLayer
 from stackformers.v1.encoder import Encoder
+from stackformers.v1.feedforward.config import FeedForwardConfig
 from stackformers.v1.feedforward.swiglu import SwiGLU
 from stackformers.v1.layers import TransformerLayer
 from stackformers.v1.norm.rms import RMSNorm
@@ -79,20 +81,17 @@ def build_gpt(
     """GPT-style causal language model backbone (encoder-only with causal mask)."""
     attn_cfg = AttentionConfig(dim=dim, heads=heads, dim_head=dim_head, causal=True)
     ff_cfg = FeedForwardConfig(dim=dim, mult=ff_mult)
-    layer_cfg_attn = attn_cfg
-    layer_cfg_ff = ff_cfg
-
     pos = RotaryEmbedding1D(dim_head=dim_head)
 
     layers = [
         TransformerLayer(
             self_attn=SelfAttention(
-                config=layer_cfg_attn,
+                config=attn_cfg,
                 pos_encoding=pos,
                 bias_builder=NoBiasBuilder(),
                 kernel=SDPAKernel(),
             ),
-            ff=SwiGLU(layer_cfg_ff),
+            ff=SwiGLU(ff_cfg),
             norm_attn=RMSNorm(dim),
             norm_ff=RMSNorm(dim),
         )

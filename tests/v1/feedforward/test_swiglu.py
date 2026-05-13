@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from stackformers.v1.configs import FeedForwardConfig
+from stackformers.v1.feedforward.config import FeedForwardConfig
 from stackformers.v1.feedforward.swiglu import SwiGLU
 
 B, N, D = 2, 16, 64
