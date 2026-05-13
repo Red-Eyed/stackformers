@@ -125,6 +125,17 @@ Presets are intentionally not flexible — for custom wiring use the building bl
 Cloned at `./x-transformers/` — read for math and implementation details only.
 Do not copy its architecture.
 
+## Versioning
+
+Version is maintained in `pyproject.toml` under `[project].version` and exposed at runtime via `stackformers.__version__` (read from package metadata with `importlib.metadata`).
+
+Use [Semantic Versioning](https://semver.org/):
+- **MAJOR** — breaking public API change
+- **MINOR** — new backwards-compatible feature
+- **PATCH** — bug fix or internal change with no API impact
+
+Bump the version in `pyproject.toml` on every commit that changes behaviour. Commits that only touch docs, tests, or CI do not require a bump.
+
 ## Commands
 ```bash
 # Install (uv)

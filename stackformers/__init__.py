@@ -1,5 +1,9 @@
 """stackformers public API."""
 
+from importlib.metadata import version
+
+__version__ = version("stackformers")
+
 from stackformers.attention.bias import ALiBiBuilder, NoBiasBuilder
 from stackformers.attention.bias_config import ALiBiConfig, BiasBuilderConfig, NoBiasConfig
 from stackformers.attention.bias_factory import build_bias_builder
@@ -60,6 +64,7 @@ from stackformers.sequence import (
 )
 
 __all__ = [
+    "__version__",
     # sequences
     "PaddedSequence",
     "PackedSequence",
