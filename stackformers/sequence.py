@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import NamedTuple
 
 import torch
-from jaxtyping import Bool, Int
+from jaxtyping import Bool, Float, Int
 from torch import Tensor
 
 # NamedTuple instead of dataclass: PyTorch's pytree system handles tuples natively,
@@ -29,6 +29,43 @@ class PackedSequence(NamedTuple):
 
 
 SequenceInfo = PaddedSequence | PackedSequence
+
+
+class PaddedInput(NamedTuple):
+    x: Float[Tensor, "b n d"]
+    mask: Bool[Tensor, "b n"]
+    abs_positions: Float[Tensor, "b n"]
+
+
+class PackedInput(NamedTuple):
+    x: Float[Tensor, "nt d"]
+    cu_seqlens: Int[Tensor, "bp1"]
+    max_seqlen: int
+    abs_positions: Float[Tensor, "nt"]
+
+
+SequenceInput = PaddedInput | PackedInput
+
+
+def to_seq_info(inp: SequenceInput) -> SequenceInfo:
+    match inp:
+        case PaddedInput(mask=mask):
+            return PaddedSequence(mask=mask)
+        case PackedInput(cu_seqlens=cu, max_seqlen=ms):
+            return PackedSequence(cu_seqlens=cu, max_seqlen=ms)
+
+
+def make_padded_input(x: Tensor, mask: Bool[Tensor, "b n"]) -> PaddedInput:
+    n = x.shape[1]
+    positions = torch.arange(n, device=x.device, dtype=x.dtype).unsqueeze(0).expand(x.shape[0], -1)
+    return PaddedInput(x=x, mask=mask, abs_positions=positions)
+
+
+def make_packed_input(x: Tensor, cu_seqlens: Int[Tensor, "bp1"], max_seqlen: int) -> PackedInput:
+    cu = cu_seqlens
+    lengths = (cu[1:] - cu[:-1]).tolist()
+    positions = torch.cat([torch.arange(int(n), device=cu.device, dtype=x.dtype) for n in lengths])
+    return PackedInput(x=x, cu_seqlens=cu_seqlens, max_seqlen=max_seqlen, abs_positions=positions)
 
 
 def padded_to_key_padding_mask(seq: PaddedSequence) -> Bool[Tensor, "b n"]:

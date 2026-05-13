@@ -5,7 +5,7 @@ import torch.nn as nn
 from jaxtyping import Float
 from torch import Tensor
 
-from stackformers.positional.rope1d import _apply_rope_padded as _apply_rope
+from stackformers.positional.rope1d import _apply_rope_padded_unbatched as _apply_rope
 
 
 class RotaryEmbedding2D(nn.Module):

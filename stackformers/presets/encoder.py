@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import torch.nn as nn
-from jaxtyping import Float
 from pydantic import BaseModel, Field
 from torch import Tensor
 
@@ -14,7 +13,7 @@ from stackformers.feedforward.config import FeedForwardConfig
 from stackformers.layers import TransformerLayer
 from stackformers.positional.config import PosEncodingConfig
 from stackformers.presets.configs import NormConfig, build_ff, build_norm, build_pos_encoding
-from stackformers.sequence import SequenceInfo
+from stackformers.sequence import SequenceInput
 
 
 class TransformerEncoderConfig(BaseModel):
@@ -52,9 +51,5 @@ class TransformerEncoder(nn.Module):
             final_norm=build_norm(config.norm),
         )
 
-    def forward(
-        self,
-        x: Float[Tensor, "b n d"],
-        seq_info: SequenceInfo,
-    ) -> Float[Tensor, "b n d"]:
-        return self._encoder(x, seq_info)
+    def forward(self, input: SequenceInput) -> Tensor:
+        return self._encoder(input)

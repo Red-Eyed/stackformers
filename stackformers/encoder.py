@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import torch.nn as nn
-from jaxtyping import Float
 from torch import Tensor
 
 from stackformers.layers import TransformerLayer
 from stackformers.norm.protocols import Norm
-from stackformers.sequence import SequenceInfo
+from stackformers.sequence import SequenceInput
 
 
 class Encoder(nn.Module):
@@ -21,11 +20,7 @@ class Encoder(nn.Module):
         self.layers = nn.ModuleList(layers)
         self.final_norm = final_norm
 
-    def forward(
-        self,
-        x: Float[Tensor, "b n d"],
-        seq_info: SequenceInfo,
-    ) -> Float[Tensor, "b n d"]:
+    def forward(self, input: SequenceInput) -> Tensor:
         for layer in self.layers:
-            x = layer(x, seq_info)
-        return self.final_norm(x)
+            input = layer(input)
+        return self.final_norm(input.x)

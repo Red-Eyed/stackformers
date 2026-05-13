@@ -32,13 +32,19 @@ from stackformers.presets.cross_attender import CrossAttender, CrossAttenderConf
 from stackformers.presets.decoder import TransformerDecoder, TransformerDecoderConfig
 from stackformers.presets.encoder import TransformerEncoder, TransformerEncoderConfig
 from stackformers.sequence import (
+    PackedInput,
     PackedSequence,
+    PaddedInput,
     PaddedSequence,
     SequenceInfo,
+    SequenceInput,
     lengths_to_cu_seqlens,
     make_packed,
+    make_packed_input,
     make_padded,
+    make_padded_input,
     position_ids_from_packed,
+    to_seq_info,
 )
 
 __all__ = [
@@ -46,8 +52,14 @@ __all__ = [
     "PaddedSequence",
     "PackedSequence",
     "SequenceInfo",
+    "PaddedInput",
+    "PackedInput",
+    "SequenceInput",
     "make_padded",
     "make_packed",
+    "make_padded_input",
+    "make_packed_input",
+    "to_seq_info",
     "lengths_to_cu_seqlens",
     "position_ids_from_packed",
     # protocols

@@ -17,7 +17,7 @@ from stackformers.positional.config import RoPE1DConfig
 from stackformers.positional.none import NoPosEncoding
 from stackformers.positional.protocols import PosEncoding
 from stackformers.positional.rope1d import RotaryEmbedding1D
-from stackformers.sequence import PaddedSequence, make_padded
+from stackformers.sequence import PaddedInput, make_padded_input
 
 B, N, D, H, DH = 2, 16, 64, 4, 16
 NUM_LAYERS = 3
@@ -51,19 +51,18 @@ def encoder(device_dtype: tuple[torch.device, torch.dtype]) -> Encoder:
 
 
 @pytest.fixture
-def x_pad(device_dtype: tuple[torch.device, torch.dtype]) -> tuple[torch.Tensor, PaddedSequence]:
+def x_pad(device_dtype: tuple[torch.device, torch.dtype]) -> PaddedInput:
     device, dtype = device_dtype
     x = torch.randn(B, N, D, device=device, dtype=dtype)
-    seq = make_padded(torch.ones(B, N, dtype=torch.bool, device=device))
-    return x, seq
+    mask = torch.ones(B, N, dtype=torch.bool, device=device)
+    return make_padded_input(x, mask)
 
 
 def test_encoder_output_shape(
     encoder: Encoder,
-    x_pad: tuple[torch.Tensor, PaddedSequence],
+    x_pad: PaddedInput,
 ) -> None:
-    x, seq = x_pad
-    assert encoder(x, seq).shape == (B, N, D)
+    assert encoder(x_pad).shape == (B, N, D)
 
 
 def test_encoder_with_padding(
@@ -74,20 +73,20 @@ def test_encoder_with_padding(
     x = torch.randn(B, N, D, device=device, dtype=dtype)
     mask = torch.ones(B, N, dtype=torch.bool, device=device)
     mask[0, 12:] = False
-    assert encoder(x, make_padded(mask)).shape == (B, N, D)
+    assert encoder(make_padded_input(x, mask)).shape == (B, N, D)
 
 
 def test_encoder_with_rope(device_dtype: tuple[torch.device, torch.dtype]) -> None:
     device, dtype = device_dtype
     enc = _build_encoder(device, dtype, pos_encoding=RotaryEmbedding1D(RoPE1DConfig(dim_head=DH)))
     x = torch.randn(B, N, D, device=device, dtype=dtype)
-    seq = make_padded(torch.ones(B, N, dtype=torch.bool, device=device))
-    assert enc(x, seq).shape == (B, N, D)
+    mask = torch.ones(B, N, dtype=torch.bool, device=device)
+    assert enc(make_padded_input(x, mask)).shape == (B, N, D)
 
 
 def test_encoder_gradients(device: torch.device) -> None:
     enc = _build_encoder(device, torch.float32)
     x = torch.randn(B, N, D, device=device, requires_grad=True)
-    seq = make_padded(torch.ones(B, N, dtype=torch.bool, device=device))
-    enc(x, seq).sum().backward()
+    mask = torch.ones(B, N, dtype=torch.bool, device=device)
+    enc(make_padded_input(x, mask)).sum().backward()
     assert x.grad is not None

@@ -8,9 +8,22 @@ from stackformers.positional.config import RoPE1DConfig, YaRNConfig
 from stackformers.positional.none import NoPosEncoding
 from stackformers.positional.rope1d import RotaryEmbedding1D
 from stackformers.positional.rope2d import RotaryEmbedding2D
+from stackformers.sequence import make_padded_input
 from tests.conftest import atol
 
 B, H, N, DH = 2, 4, 8, 32
+
+
+def _make_inputs(q: torch.Tensor, k: torch.Tensor) -> tuple[object, object]:
+    """Build PaddedInput wrappers for q and k tensors (b h n dh → b n d projection stripped)."""
+    b, _, n, _ = q.shape
+    _, _, s, _ = k.shape
+    device = q.device
+    dummy_x_q = torch.zeros(b, n, 1, device=device, dtype=q.dtype)
+    dummy_x_k = torch.zeros(b, s, 1, device=device, dtype=k.dtype)
+    mask_q = torch.ones(b, n, dtype=torch.bool, device=device)
+    mask_k = torch.ones(b, s, dtype=torch.bool, device=device)
+    return make_padded_input(dummy_x_q, mask_q), make_padded_input(dummy_x_k, mask_k)
 
 
 @pytest.fixture
@@ -38,7 +51,8 @@ def test_no_pos_encoding_passthrough(
     qk: tuple[torch.Tensor, torch.Tensor],
 ) -> None:
     q, k = qk
-    q_out, k_out = NoPosEncoding()(q, k)
+    q_inp, k_inp = _make_inputs(q, k)
+    q_out, k_out = NoPosEncoding()(q, k, q_inp, k_inp)  # type: ignore[arg-type]
     assert torch.equal(q_out, q)
     assert torch.equal(k_out, k)
 
@@ -48,7 +62,8 @@ def test_rope1d_output_shape(
     qk: tuple[torch.Tensor, torch.Tensor],
 ) -> None:
     q, k = qk
-    q_out, k_out = rope1d(q, k)
+    q_inp, k_inp = _make_inputs(q, k)
+    q_out, k_out = rope1d(q, k, q_inp, k_inp)  # type: ignore[arg-type]
     assert q_out.shape == q.shape
     assert k_out.shape == k.shape
 
@@ -60,7 +75,8 @@ def test_rope1d_cross_attn_different_lengths(
     device, dtype = device_dtype
     q = torch.randn(B, H, 6, DH, device=device, dtype=dtype)
     k = torch.randn(B, H, 12, DH, device=device, dtype=dtype)
-    q_out, k_out = rope1d(q, k)
+    q_inp, k_inp = _make_inputs(q, k)
+    q_out, k_out = rope1d(q, k, q_inp, k_inp)  # type: ignore[arg-type]
     assert q_out.shape == (B, H, 6, DH)
     assert k_out.shape == (B, H, 12, DH)
 
@@ -72,7 +88,8 @@ def test_rope1d_different_positions_produce_different_output(
     device, dtype = device_dtype
     q = torch.ones(1, 1, 4, DH, device=device, dtype=dtype)
     k = torch.ones(1, 1, 4, DH, device=device, dtype=dtype)
-    q_out, _ = rope1d(q, k)
+    q_inp, k_inp = _make_inputs(q, k)
+    q_out, _ = rope1d(q, k, q_inp, k_inp)  # type: ignore[arg-type]
     assert not torch.allclose(q_out[:, :, 0], q_out[:, :, 1])
 
 
@@ -83,7 +100,8 @@ def test_rope1d_preserves_norms(
 ) -> None:
     _, dtype = device_dtype
     q, k = qk
-    q_out, k_out = rope1d(q, k)
+    q_inp, k_inp = _make_inputs(q, k)
+    q_out, k_out = rope1d(q, k, q_inp, k_inp)  # type: ignore[arg-type]
     tol = atol(dtype)
     assert torch.allclose(q.norm(dim=-1), q_out.norm(dim=-1), atol=tol)
     assert torch.allclose(k.norm(dim=-1), k_out.norm(dim=-1), atol=tol)
@@ -119,7 +137,8 @@ def test_yarn_output_shape(
     qk: tuple[torch.Tensor, torch.Tensor],
 ) -> None:
     q, k = qk
-    q_out, k_out = yarn_rope(q, k)
+    q_inp, k_inp = _make_inputs(q, k)
+    q_out, k_out = yarn_rope(q, k, q_inp, k_inp)  # type: ignore[arg-type]
     assert q_out.shape == q.shape
     assert k_out.shape == k.shape
 
@@ -131,7 +150,8 @@ def test_yarn_preserves_norms(
 ) -> None:
     _, dtype = device_dtype
     q, k = qk
-    q_out, k_out = yarn_rope(q, k)
+    q_inp, k_inp = _make_inputs(q, k)
+    q_out, k_out = yarn_rope(q, k, q_inp, k_inp)  # type: ignore[arg-type]
     tol = atol(dtype)
     assert torch.allclose(q.norm(dim=-1), q_out.norm(dim=-1), atol=tol)
     assert torch.allclose(k.norm(dim=-1), k_out.norm(dim=-1), atol=tol)
@@ -145,8 +165,9 @@ def test_yarn_differs_from_base_rope(
     base = RotaryEmbedding1D(RoPE1DConfig(dim_head=DH)).to(device=device, dtype=dtype)
     yarn = RotaryEmbedding1D(RoPE1DConfig(dim_head=DH, yarn=_YARN)).to(device=device, dtype=dtype)
     q, k = qk
-    q_base, _ = base(q, k)
-    q_yarn, _ = yarn(q, k)
+    q_inp, k_inp = _make_inputs(q, k)
+    q_base, _ = base(q, k, q_inp, k_inp)  # type: ignore[arg-type]
+    q_yarn, _ = yarn(q, k, q_inp, k_inp)  # type: ignore[arg-type]
     assert not torch.allclose(q_base, q_yarn)
 
 
@@ -157,11 +178,26 @@ def _export_rope(
     rope: RotaryEmbedding1D, n: int, s: int, max_len: int = 512
 ) -> torch.export.ExportedProgram:
     rope.eval()
-    q = torch.randn(1, H, n, DH)
-    k = torch.randn(1, H, s, DH)
+    b = 1
+    q = torch.randn(b, H, n, DH)
+    k = torch.randn(b, H, s, DH)
+    q_inp = make_padded_input(torch.zeros(b, n, 1), torch.ones(b, n, dtype=torch.bool))
+    k_inp = make_padded_input(torch.zeros(b, s, 1), torch.ones(b, s, dtype=torch.bool))
     n_dim = torch.export.Dim("n", min=1, max=max_len)
     s_dim = torch.export.Dim("s", min=1, max=max_len)
-    return torch.export.export(rope, (q, k), dynamic_shapes=({2: n_dim}, {2: s_dim}))
+    from stackformers.sequence import PaddedInput as PI
+
+    # PaddedInput fields in order: x (b n d), mask (b n), abs_positions (b n)
+    return torch.export.export(
+        rope,
+        (q, k, q_inp, k_inp),
+        dynamic_shapes=(
+            {2: n_dim},
+            {2: s_dim},
+            PI(x={1: n_dim}, mask={1: n_dim}, abs_positions={1: n_dim}),  # type: ignore[arg-type]
+            PI(x={1: s_dim}, mask={1: s_dim}, abs_positions={1: s_dim}),  # type: ignore[arg-type]
+        ),
+    )
 
 
 def test_rope1d_export_succeeds() -> None:
@@ -170,19 +206,24 @@ def test_rope1d_export_succeeds() -> None:
 
 def test_rope1d_export_runs_at_new_length() -> None:
     mod = _export_rope(RotaryEmbedding1D(RoPE1DConfig(dim_head=DH)), n=8, s=8).module()
-    q = torch.randn(1, H, 16, DH)
-    q_out, k_out = mod(q, q)
-    assert q_out.shape == (1, H, 16, DH)
-    assert k_out.shape == (1, H, 16, DH)
+    b = 1
+    q = torch.randn(b, H, 16, DH)
+    q_inp = make_padded_input(torch.zeros(b, 16, 1), torch.ones(b, 16, dtype=torch.bool))
+    q_out, k_out = mod(q, q, q_inp, q_inp)
+    assert q_out.shape == (b, H, 16, DH)
+    assert k_out.shape == (b, H, 16, DH)
 
 
 def test_rope1d_export_cross_attn_different_lengths() -> None:
     mod = _export_rope(RotaryEmbedding1D(RoPE1DConfig(dim_head=DH)), n=6, s=12).module()
-    q = torch.randn(1, H, 4, DH)
-    k = torch.randn(1, H, 20, DH)
-    q_out, k_out = mod(q, k)
-    assert q_out.shape == (1, H, 4, DH)
-    assert k_out.shape == (1, H, 20, DH)
+    b = 1
+    q = torch.randn(b, H, 4, DH)
+    k = torch.randn(b, H, 20, DH)
+    q_inp = make_padded_input(torch.zeros(b, 4, 1), torch.ones(b, 4, dtype=torch.bool))
+    k_inp = make_padded_input(torch.zeros(b, 20, 1), torch.ones(b, 20, dtype=torch.bool))
+    q_out, k_out = mod(q, k, q_inp, k_inp)
+    assert q_out.shape == (b, H, 4, DH)
+    assert k_out.shape == (b, H, 20, DH)
 
 
 def test_yarn_rope_export_succeeds() -> None:
@@ -197,7 +238,9 @@ def test_yarn_rope_export_runs_at_extended_length() -> None:
     mod = _export_rope(
         RotaryEmbedding1D(RoPE1DConfig(dim_head=DH, yarn=yarn)), n=8, s=8, max_len=4096
     ).module()
-    q = torch.randn(1, H, 2048, DH)
-    q_out, k_out = mod(q, q)
-    assert q_out.shape == (1, H, 2048, DH)
-    assert k_out.shape == (1, H, 2048, DH)
+    b = 1
+    q = torch.randn(b, H, 2048, DH)
+    q_inp = make_padded_input(torch.zeros(b, 2048, 1), torch.ones(b, 2048, dtype=torch.bool))
+    q_out, k_out = mod(q, q, q_inp, q_inp)
+    assert q_out.shape == (b, H, 2048, DH)
+    assert k_out.shape == (b, H, 2048, DH)

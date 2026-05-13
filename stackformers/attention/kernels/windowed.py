@@ -35,7 +35,7 @@ class WindowedSDPAKernel(nn.Module):
         combined: Tensor = build_window_mask(n, s, self.window_size, self.causal, q.device)
 
         if attn_bias is not None:
-            combined = combined + attn_bias.unsqueeze(0)
+            combined = combined + attn_bias
         if isinstance(k_seq_info, PaddedSequence):
             combined = combined + _padding_mask(k_seq_info.mask, q.dtype)
 

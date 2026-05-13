@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import torch.nn as nn
-from jaxtyping import Float
 from pydantic import BaseModel, Field
 from torch import Tensor
 
@@ -14,7 +13,7 @@ from stackformers.feedforward.config import FeedForwardConfig
 from stackformers.positional.config import NoPosEncodingConfig
 from stackformers.positional.none import NoPosEncoding
 from stackformers.presets.configs import NormConfig, build_ff, build_norm
-from stackformers.sequence import SequenceInfo
+from stackformers.sequence import SequenceInput
 
 
 class CrossAttenderConfig(BaseModel):
@@ -55,11 +54,5 @@ class CrossAttender(nn.Module):
             final_norm=build_norm(config.norm),
         )
 
-    def forward(
-        self,
-        x: Float[Tensor, "b n d"],
-        context: Float[Tensor, "b s d"],
-        x_seq_info: SequenceInfo | None = None,
-        ctx_seq_info: SequenceInfo | None = None,
-    ) -> Float[Tensor, "b n d"]:
-        return self._stack(x, context, x_seq_info, ctx_seq_info)
+    def forward(self, x_input: SequenceInput, ctx_input: SequenceInput) -> Tensor:
+        return self._stack(x_input, ctx_input)

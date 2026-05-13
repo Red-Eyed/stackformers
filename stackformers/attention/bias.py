@@ -2,21 +2,29 @@ from __future__ import annotations
 
 import math
 import warnings
+from typing import overload
 
 import torch
 import torch.nn as nn
 from jaxtyping import Float
 from torch import Tensor
 
+from stackformers.sequence import PaddedInput, SequenceInput
+
 
 class NoBiasBuilder(nn.Module):
     """Null object for AttnBiasBuilder — returns None (no additive bias)."""
 
-    def forward(
+    @overload
+    def forward(self, q_input: SequenceInput, k_input: SequenceInput) -> None: ...
+    @overload
+    def forward(self, q_input: int, k_input: int, device: torch.device | None = None) -> None: ...
+
+    def forward(  # type: ignore[misc]
         self,
-        n: int,
-        s: int,
-        device: torch.device,
+        q_input: SequenceInput | int,
+        k_input: SequenceInput | int,
+        device: torch.device | None = None,
     ) -> None:
         return None
 
@@ -26,7 +34,6 @@ class ALiBiBuilder(nn.Module):
 
     Adds a head-specific slope * |i - j| penalty to attention logits.
     Non-causal: bias[h, i, j] = -slope[h] * |i - j|
-    Causal: bias[h, i, j] = -slope[h] * (i - j) for j <= i, else -inf (handled by kernel)
     """
 
     slopes: Tensor  # populated by register_buffer
@@ -63,16 +70,34 @@ class ALiBiBuilder(nn.Module):
         slopes = base + extra[: heads - closest_pow2]
         return torch.tensor(slopes)
 
+    @overload
     def forward(
-        self,
-        n: int,
-        s: int,
-        device: torch.device,
-    ) -> Float[Tensor, "h n s"]:
-        i_pos = torch.arange(n, device=device)
-        j_pos = torch.arange(s, device=device)
-        distance = (i_pos[:, None] - j_pos[None, :]).abs().float()  # (n, s)
+        self, q_input: SequenceInput, k_input: SequenceInput
+    ) -> Float[Tensor, "b h n s"] | None: ...
+    @overload
+    def forward(
+        self, q_input: int, k_input: int, device: torch.device | None = None
+    ) -> Float[Tensor, "h n s"] | None: ...
 
-        slopes = self.slopes.to(device=device)  # (h,)
-        bias = -slopes[:, None, None] * distance[None, :, :]  # (h, n, s)
-        return bias
+    def forward(  # type: ignore[misc]
+        self,
+        q_input: SequenceInput | int,
+        k_input: SequenceInput | int,
+        device: torch.device | None = None,
+    ) -> Tensor | None:
+        if isinstance(q_input, PaddedInput):
+            assert isinstance(k_input, PaddedInput)
+            q_pos = q_input.abs_positions
+            k_pos = k_input.abs_positions
+            dist = (q_pos[:, :, None] - k_pos[:, None, :]).abs().float()  # b n s
+            slopes = self.slopes.to(device=q_pos.device)  # h
+            return -(slopes[None, :, None, None] * dist[:, None, :, :])  # b h n s
+        if isinstance(q_input, int):
+            assert isinstance(k_input, int)
+            n, s = q_input, k_input
+            i_pos = torch.arange(n, device=device)
+            j_pos = torch.arange(s, device=device)
+            distance = (i_pos[:, None] - j_pos[None, :]).abs().float()  # n s
+            slopes = self.slopes.to(device=device)  # h
+            return -(slopes[:, None, None] * distance[None, :, :])  # h n s
+        return None

@@ -4,7 +4,7 @@ from typing import Protocol, runtime_checkable
 
 from torch import Tensor
 
-from stackformers.sequence import SequenceInfo
+from stackformers.sequence import SequenceInfo, SequenceInput
 
 
 @runtime_checkable
@@ -39,37 +39,33 @@ class AttnBiasBuilder(Protocol):
 
     def forward(
         self,
-        n: int,
-        s: int,
-        device,
+        q_input: SequenceInput,
+        k_input: SequenceInput,
     ) -> Tensor | None: ...
 
 
 @runtime_checkable
 class SelfAttn(Protocol):
-    """Self-attention over a sequence: maps (x, seq_info) → x.
+    """Self-attention over a sequence: maps input → x.
 
     Implementation: SelfAttention.
     """
 
     def __call__(
         self,
-        x: Tensor,
-        seq_info: SequenceInfo,
+        input: SequenceInput,
     ) -> Tensor: ...
 
 
 @runtime_checkable
 class CrossAttn(Protocol):
-    """Cross-attention from x to context: maps (x, context, ...) → x.
+    """Cross-attention from x to context: maps (x_input, ctx_input) → x.
 
     Implementation: CrossAttention.
     """
 
     def __call__(
         self,
-        x: Tensor,
-        context: Tensor,
-        x_seq_info: SequenceInfo | None = None,
-        ctx_seq_info: SequenceInfo | None = None,
+        x_input: SequenceInput,
+        ctx_input: SequenceInput,
     ) -> Tensor: ...

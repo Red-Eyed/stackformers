@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import torch.nn as nn
-from jaxtyping import Float
 from torch import Tensor
 
 from stackformers.attention.protocols import CrossAttn
 from stackformers.feedforward.protocols import FeedForward
 from stackformers.norm.protocols import Norm
-from stackformers.sequence import SequenceInfo
+from stackformers.sequence import SequenceInput
 
 
 class CrossAttenderLayer(nn.Module):
@@ -26,16 +25,11 @@ class CrossAttenderLayer(nn.Module):
         self.norm_cross = norm_cross
         self.norm_ff = norm_ff
 
-    def forward(
-        self,
-        x: Float[Tensor, "b n d"],
-        context: Float[Tensor, "b s d"],
-        x_seq_info: SequenceInfo | None = None,
-        ctx_seq_info: SequenceInfo | None = None,
-    ) -> Float[Tensor, "b n d"]:
-        x = x + self.cross_attn(self.norm_cross(x), context, x_seq_info, ctx_seq_info)
+    def forward(self, x_input: SequenceInput, ctx_input: SequenceInput) -> SequenceInput:
+        normed = x_input._replace(x=self.norm_cross(x_input.x))
+        x = x_input.x + self.cross_attn(normed, ctx_input)
         x = x + self.ff(self.norm_ff(x))
-        return x
+        return x_input._replace(x=x)
 
 
 class CrossAttenderStack(nn.Module):
@@ -50,13 +44,7 @@ class CrossAttenderStack(nn.Module):
         self.layers = nn.ModuleList(layers)
         self.final_norm = final_norm
 
-    def forward(
-        self,
-        x: Float[Tensor, "b n d"],
-        context: Float[Tensor, "b s d"],
-        x_seq_info: SequenceInfo | None = None,
-        ctx_seq_info: SequenceInfo | None = None,
-    ) -> Float[Tensor, "b n d"]:
+    def forward(self, x_input: SequenceInput, ctx_input: SequenceInput) -> Tensor:
         for layer in self.layers:
-            x = layer(x, context, x_seq_info, ctx_seq_info)
-        return self.final_norm(x)
+            x_input = layer(x_input, ctx_input)
+        return self.final_norm(x_input.x)

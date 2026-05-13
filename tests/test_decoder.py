@@ -8,7 +8,7 @@ from stackformers.feedforward.config import FeedForwardConfig
 from stackformers.norm.config import RMSNormConfig
 from stackformers.positional.config import NoPosEncodingConfig, RoPE1DConfig
 from stackformers.presets.decoder import TransformerDecoder, TransformerDecoderConfig
-from stackformers.sequence import PaddedSequence, make_padded
+from stackformers.sequence import make_padded_input
 
 B, N, S, D, H, DH = 2, 8, 12, 64, 4, 16
 
@@ -35,34 +35,37 @@ def decoder(
 
 
 @pytest.fixture
-def x_context_seq(
+def x_context_inp(
     device_dtype: tuple[torch.device, torch.dtype],
-) -> tuple[torch.Tensor, torch.Tensor, PaddedSequence]:
+) -> tuple[object, object]:
     device, dtype = device_dtype
     x = torch.randn(B, N, D, device=device, dtype=dtype)
     context = torch.randn(B, S, D, device=device, dtype=dtype)
-    seq = make_padded(torch.ones(B, N, dtype=torch.bool, device=device))
-    return x, context, seq
+    x_inp = make_padded_input(x, torch.ones(B, N, dtype=torch.bool, device=device))
+    ctx_inp = make_padded_input(context, torch.ones(B, S, dtype=torch.bool, device=device))
+    return x_inp, ctx_inp
 
 
 def test_decoder_output_shape(
     decoder: TransformerDecoder,
-    x_context_seq: tuple[torch.Tensor, torch.Tensor, PaddedSequence],
+    x_context_inp: tuple[object, object],
 ) -> None:
-    x, context, seq = x_context_seq
-    assert decoder(x, context, seq).shape == (B, N, D)
+    x_inp, ctx_inp = x_context_inp
+    assert decoder(x_inp, ctx_inp).shape == (B, N, D)  # type: ignore[arg-type]
 
 
 def test_decoder_with_ctx_padding(
     decoder: TransformerDecoder,
-    x_context_seq: tuple[torch.Tensor, torch.Tensor, PaddedSequence],
+    x_context_inp: tuple[object, object],
     device_dtype: tuple[torch.device, torch.dtype],
 ) -> None:
-    device, _ = device_dtype
-    x, context, seq = x_context_seq
+    device, dtype = device_dtype
+    x_inp, _ = x_context_inp
+    context = torch.randn(B, S, D, device=device, dtype=dtype)
     mask = torch.ones(B, S, dtype=torch.bool, device=device)
     mask[1, 8:] = False
-    assert decoder(x, context, seq, ctx_seq_info=PaddedSequence(mask=mask)).shape == (B, N, D)
+    ctx_inp = make_padded_input(context, mask)
+    assert decoder(x_inp, ctx_inp).shape == (B, N, D)  # type: ignore[arg-type]
 
 
 def test_decoder_with_tgt_padding(
@@ -74,7 +77,9 @@ def test_decoder_with_tgt_padding(
     context = torch.randn(B, S, D, device=device, dtype=dtype)
     mask = torch.ones(B, N, dtype=torch.bool, device=device)
     mask[0, 6:] = False
-    assert decoder(x, context, make_padded(mask)).shape == (B, N, D)
+    x_inp = make_padded_input(x, mask)
+    ctx_inp = make_padded_input(context, torch.ones(B, S, dtype=torch.bool, device=device))
+    assert decoder(x_inp, ctx_inp).shape == (B, N, D)
 
 
 def test_decoder_self_attn_always_causal() -> None:
@@ -89,8 +94,9 @@ def test_decoder_self_attn_always_causal() -> None:
     model = TransformerDecoder(cfg)
     x = torch.randn(B, N, D)
     context = torch.randn(B, S, D)
-    seq = make_padded(torch.ones(B, N, dtype=torch.bool))
-    assert model(x, context, seq).shape == (B, N, D)
+    x_inp = make_padded_input(x, torch.ones(B, N, dtype=torch.bool))
+    ctx_inp = make_padded_input(context, torch.ones(B, S, dtype=torch.bool))
+    assert model(x_inp, ctx_inp).shape == (B, N, D)
 
 
 def test_decoder_with_rope(device_dtype: tuple[torch.device, torch.dtype]) -> None:
@@ -106,8 +112,9 @@ def test_decoder_with_rope(device_dtype: tuple[torch.device, torch.dtype]) -> No
     model = TransformerDecoder(cfg).to(device=device, dtype=dtype)
     x = torch.randn(B, N, D, device=device, dtype=dtype)
     context = torch.randn(B, S, D, device=device, dtype=dtype)
-    seq = make_padded(torch.ones(B, N, dtype=torch.bool, device=device))
-    assert model(x, context, seq).shape == (B, N, D)
+    x_inp = make_padded_input(x, torch.ones(B, N, dtype=torch.bool, device=device))
+    ctx_inp = make_padded_input(context, torch.ones(B, S, dtype=torch.bool, device=device))
+    assert model(x_inp, ctx_inp).shape == (B, N, D)
 
 
 def test_decoder_gradients(device: torch.device) -> None:
@@ -122,8 +129,9 @@ def test_decoder_gradients(device: torch.device) -> None:
     model = TransformerDecoder(cfg).to(device=device)
     x = torch.randn(B, N, D, device=device, requires_grad=True)
     context = torch.randn(B, S, D, device=device, requires_grad=True)
-    seq = make_padded(torch.ones(B, N, dtype=torch.bool, device=device))
-    model(x, context, seq).sum().backward()
+    x_inp = make_padded_input(x, torch.ones(B, N, dtype=torch.bool, device=device))
+    ctx_inp = make_padded_input(context, torch.ones(B, S, dtype=torch.bool, device=device))
+    model(x_inp, ctx_inp).sum().backward()
     assert x.grad is not None
     assert context.grad is not None
 

@@ -13,7 +13,7 @@ from stackformers.layers import TransformerLayer
 from stackformers.norm.config import RMSNormConfig
 from stackformers.norm.rms import RMSNorm
 from stackformers.positional.none import NoPosEncoding
-from stackformers.sequence import PaddedSequence, make_padded
+from stackformers.sequence import PaddedInput, make_padded_input
 
 B, N, D, H, DH = 2, 16, 64, 4, 16
 
@@ -33,28 +33,27 @@ def layer(device_dtype: tuple[torch.device, torch.dtype]) -> TransformerLayer:
 
 
 @pytest.fixture
-def x_pad(device_dtype: tuple[torch.device, torch.dtype]) -> tuple[torch.Tensor, PaddedSequence]:
+def x_pad(device_dtype: tuple[torch.device, torch.dtype]) -> PaddedInput:
     device, dtype = device_dtype
     x = torch.randn(B, N, D, device=device, dtype=dtype)
-    seq = make_padded(torch.ones(B, N, dtype=torch.bool, device=device))
-    return x, seq
+    mask = torch.ones(B, N, dtype=torch.bool, device=device)
+    return make_padded_input(x, mask)
 
 
 def test_transformer_layer_output_shape(
     layer: TransformerLayer,
-    x_pad: tuple[torch.Tensor, PaddedSequence],
+    x_pad: PaddedInput,
 ) -> None:
-    x, seq = x_pad
-    assert layer(x, seq).shape == (B, N, D)
+    out = layer(x_pad)
+    assert out.x.shape == (B, N, D)
 
 
 def test_transformer_layer_residual_connection(
     layer: TransformerLayer,
-    x_pad: tuple[torch.Tensor, PaddedSequence],
+    x_pad: PaddedInput,
 ) -> None:
-    x, seq = x_pad
-    out = layer(x, seq)
-    assert not torch.allclose(out, x)
+    out = layer(x_pad)
+    assert not torch.allclose(out.x, x_pad.x)
 
 
 def test_transformer_layer_gradients(device: torch.device) -> None:
@@ -68,6 +67,7 @@ def test_transformer_layer_gradients(device: torch.device) -> None:
         norm_ff=RMSNorm(norm_cfg),
     ).to(device=device)
     x = torch.randn(B, N, D, device=device, requires_grad=True)
-    seq = make_padded(torch.ones(B, N, dtype=torch.bool, device=device))
-    layer(x, seq).sum().backward()
+    mask = torch.ones(B, N, dtype=torch.bool, device=device)
+    inp = make_padded_input(x, mask)
+    layer(inp).x.sum().backward()
     assert x.grad is not None

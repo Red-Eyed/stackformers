@@ -4,7 +4,7 @@ import torch.nn as nn
 from torch import Tensor
 
 from stackformers.positional.config import NoPosEncodingConfig
-from stackformers.sequence import SequenceInfo
+from stackformers.sequence import SequenceInput
 
 
 class NoPosEncoding(nn.Module):
@@ -17,7 +17,7 @@ class NoPosEncoding(nn.Module):
         self,
         q: Tensor,
         k: Tensor,
-        q_seq_info: SequenceInfo | None = None,
-        k_seq_info: SequenceInfo | None = None,
+        q_input: SequenceInput,
+        k_input: SequenceInput,
     ) -> tuple[Tensor, Tensor]:
         return q, k

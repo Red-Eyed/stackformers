@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import torch
 import torch.nn as nn
 from einops import rearrange, repeat
 from torch import Tensor
@@ -8,7 +7,7 @@ from torch import Tensor
 from stackformers.attention.config import AttentionConfig
 from stackformers.attention.protocols import AttnBiasBuilder, AttnKernel
 from stackformers.positional.protocols import PosEncoding
-from stackformers.sequence import PaddedSequence, SequenceInfo
+from stackformers.sequence import PaddedInput, SequenceInput, to_seq_info
 
 
 class BaseCrossAttention(nn.Module):
@@ -44,15 +43,9 @@ class CrossAttention(BaseCrossAttention):
         self.bias_builder = bias_builder
         self.kernel = kernel
 
-    def forward(
-        self,
-        x: Tensor,
-        context: Tensor,
-        x_seq_info: SequenceInfo | None = None,
-        ctx_seq_info: SequenceInfo | None = None,
-    ) -> Tensor:
+    def forward(self, x_input: SequenceInput, ctx_input: SequenceInput) -> Tensor:
         h, kv_h, groups = self.config.heads, self.config.effective_kv_heads, self.config.groups
-        n, s = x.shape[1], context.shape[1]
+        x, context = x_input.x, ctx_input.x
 
         q = rearrange(self.to_q(x), "b n (h d) -> b h n d", h=h)
         k = rearrange(self.to_k(context), "b s (h d) -> b h s d", h=kv_h)
@@ -62,20 +55,14 @@ class CrossAttention(BaseCrossAttention):
             k = repeat(k, "b h s d -> b (h g) s d", g=groups)
             v = repeat(v, "b h s d -> b (h g) s d", g=groups)
 
-        q, k = self.pos_encoding.forward(q, k, x_seq_info, ctx_seq_info)
-        attn_bias = self.bias_builder.forward(n, s, x.device)
-        out = self.kernel.forward(
-            q,
-            k,
-            v,
-            x_seq_info or PaddedSequence(mask=x.new_ones(x.shape[0], n, dtype=torch.bool)),
-            ctx_seq_info,
-            attn_bias,
-        )
-
+        q, k = self.pos_encoding.forward(q, k, x_input, ctx_input)
+        attn_bias = self.bias_builder.forward(x_input, ctx_input)
+        x_seq_info = to_seq_info(x_input)
+        ctx_seq_info = to_seq_info(ctx_input)
+        out = self.kernel.forward(q, k, v, x_seq_info, ctx_seq_info, attn_bias)
         out = self.to_out(rearrange(out, "b h n d -> b n (h d)"))
 
-        if isinstance(x_seq_info, PaddedSequence):
-            out = out * x_seq_info.mask.unsqueeze(-1)
+        if isinstance(x_input, PaddedInput):
+            out = out * x_input.mask.unsqueeze(-1)
 
         return out

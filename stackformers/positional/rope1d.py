@@ -7,7 +7,7 @@ import torch.nn as nn
 from torch import Tensor
 
 from stackformers.positional.config import RoPE1DConfig, YaRNConfig
-from stackformers.sequence import PackedSequence, SequenceInfo, position_ids_from_packed
+from stackformers.sequence import PackedInput, PaddedInput, SequenceInput
 
 
 def _rotate_half(x: Tensor) -> Tensor:
@@ -17,10 +17,17 @@ def _rotate_half(x: Tensor) -> Tensor:
     return torch.cat((-x2, x1), dim=-1)
 
 
-def _apply_rope_padded(t: Tensor, freqs: Tensor) -> Tensor:
-    """Apply RoPE to padded tensor (b h n dh) with freqs (n dh)."""
+def _apply_rope_padded_unbatched(t: Tensor, freqs: Tensor) -> Tensor:
+    """t: b h n dh, freqs: n dh — kept for rope2d compatibility."""
     cos = freqs.cos()
     sin = freqs.sin()
+    return t * cos + _rotate_half(t) * sin
+
+
+def _apply_rope_padded(t: Tensor, freqs: Tensor) -> Tensor:
+    """t: b h n dh, freqs: b n dh"""
+    cos = freqs.cos().unsqueeze(1)  # b 1 n dh
+    sin = freqs.sin().unsqueeze(1)
     return t * cos + _rotate_half(t) * sin
 
 
@@ -52,7 +59,7 @@ def _yarn_inv_freq(
 class RotaryEmbedding1D(nn.Module):
     """1-D Rotary Position Embedding (Su et al., 2021).
 
-    Handles both padded (b h n dh) and packed (nt h dh) layouts via seq_info.
+    Handles both padded (b h n dh) and packed (nt h dh) layouts via input type.
     Optionally accepts YaRNConfig for extended context via NTK-by-parts scaling.
     """
 
@@ -67,31 +74,34 @@ class RotaryEmbedding1D(nn.Module):
         self.register_buffer("inv_freq", inv_freq, persistent=False)
 
     @torch.no_grad()
-    def _freqs_from_length(self, seq_len: int, device: torch.device) -> Tensor:
-        positions = torch.arange(seq_len, device=device, dtype=self.inv_freq.dtype)  # type: ignore[attr-defined]
-        freqs = torch.einsum("n, d -> n d", positions, self.inv_freq)  # type: ignore[attr-defined]
+    def _freqs_from_padded_positions(self, positions: Tensor) -> Tensor:
+        """positions: b n → freqs: b n dh"""
+        pos = positions.to(dtype=self.inv_freq.dtype)  # type: ignore[attr-defined]
+        freqs = torch.einsum("b n, d -> b n d", pos, self.inv_freq)  # type: ignore[attr-defined]
         return torch.cat([freqs, freqs], dim=-1)
 
     @torch.no_grad()
-    def _freqs_from_ids(self, position_ids: Tensor, device: torch.device) -> Tensor:
-        ids = position_ids.to(device=device, dtype=self.inv_freq.dtype)  # type: ignore[attr-defined]
-        freqs = torch.einsum("n, d -> n d", ids, self.inv_freq)  # type: ignore[attr-defined]
+    def _freqs_from_packed_positions(self, positions: Tensor) -> Tensor:
+        """positions: nt → freqs: nt dh"""
+        pos = positions.to(dtype=self.inv_freq.dtype)  # type: ignore[attr-defined]
+        freqs = torch.einsum("n, d -> n d", pos, self.inv_freq)  # type: ignore[attr-defined]
         return torch.cat([freqs, freqs], dim=-1)
 
     def forward(
         self,
         q: Tensor,
         k: Tensor,
-        q_seq_info: SequenceInfo | None = None,
-        k_seq_info: SequenceInfo | None = None,
+        q_input: SequenceInput,
+        k_input: SequenceInput,
     ) -> tuple[Tensor, Tensor]:
-        match q_seq_info:
-            case PackedSequence():
-                freqs_q = self._freqs_from_ids(position_ids_from_packed(q_seq_info), q.device)
-                k_info = k_seq_info if isinstance(k_seq_info, PackedSequence) else q_seq_info
-                freqs_k = self._freqs_from_ids(position_ids_from_packed(k_info), k.device)
-                return _apply_rope_packed(q, freqs_q), _apply_rope_packed(k, freqs_k)
-            case _:
-                freqs_q = self._freqs_from_length(q.shape[-2], q.device)
-                freqs_k = self._freqs_from_length(k.shape[-2], k.device)
+        match q_input:
+            case PaddedInput(abs_positions=q_pos):
+                k_pos = k_input.abs_positions  # b s
+                freqs_q = self._freqs_from_padded_positions(q_pos)
+                freqs_k = self._freqs_from_padded_positions(k_pos)
                 return _apply_rope_padded(q, freqs_q), _apply_rope_padded(k, freqs_k)
+            case PackedInput(abs_positions=q_pos):
+                k_pos = k_input.abs_positions  # nt
+                freqs_q = self._freqs_from_packed_positions(q_pos)
+                freqs_k = self._freqs_from_packed_positions(k_pos)
+                return _apply_rope_packed(q, freqs_q), _apply_rope_packed(k, freqs_k)

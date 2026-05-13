@@ -37,7 +37,7 @@ class SDPAKernel(nn.Module):
             attn_mask = _padding_mask(k_seq_info.mask, q.dtype)
 
         if attn_bias is not None:
-            combined = attn_bias.unsqueeze(0) + (attn_mask if attn_mask is not None else 0.0)
+            combined = attn_bias + (attn_mask if attn_mask is not None else 0.0)
         else:
             combined = attn_mask
 

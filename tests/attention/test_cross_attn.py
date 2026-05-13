@@ -8,7 +8,7 @@ from stackformers.attention.config import AttentionConfig
 from stackformers.attention.cross_attn import CrossAttention
 from stackformers.attention.kernels import SDPAKernel
 from stackformers.positional.none import NoPosEncoding
-from stackformers.sequence import make_padded
+from stackformers.sequence import make_padded_input
 
 B, N, S, D, H, DH = 2, 8, 12, 64, 4, 16
 
@@ -26,7 +26,7 @@ def cross_attn(device_dtype: tuple[torch.device, torch.dtype]) -> CrossAttention
 
 
 @pytest.fixture
-def x_ctx(
+def x_ctx_input(
     device_dtype: tuple[torch.device, torch.dtype],
 ) -> tuple[torch.Tensor, torch.Tensor]:
     device, dtype = device_dtype
@@ -38,34 +38,41 @@ def x_ctx(
 
 def test_cross_attn_output_shape(
     cross_attn: CrossAttention,
-    x_ctx: tuple[torch.Tensor, torch.Tensor],
+    x_ctx_input: tuple[torch.Tensor, torch.Tensor],
 ) -> None:
-    x, ctx = x_ctx
-    out = cross_attn(x, ctx)
+    x, ctx = x_ctx_input
+    device = x.device
+    x_inp = make_padded_input(x, torch.ones(B, N, dtype=torch.bool, device=device))
+    ctx_inp = make_padded_input(ctx, torch.ones(B, S, dtype=torch.bool, device=device))
+    out = cross_attn(x_inp, ctx_inp)
     assert out.shape == (B, N, D)
 
 
 def test_cross_attn_with_ctx_mask(
     cross_attn: CrossAttention,
-    x_ctx: tuple[torch.Tensor, torch.Tensor],
+    x_ctx_input: tuple[torch.Tensor, torch.Tensor],
 ) -> None:
-    x, ctx = x_ctx
+    x, ctx = x_ctx_input
     device = x.device
+    x_inp = make_padded_input(x, torch.ones(B, N, dtype=torch.bool, device=device))
     mask = torch.ones(B, S, dtype=torch.bool, device=device)
     mask[0, 10:] = False
-    out = cross_attn(x, ctx, ctx_seq_info=make_padded(mask))
+    ctx_inp = make_padded_input(ctx, mask)
+    out = cross_attn(x_inp, ctx_inp)
     assert out.shape == (B, N, D)
 
 
 def test_cross_attn_with_x_mask(
     cross_attn: CrossAttention,
-    x_ctx: tuple[torch.Tensor, torch.Tensor],
+    x_ctx_input: tuple[torch.Tensor, torch.Tensor],
 ) -> None:
-    x, ctx = x_ctx
+    x, ctx = x_ctx_input
     device = x.device
     mask = torch.ones(B, N, dtype=torch.bool, device=device)
     mask[0, 5:] = False
-    out = cross_attn(x, ctx, x_seq_info=make_padded(mask))
+    x_inp = make_padded_input(x, mask)
+    ctx_inp = make_padded_input(ctx, torch.ones(B, S, dtype=torch.bool, device=device))
+    out = cross_attn(x_inp, ctx_inp)
     assert out.shape == (B, N, D)
     assert out[0, 5:].eq(0).all()
 
@@ -83,5 +90,7 @@ def test_cross_attn_different_seq_lengths(
     ).to(device=device, dtype=dtype)
     x = torch.randn(B, 5, D, device=device, dtype=dtype)
     ctx = torch.randn(B, 20, D, device=device, dtype=dtype)
-    out = attn(x, ctx)
+    x_inp = make_padded_input(x, torch.ones(B, 5, dtype=torch.bool, device=device))
+    ctx_inp = make_padded_input(ctx, torch.ones(B, 20, dtype=torch.bool, device=device))
+    out = attn(x_inp, ctx_inp)
     assert out.shape == (B, 5, D)

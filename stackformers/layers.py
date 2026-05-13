@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import torch.nn as nn
-from jaxtyping import Float
-from torch import Tensor
 
 from stackformers.attention.protocols import SelfAttn
 from stackformers.feedforward.protocols import FeedForward
 from stackformers.norm.protocols import Norm
-from stackformers.sequence import SequenceInfo
+from stackformers.sequence import SequenceInput
 
 
 class TransformerLayer(nn.Module):
@@ -26,11 +24,8 @@ class TransformerLayer(nn.Module):
         self.norm_attn = norm_attn
         self.norm_ff = norm_ff
 
-    def forward(
-        self,
-        x: Float[Tensor, "b n d"],
-        seq_info: SequenceInfo,
-    ) -> Float[Tensor, "b n d"]:
-        x = x + self.self_attn(self.norm_attn(x), seq_info)
+    def forward(self, input: SequenceInput) -> SequenceInput:
+        normed = input._replace(x=self.norm_attn(input.x))
+        x = input.x + self.self_attn(normed)
         x = x + self.ff(self.norm_ff(x))
-        return x
+        return input._replace(x=x)

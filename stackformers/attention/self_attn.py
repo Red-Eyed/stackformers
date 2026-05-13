@@ -7,7 +7,7 @@ from torch import Tensor
 from stackformers.attention.config import AttentionConfig
 from stackformers.attention.protocols import AttnBiasBuilder, AttnKernel
 from stackformers.positional.protocols import PosEncoding
-from stackformers.sequence import SequenceInfo
+from stackformers.sequence import SequenceInput, to_seq_info
 
 
 class BaseSelfAttention(nn.Module):
@@ -43,9 +43,9 @@ class SelfAttention(BaseSelfAttention):
         self.bias_builder = bias_builder
         self.kernel = kernel
 
-    def forward(self, x: Tensor, seq_info: SequenceInfo) -> Tensor:
+    def forward(self, input: SequenceInput) -> Tensor:
         h, kv_h, groups = self.config.heads, self.config.effective_kv_heads, self.config.groups
-        _, n, _ = x.shape
+        x = input.x
 
         q = rearrange(self.to_q(x), "b n (h d) -> b h n d", h=h)
         k = rearrange(self.to_k(x), "b n (h d) -> b h n d", h=kv_h)
@@ -55,8 +55,9 @@ class SelfAttention(BaseSelfAttention):
             k = repeat(k, "b h n d -> b (h g) n d", g=groups)
             v = repeat(v, "b h n d -> b (h g) n d", g=groups)
 
-        q, k = self.pos_encoding.forward(q, k, seq_info, seq_info)
-        attn_bias = self.bias_builder.forward(n, n, x.device)
+        q, k = self.pos_encoding.forward(q, k, input, input)
+        attn_bias = self.bias_builder.forward(input, input)
+        seq_info = to_seq_info(input)
         out = self.kernel.forward(q, k, v, seq_info, seq_info, attn_bias)
 
         return self.to_out(rearrange(out, "b h n d -> b n (h d)"))
