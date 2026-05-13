@@ -4,9 +4,9 @@ import torch.nn as nn
 from jaxtyping import Float
 from torch import Tensor
 
-from stackformers.v1.attention.self_attn import SelfAttention
-from stackformers.v1.feedforward.swiglu import SwiGLU
-from stackformers.v1.norm.rms import RMSNorm
+from stackformers.v1.attention.protocols import SelfAttn
+from stackformers.v1.feedforward.protocols import FeedForward
+from stackformers.v1.norm.protocols import Norm
 from stackformers.v1.sequence import SequenceInfo
 
 
@@ -15,10 +15,10 @@ class TransformerLayer(nn.Module):
 
     def __init__(
         self,
-        self_attn: SelfAttention,
-        ff: SwiGLU,
-        norm_attn: RMSNorm,
-        norm_ff: RMSNorm,
+        self_attn: SelfAttn,
+        ff: FeedForward,
+        norm_attn: Norm,
+        norm_ff: Norm,
     ) -> None:
         super().__init__()
         self.self_attn = self_attn

@@ -7,10 +7,10 @@ from torch import Tensor
 
 
 @runtime_checkable
-class Norm(Protocol):
-    """Apply layer normalisation to (b, n, d) tensors.
+class FeedForward(Protocol):
+    """Apply a feed-forward transformation to (b, n, d) token embeddings.
 
-    Implementation: RMSNorm.
+    Implementation: SwiGLU.
     """
 
     def __call__(self, x: Float[Tensor, "b n d"]) -> Float[Tensor, "b n d"]: ...

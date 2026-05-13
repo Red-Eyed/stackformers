@@ -4,10 +4,9 @@ import torch.nn as nn
 from jaxtyping import Float
 from torch import Tensor
 
-from stackformers.v1.attention.cross_attn import CrossAttention
-from stackformers.v1.attention.self_attn import SelfAttention
-from stackformers.v1.feedforward.swiglu import SwiGLU
-from stackformers.v1.norm.rms import RMSNorm
+from stackformers.v1.attention.protocols import CrossAttn, SelfAttn
+from stackformers.v1.feedforward.protocols import FeedForward
+from stackformers.v1.norm.protocols import Norm
 from stackformers.v1.sequence import SequenceInfo
 
 
@@ -16,12 +15,12 @@ class DecoderLayer(nn.Module):
 
     def __init__(
         self,
-        self_attn: SelfAttention,
-        cross_attn: CrossAttention,
-        ff: SwiGLU,
-        norm_self: RMSNorm,
-        norm_cross: RMSNorm,
-        norm_ff: RMSNorm,
+        self_attn: SelfAttn,
+        cross_attn: CrossAttn,
+        ff: FeedForward,
+        norm_self: Norm,
+        norm_cross: Norm,
+        norm_ff: Norm,
     ) -> None:
         super().__init__()
         self.self_attn = self_attn
@@ -50,7 +49,7 @@ class Decoder(nn.Module):
     def __init__(
         self,
         layers: list[DecoderLayer],
-        final_norm: RMSNorm,
+        final_norm: Norm,
     ) -> None:
         super().__init__()
         self.layers = nn.ModuleList(layers)

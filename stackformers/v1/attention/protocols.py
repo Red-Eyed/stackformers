@@ -6,6 +6,8 @@ import torch
 from jaxtyping import Float
 from torch import Tensor
 
+from stackformers.v1.sequence import SequenceInfo
+
 
 @runtime_checkable
 class AttnKernel(Protocol):
@@ -40,3 +42,32 @@ class AttnBiasBuilder(Protocol):
         s: int,
         device: torch.device,
     ) -> Float[Tensor, "h n s"] | None: ...
+
+
+@runtime_checkable
+class SelfAttn(Protocol):
+    """Self-attention over a sequence: maps (x, seq_info) → x.
+
+    Implementation: SelfAttention.
+    """
+
+    def __call__(
+        self,
+        x: Float[Tensor, "b n d"],
+        seq_info: SequenceInfo,
+    ) -> Float[Tensor, "b n d"]: ...
+
+
+@runtime_checkable
+class CrossAttn(Protocol):
+    """Cross-attention from x to context: maps (x, context, ctx_seq_info) → x.
+
+    Implementation: CrossAttention.
+    """
+
+    def __call__(
+        self,
+        x: Float[Tensor, "b n d"],
+        context: Float[Tensor, "b s d"],
+        ctx_seq_info: SequenceInfo | None = None,
+    ) -> Float[Tensor, "b n d"]: ...

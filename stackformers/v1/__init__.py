@@ -9,7 +9,8 @@ from stackformers.v1.attention.kernels import (
     VarlenWindowedSDPAKernel,
     WindowedSDPAKernel,
 )
-from stackformers.v1.attention.protocols import AttnBiasBuilder, AttnKernel
+from stackformers.v1.attention.protocols import AttnBiasBuilder, AttnKernel, CrossAttn, SelfAttn
+from stackformers.v1.feedforward.protocols import FeedForward
 from stackformers.v1.attention.self_attn import SelfAttention
 from stackformers.v1.config import DecoderConfig, EncoderConfig, LayerConfig
 from stackformers.v1.decoder import Decoder, DecoderLayer
@@ -48,6 +49,9 @@ __all__ = [
     "PackedPosEncoding",
     "AttnBiasBuilder",
     "AttnKernel",
+    "SelfAttn",
+    "CrossAttn",
+    "FeedForward",
     "Norm",
     # configs
     "AttentionConfig",

@@ -5,7 +5,7 @@ from jaxtyping import Float
 from torch import Tensor
 
 from stackformers.v1.layers import TransformerLayer
-from stackformers.v1.norm.rms import RMSNorm
+from stackformers.v1.norm.protocols import Norm
 from stackformers.v1.sequence import SequenceInfo
 
 
@@ -15,7 +15,7 @@ class Encoder(nn.Module):
     def __init__(
         self,
         layers: list[TransformerLayer],
-        final_norm: RMSNorm,
+        final_norm: Norm,
     ) -> None:
         super().__init__()
         self.layers = nn.ModuleList(layers)
