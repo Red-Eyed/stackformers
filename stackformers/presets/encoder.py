@@ -8,7 +8,6 @@ from stackformers.attention.bias_config import BiasBuilderConfig, NoBiasConfig
 from stackformers.attention.bias_factory import build_bias_builder
 from stackformers.attention.config import AttentionConfig
 from stackformers.attention.kernels.config import (
-    KernelConfig,
     SDPAKernelConfig,
     VarlenSDPAKernelConfig,
     WindowedSDPAKernelConfig,
@@ -32,7 +31,6 @@ class TransformerEncoderConfig(BaseModel):
     ff: FeedForwardConfig
     norm: NormConfig
     pos_encoding: PosEncodingConfig
-    kernel: KernelConfig = SDPAKernelConfig()
     bias: BiasBuilderConfig = NoBiasConfig()
     num_layers: int = Field(gt=0)
 
@@ -54,12 +52,12 @@ def plain_encoder_config(
     dim_head = dim // heads
     return TransformerEncoderConfig(
         attn=AttentionConfig(
-            dim=dim, heads=heads, dim_head=dim_head, causal=causal, dropout=dropout
+            dim=dim, heads=heads, dim_head=dim_head, causal=causal, dropout=dropout,
+            kernel=SDPAKernelConfig(),
         ),
         ff=FeedForwardConfig(dim=dim, mult=ff_mult, dropout=dropout),
         norm=RMSNormConfig(dim=dim),
         pos_encoding=RoPE1DConfig(dim_head=dim_head),
-        kernel=SDPAKernelConfig(),
         bias=NoBiasConfig(),
         num_layers=num_layers,
     )
@@ -83,12 +81,12 @@ def windowed_encoder_config(
     dim_head = dim // heads
     return TransformerEncoderConfig(
         attn=AttentionConfig(
-            dim=dim, heads=heads, dim_head=dim_head, causal=causal, dropout=dropout
+            dim=dim, heads=heads, dim_head=dim_head, causal=causal, dropout=dropout,
+            kernel=WindowedSDPAKernelConfig(window_size=window_size),
         ),
         ff=FeedForwardConfig(dim=dim, mult=ff_mult, dropout=dropout),
         norm=RMSNormConfig(dim=dim),
         pos_encoding=RoPE1DConfig(dim_head=dim_head),
-        kernel=WindowedSDPAKernelConfig(window_size=window_size),
         bias=NoBiasConfig(),
         num_layers=num_layers,
     )
@@ -111,12 +109,12 @@ def packed_encoder_config(
     dim_head = dim // heads
     return TransformerEncoderConfig(
         attn=AttentionConfig(
-            dim=dim, heads=heads, dim_head=dim_head, causal=causal, dropout=dropout
+            dim=dim, heads=heads, dim_head=dim_head, causal=causal, dropout=dropout,
+            kernel=VarlenSDPAKernelConfig(),
         ),
         ff=FeedForwardConfig(dim=dim, mult=ff_mult, dropout=dropout),
         norm=RMSNormConfig(dim=dim),
         pos_encoding=RoPE1DConfig(dim_head=dim_head),
-        kernel=VarlenSDPAKernelConfig(),
         bias=NoBiasConfig(),
         num_layers=num_layers,
     )
@@ -137,10 +135,8 @@ class TransformerEncoder(nn.Module):
                     self_attn=SelfAttention(
                         config=config.attn,
                         pos_encoding=pos,
-                        bias_builder=build_bias_builder(
-                            config.bias, config.attn.heads, config.attn.causal
-                        ),
-                        kernel=build_kernel(config.kernel, config.attn.causal, config.attn.dropout),
+                        bias_builder=build_bias_builder(config.bias, config.attn.heads),
+                        kernel=build_kernel(config.attn),
                     ),
                     ff=build_ff(config.ff),
                     norm_attn=build_norm(config.norm),
@@ -183,7 +179,7 @@ class PackedTransformerEncoder(nn.Module):
                     self_attn=PackedSelfAttention(
                         config=config.attn,
                         pos_encoding=pos,
-                        kernel=build_kernel(config.kernel, config.attn.causal, config.attn.dropout),
+                        kernel=build_kernel(config.attn),
                     ),
                     ff=build_ff(config.ff),
                     norm_attn=build_norm(config.norm),

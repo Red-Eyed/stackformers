@@ -67,7 +67,7 @@ def test_alibi_output_shape(device_dtype: tuple[torch.device, torch.dtype]) -> N
 
 def test_alibi_is_symmetric_non_causal(device_dtype: tuple[torch.device, torch.dtype]) -> None:
     device, _ = device_dtype
-    bias = ALiBiBuilder(heads=H, causal=False).forward(N, N, device)
+    bias = ALiBiBuilder(heads=H).forward(N, N, device)
     assert bias is not None
     assert torch.allclose(bias, bias.transpose(-1, -2))
 

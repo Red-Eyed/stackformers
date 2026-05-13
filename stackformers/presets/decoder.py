@@ -8,7 +8,7 @@ from stackformers.attention.bias_config import BiasBuilderConfig, NoBiasConfig
 from stackformers.attention.bias_factory import build_bias_builder
 from stackformers.attention.config import AttentionConfig
 from stackformers.attention.cross_attn import CrossAttention
-from stackformers.attention.kernels.config import KernelConfig, SDPAKernelConfig
+from stackformers.attention.kernels.config import SDPAKernelConfig
 from stackformers.attention.kernels.factory import build_kernel
 from stackformers.attention.self_attn import SelfAttention
 from stackformers.decoder import Decoder, DecoderLayer
@@ -28,9 +28,7 @@ class TransformerDecoderConfig(BaseModel):
     ff: FeedForwardConfig
     norm: NormConfig
     pos_encoding: PosEncodingConfig  # applies to self-attention only
-    self_attn_kernel: KernelConfig = SDPAKernelConfig()
     self_attn_bias: BiasBuilderConfig = NoBiasConfig()
-    cross_attn_kernel: KernelConfig = SDPAKernelConfig()
     cross_attn_bias: BiasBuilderConfig = NoBiasConfig()
     num_layers: int = Field(gt=0)
 
@@ -49,15 +47,15 @@ def plain_decoder_config(
     Both self- and cross-attention share dim and heads; context must have the same dim.
     """
     dim_head = dim // heads
-    attn = AttentionConfig(dim=dim, heads=heads, dim_head=dim_head, dropout=dropout)
+    attn = AttentionConfig(
+        dim=dim, heads=heads, dim_head=dim_head, dropout=dropout, kernel=SDPAKernelConfig()
+    )
     return TransformerDecoderConfig(
         self_attn=attn,
         cross_attn=attn,
         ff=FeedForwardConfig(dim=dim, mult=ff_mult, dropout=dropout),
         norm=RMSNormConfig(dim=dim),
         pos_encoding=RoPE1DConfig(dim_head=dim_head),
-        self_attn_kernel=SDPAKernelConfig(),
-        cross_attn_kernel=SDPAKernelConfig(),
         num_layers=num_layers,
     )
 
@@ -82,24 +80,16 @@ class TransformerDecoder(nn.Module):
                     self_attn=SelfAttention(
                         config=self_attn_cfg,
                         pos_encoding=self_pos,
-                        bias_builder=build_bias_builder(
-                            config.self_attn_bias, self_attn_cfg.heads, causal=True
-                        ),
-                        kernel=build_kernel(
-                            config.self_attn_kernel, causal=True, dropout=config.self_attn.dropout
-                        ),
+                        bias_builder=build_bias_builder(config.self_attn_bias, self_attn_cfg.heads),
+                        kernel=build_kernel(self_attn_cfg),
                     ),
                     cross_attn=CrossAttention(
                         config=config.cross_attn,
                         pos_encoding=NoPosEncoding(NoPosEncodingConfig()),
                         bias_builder=build_bias_builder(
-                            config.cross_attn_bias, config.cross_attn.heads, causal=False
+                            config.cross_attn_bias, config.cross_attn.heads
                         ),
-                        kernel=build_kernel(
-                            config.cross_attn_kernel,
-                            causal=False,
-                            dropout=config.cross_attn.dropout,
-                        ),
+                        kernel=build_kernel(config.cross_attn),
                     ),
                     ff=build_ff(config.ff),
                     norm_self=build_norm(config.norm),

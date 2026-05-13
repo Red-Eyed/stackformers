@@ -38,9 +38,8 @@ class ALiBiBuilder(nn.Module):
 
     slopes: Tensor  # populated by register_buffer
 
-    def __init__(self, heads: int, causal: bool = False) -> None:
+    def __init__(self, heads: int) -> None:
         super().__init__()
-        self.causal = causal
         if not math.log2(heads).is_integer():
             warnings.warn(
                 f"ALiBiBuilder: heads={heads} is not a power of 2. "

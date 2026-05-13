@@ -5,11 +5,11 @@ from stackformers.attention.bias_config import ALiBiConfig, BiasBuilderConfig, N
 from stackformers.attention.protocols import AttnBiasBuilder
 
 
-def build_bias_builder(config: BiasBuilderConfig, heads: int, causal: bool) -> AttnBiasBuilder:
+def build_bias_builder(config: BiasBuilderConfig, heads: int) -> AttnBiasBuilder:
     match config:
         case NoBiasConfig():
             return NoBiasBuilder()
         case ALiBiConfig():
-            return ALiBiBuilder(heads=heads, causal=causal)
+            return ALiBiBuilder(heads=heads)
         case _:
             raise AssertionError(f"Unhandled bias builder config: {type(config)}")

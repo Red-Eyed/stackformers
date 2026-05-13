@@ -4,6 +4,8 @@ import warnings
 
 from pydantic import BaseModel, Field, model_validator
 
+from stackformers.attention.kernels.config import KernelConfig, SDPAKernelConfig
+
 _ALIGN = 64  # tensor-core alignment for FP16/BF16
 
 
@@ -14,6 +16,7 @@ class AttentionConfig(BaseModel):
     kv_heads: int | None = None  # None → same as heads (MHA); set for GQA/MQA
     dropout: float = Field(default=0.0, ge=0.0, le=1.0)
     causal: bool = False
+    kernel: KernelConfig = SDPAKernelConfig()
 
     @model_validator(mode="after")
     def _validate(self) -> "AttentionConfig":

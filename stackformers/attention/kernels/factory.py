@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from stackformers.attention.config import AttentionConfig
 from stackformers.attention.kernels.config import (
-    KernelConfig,
     SDPAKernelConfig,
     VarlenSDPAKernelConfig,
     VarlenWindowedSDPAKernelConfig,
@@ -14,19 +14,19 @@ from stackformers.attention.kernels.windowed import WindowedSDPAKernel
 from stackformers.attention.protocols import AttnKernel
 
 
-def build_kernel(config: KernelConfig, causal: bool, dropout: float) -> AttnKernel:
-    match config:
+def build_kernel(attn: "AttentionConfig") -> AttnKernel:
+    match attn.kernel:
         case SDPAKernelConfig():
-            return SDPAKernel(causal=causal, dropout=dropout)
+            return SDPAKernel(causal=attn.causal, dropout=attn.dropout)
         case WindowedSDPAKernelConfig():
             return WindowedSDPAKernel(
-                window_size=config.window_size, causal=causal, dropout=dropout
+                window_size=attn.kernel.window_size, causal=attn.causal, dropout=attn.dropout
             )
         case VarlenSDPAKernelConfig():
-            return VarlenSDPAKernel(causal=causal, dropout=dropout)
+            return VarlenSDPAKernel(causal=attn.causal, dropout=attn.dropout)
         case VarlenWindowedSDPAKernelConfig():
             return VarlenWindowedSDPAKernel(
-                window_size=config.window_size, causal=causal, dropout=dropout
+                window_size=attn.kernel.window_size, causal=attn.causal, dropout=attn.dropout
             )
         case _:
-            raise AssertionError(f"Unhandled kernel config: {type(config)}")
+            raise AssertionError(f"Unhandled kernel config: {type(attn.kernel)}")
