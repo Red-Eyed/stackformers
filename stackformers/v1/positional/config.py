@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class YaRNConfig(BaseModel):
@@ -21,3 +21,12 @@ class YaRNConfig(BaseModel):
     original_max_seq_len: int = Field(gt=0)
     beta_fast: float = Field(default=32.0, gt=0.0)
     beta_slow: float = Field(default=1.0, gt=0.0)
+
+    @model_validator(mode="after")
+    def _check_beta_ordering(self) -> YaRNConfig:
+        if self.beta_slow >= self.beta_fast:
+            raise ValueError(
+                f"beta_slow ({self.beta_slow}) must be less than beta_fast ({self.beta_fast}). "
+                "Swapped values invert the high/low-frequency partition and silently break scaling."
+            )
+        return self

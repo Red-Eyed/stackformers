@@ -64,6 +64,21 @@ class VarlenWindowedSDPAKernel(nn.Module):
             assert isinstance(result, Tensor)
             return result
 
+        import warnings
+
+        if not _HAS_VARLEN_ATTN:
+            reason = "torch.nn.attention.varlen.varlen_attn is unavailable (requires PyTorch ≥ 2.5)"
+        elif not q.is_cuda:
+            reason = f"tensor is on {q.device}, not CUDA"
+        else:
+            reason = f"dtype is {q.dtype}, not float16 or bfloat16"
+        warnings.warn(
+            f"VarlenWindowedSDPAKernel falling back to slow per-sequence loop: {reason}. "
+            "This is O(batch) kernel launches instead of one fused call.",
+            UserWarning,
+            stacklevel=2,
+        )
+
         batch = cu_seqlens.shape[0] - 1
         outputs: list[Tensor] = []
         for i in range(batch):
