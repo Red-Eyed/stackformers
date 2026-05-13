@@ -49,3 +49,12 @@ def make_packed(cu_seqlens: Int[Tensor, "bp1"], max_seqlen: int) -> PackedSequen
 def lengths_to_cu_seqlens(lengths: Int[Tensor, "b"]) -> Int[Tensor, "bp1"]:
     zero = torch.zeros(1, dtype=lengths.dtype, device=lengths.device)
     return torch.cat([zero, lengths.cumsum(0)])
+
+
+def position_ids_from_packed(seq: PackedSequence) -> Int[Tensor, "nt"]:
+    """Build per-token position indices [0..len_i-1] for each document in the pack."""
+    cu = seq.cu_seqlens
+    lengths = (cu[1:] - cu[:-1]).tolist()
+    return torch.cat(
+        [torch.arange(int(l), device=cu.device, dtype=torch.long) for l in lengths]
+    )

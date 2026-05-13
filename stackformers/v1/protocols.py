@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 
 import torch
-from jaxtyping import Float
+from jaxtyping import Float, Int
 from torch import Tensor
 
 
@@ -52,6 +52,24 @@ class AttnKernel(Protocol):
         attn_bias: Float[Tensor, "h n s"] | None,
         is_causal: bool,
     ) -> Float[Tensor, "b h n dh"]: ...
+
+
+@runtime_checkable
+class PackedPosEncoding(Protocol):
+    """Apply positional encoding to packed (varlen) query and key tensors.
+
+    Inputs are flat (nt, h, dh) — no batch dim. Position ids locate each
+    token within its document.
+
+    Null implementation: NoPosEncoding (returns q, k unchanged).
+    """
+
+    def forward_packed(
+        self,
+        q: Float[Tensor, "nt h dh"],
+        k: Float[Tensor, "nt h dh"],
+        position_ids: Int[Tensor, "nt"],
+    ) -> tuple[Float[Tensor, "nt h dh"], Float[Tensor, "nt h dh"]]: ...
 
 
 @runtime_checkable

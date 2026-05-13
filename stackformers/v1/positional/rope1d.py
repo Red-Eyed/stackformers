@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch
 import torch.nn as nn
-from jaxtyping import Float
+from jaxtyping import Float, Int
 from torch import Tensor
 
 
@@ -46,6 +46,14 @@ class RotaryEmbedding1D(nn.Module):
         freqs = torch.einsum("n, d -> n d", positions, self.inv_freq)  # type: ignore[attr-defined]
         return torch.cat([freqs, freqs], dim=-1)  # (n, dh)
 
+    @torch.no_grad()
+    def _build_freqs_from_ids(
+        self, position_ids: Int[Tensor, "nt"], device: torch.device
+    ) -> Float[Tensor, "nt dh"]:
+        ids = position_ids.to(device=device, dtype=self.inv_freq.dtype)  # type: ignore[attr-defined]
+        freqs = torch.einsum("n, d -> n d", ids, self.inv_freq)  # type: ignore[attr-defined]
+        return torch.cat([freqs, freqs], dim=-1)  # (nt, dh)
+
     def forward(
         self,
         q: Float[Tensor, "b h n dh"],
@@ -60,4 +68,18 @@ class RotaryEmbedding1D(nn.Module):
 
         q_out = _apply_rope(q, freqs_q)
         k_out = _apply_rope(k, freqs_k)
+        return q_out, k_out
+
+    def forward_packed(
+        self,
+        q: Float[Tensor, "nt h dh"],
+        k: Float[Tensor, "nt h dh"],
+        position_ids: Int[Tensor, "nt"],
+    ) -> tuple[Float[Tensor, "nt h dh"], Float[Tensor, "nt h dh"]]:
+        """Apply RoPE to packed (varlen) head tensors using per-token position ids."""
+        freqs = self._build_freqs_from_ids(position_ids, q.device)  # (nt, dh)
+        cos = freqs.cos().unsqueeze(1)  # (nt, 1, dh) — broadcasts over h
+        sin = freqs.sin().unsqueeze(1)
+        q_out = q * cos + _rotate_half(q) * sin
+        k_out = k * cos + _rotate_half(k) * sin
         return q_out, k_out
