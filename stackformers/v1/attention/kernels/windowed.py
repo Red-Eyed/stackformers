@@ -49,4 +49,6 @@ class WindowedSDPAKernel(nn.Module):
             combined = combined + attn_bias.unsqueeze(0)
         if attn_mask is not None:
             combined = combined + attn_mask
-        return F.scaled_dot_product_attention(q, k, v, attn_mask=combined, dropout_p=dropout_p, is_causal=False)
+        return F.scaled_dot_product_attention(
+            q, k, v, attn_mask=combined, dropout_p=dropout_p, is_causal=False
+        )

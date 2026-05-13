@@ -63,6 +63,8 @@ class VarlenSDPAKernel(nn.Module):
             ki = rearrange(k[start:end], "s h d -> 1 h s d")
             vi = rearrange(v[start:end], "s h d -> 1 h s d")
             dropout_p = self.dropout if self.training else 0.0
-            out_i = F.scaled_dot_product_attention(qi, ki, vi, dropout_p=dropout_p, is_causal=self.causal)
+            out_i = F.scaled_dot_product_attention(
+                qi, ki, vi, dropout_p=dropout_p, is_causal=self.causal
+            )
             outputs.append(rearrange(out_i, "1 h n d -> n h d"))
         return torch.cat(outputs, dim=0)

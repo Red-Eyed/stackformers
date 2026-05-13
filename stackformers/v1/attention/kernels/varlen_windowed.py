@@ -74,6 +74,8 @@ class VarlenWindowedSDPAKernel(nn.Module):
             n, s = qi.shape[-2], ki.shape[-2]
             window_mask = build_window_mask(n, s, self.window_size, self.causal, q.device)
             dropout_p = self.dropout if self.training else 0.0
-            out_i = F.scaled_dot_product_attention(qi, ki, vi, attn_mask=window_mask, dropout_p=dropout_p, is_causal=False)
+            out_i = F.scaled_dot_product_attention(
+                qi, ki, vi, attn_mask=window_mask, dropout_p=dropout_p, is_causal=False
+            )
             outputs.append(rearrange(out_i, "1 h n d -> n h d"))
         return torch.cat(outputs, dim=0)
