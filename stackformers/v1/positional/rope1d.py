@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import math
+
 import torch
 import torch.nn as nn
 from jaxtyping import Float, Int
 from torch import Tensor
+
+from stackformers.v1.positional.config import YaRNConfig
 
 
 def _rotate_half(x: Float[Tensor, "b h n dh"]) -> Float[Tensor, "b h n dh"]:
@@ -27,17 +31,50 @@ def _apply_rope(
     return t * cos + _rotate_half(t) * sin
 
 
+def _yarn_inv_freq(
+    inv_freq: Float[Tensor, "dh_half"],
+    cfg: YaRNConfig,
+) -> Float[Tensor, "dh_half"]:
+    """Return YaRN-scaled inv_freq (Peng et al., 2023, NTK-by-parts).
+
+    Wavelength thresholds split dimensions into three bands:
+      - high-freq (short wavelength): unchanged
+      - low-freq  (long  wavelength): scaled down by cfg.scale
+      - middle: smooth linear blend controlled by cfg.beta_fast / beta_slow
+    All ops are on tensors; this function is safe to call from __init__.
+    """
+    wavelen = 2.0 * math.pi / inv_freq  # (dh_half,)
+    low_wavelen = cfg.original_max_seq_len / cfg.beta_slow
+    high_wavelen = cfg.original_max_seq_len / cfg.beta_fast
+
+    # smooth ∈ [0, 1]: 0 at low-freq boundary, 1 at high-freq boundary
+    smooth = (
+        (cfg.original_max_seq_len / wavelen - cfg.beta_slow) / (cfg.beta_fast - cfg.beta_slow)
+    ).clamp(0.0, 1.0)
+
+    scaled = inv_freq / cfg.scale
+    blended = smooth * inv_freq + (1.0 - smooth) * scaled
+    return torch.where(
+        wavelen < high_wavelen, inv_freq, torch.where(wavelen > low_wavelen, scaled, blended)
+    )
+
+
 class RotaryEmbedding1D(nn.Module):
     """1-D Rotary Position Embedding (Su et al., 2021).
 
+    Optionally accepts a YaRNConfig to extend the effective context length
+    via NTK-by-parts frequency scaling (Peng et al., 2023).  The scaling
+    modifies inv_freq once at construction — forward() is unchanged.
+
     Math ref: x-transformers RotaryEmbedding / apply_rotary_pos_emb.
-    Rewritten using einops; no view/reshape.
     """
 
-    def __init__(self, dim_head: int, base: int = 10_000) -> None:
+    def __init__(self, dim_head: int, base: int = 10_000, yarn: YaRNConfig | None = None) -> None:
         super().__init__()
         assert dim_head % 2 == 0, "dim_head must be even for RoPE"
         inv_freq = 1.0 / (base ** (torch.arange(0, dim_head, 2).float() / dim_head))
+        if yarn is not None:
+            inv_freq = _yarn_inv_freq(inv_freq, yarn)
         self.register_buffer("inv_freq", inv_freq, persistent=False)
 
     @torch.no_grad()

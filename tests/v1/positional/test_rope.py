@@ -3,10 +3,11 @@ from __future__ import annotations
 import pytest
 import torch
 
-from tests.conftest import atol
+from stackformers.v1.positional.config import YaRNConfig
 from stackformers.v1.positional.none import NoPosEncoding
 from stackformers.v1.positional.rope1d import RotaryEmbedding1D
 from stackformers.v1.positional.rope2d import RotaryEmbedding2D
+from tests.conftest import atol
 
 B, H, N, DH = 2, 4, 8, 32
 
@@ -99,3 +100,50 @@ def test_rope2d_output_shape(
     q_out, k_out = rope2d(q, k, row_ids, col_ids)
     assert q_out.shape == q.shape
     assert k_out.shape == k.shape
+
+
+# --- YaRN scaling ---
+
+_YARN = YaRNConfig(scale=4.0, original_max_seq_len=512)
+
+
+@pytest.fixture
+def yarn_rope(device_dtype: tuple[torch.device, torch.dtype]) -> RotaryEmbedding1D:
+    device, dtype = device_dtype
+    return RotaryEmbedding1D(dim_head=DH, yarn=_YARN).to(device=device, dtype=dtype)
+
+
+def test_yarn_output_shape(
+    yarn_rope: RotaryEmbedding1D,
+    qk: tuple[torch.Tensor, torch.Tensor],
+) -> None:
+    q, k = qk
+    q_out, k_out = yarn_rope(q, k)
+    assert q_out.shape == q.shape
+    assert k_out.shape == k.shape
+
+
+def test_yarn_preserves_norms(
+    yarn_rope: RotaryEmbedding1D,
+    qk: tuple[torch.Tensor, torch.Tensor],
+    device_dtype: tuple[torch.device, torch.dtype],
+) -> None:
+    _, dtype = device_dtype
+    q, k = qk
+    q_out, k_out = yarn_rope(q, k)
+    tol = atol(dtype)
+    assert torch.allclose(q.norm(dim=-1), q_out.norm(dim=-1), atol=tol)
+    assert torch.allclose(k.norm(dim=-1), k_out.norm(dim=-1), atol=tol)
+
+
+def test_yarn_differs_from_base_rope(
+    qk: tuple[torch.Tensor, torch.Tensor],
+    device_dtype: tuple[torch.device, torch.dtype],
+) -> None:
+    device, dtype = device_dtype
+    base = RotaryEmbedding1D(dim_head=DH).to(device=device, dtype=dtype)
+    yarn = RotaryEmbedding1D(dim_head=DH, yarn=_YARN).to(device=device, dtype=dtype)
+    q, k = qk
+    q_base, _ = base(q, k)
+    q_yarn, _ = yarn(q, k)
+    assert not torch.allclose(q_base, q_yarn)
