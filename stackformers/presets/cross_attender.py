@@ -4,15 +4,18 @@ import torch.nn as nn
 from pydantic import BaseModel, Field
 from torch import Tensor
 
-from stackformers.attention.bias import NoBiasBuilder
+from stackformers.attention.bias_config import BiasBuilderConfig, NoBiasConfig
+from stackformers.attention.bias_factory import build_bias_builder
 from stackformers.attention.config import AttentionConfig
 from stackformers.attention.cross_attn import CrossAttention
-from stackformers.attention.kernels import SDPAKernel
+from stackformers.attention.kernels.config import KernelConfig, SDPAKernelConfig
+from stackformers.attention.kernels.factory import build_kernel
 from stackformers.cross_attender import CrossAttenderLayer, CrossAttenderStack
 from stackformers.feedforward.config import FeedForwardConfig
+from stackformers.feedforward.factory import build_ff
+from stackformers.norm.factory import NormConfig, build_norm
 from stackformers.positional.config import NoPosEncodingConfig
 from stackformers.positional.none import NoPosEncoding
-from stackformers.presets.configs import NormConfig, build_ff, build_norm
 from stackformers.sequence import SequenceInput
 
 
@@ -20,6 +23,8 @@ class CrossAttenderConfig(BaseModel):
     attn: AttentionConfig  # dim, heads, dim_head, dropout; causal is always False here
     ff: FeedForwardConfig
     norm: NormConfig
+    kernel: KernelConfig = SDPAKernelConfig()
+    bias: BiasBuilderConfig = NoBiasConfig()
     num_layers: int = Field(gt=0)
 
 
@@ -42,8 +47,12 @@ class CrossAttender(nn.Module):
                     cross_attn=CrossAttention(
                         config=cross_attn_cfg,
                         pos_encoding=NoPosEncoding(NoPosEncodingConfig()),
-                        bias_builder=NoBiasBuilder(),
-                        kernel=SDPAKernel(causal=False, dropout=config.attn.dropout),
+                        bias_builder=build_bias_builder(
+                            config.bias, cross_attn_cfg.heads, causal=False
+                        ),
+                        kernel=build_kernel(
+                            config.kernel, causal=False, dropout=cross_attn_cfg.dropout
+                        ),
                     ),
                     ff=build_ff(config.ff),
                     norm_cross=build_norm(config.norm),

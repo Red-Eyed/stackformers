@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Annotated, Literal
+
 from pydantic import BaseModel, Field, model_validator
 
 
@@ -33,13 +35,17 @@ class YaRNConfig(BaseModel):
 
 
 class RoPE1DConfig(BaseModel):
+    kind: Literal["rope1d"] = "rope1d"
     dim_head: int = Field(gt=0)
     base: int = Field(default=10_000, gt=0)
     yarn: YaRNConfig | None = None
 
 
 class NoPosEncodingConfig(BaseModel):
-    pass  # null object — no parameters by design
+    kind: Literal["none"] = "none"
 
 
-PosEncodingConfig = RoPE1DConfig | NoPosEncodingConfig
+PosEncodingConfig = Annotated[
+    RoPE1DConfig | NoPosEncodingConfig,
+    Field(discriminator="kind"),
+]
