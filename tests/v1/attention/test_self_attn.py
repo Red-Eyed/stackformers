@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 import torch
 
 from stackformers.v1.attention.bias import NoBiasBuilder
@@ -13,66 +14,109 @@ from stackformers.v1.sequence import PaddedSequence, make_padded
 B, N, D, H, DH = 2, 16, 64, 4, 16
 
 
-def _make_self_attn(causal: bool = False) -> SelfAttention:
-    config = AttentionConfig(dim=D, heads=H, dim_head=DH, causal=causal)
+@pytest.fixture
+def self_attn(device_dtype: tuple[torch.device, torch.dtype]) -> SelfAttention:
+    device, dtype = device_dtype
+    config = AttentionConfig(dim=D, heads=H, dim_head=DH)
     return SelfAttention(
         config=config,
         pos_encoding=NoPosEncoding(),
         bias_builder=NoBiasBuilder(),
         kernel=SDPAKernel(),
-    )
+    ).to(device=device, dtype=dtype)
 
 
-def test_self_attn_output_shape() -> None:
-    attn = _make_self_attn()
-    x = torch.randn(B, N, D)
-    seq = make_padded(torch.ones(B, N, dtype=torch.bool))
-    out = attn(x, seq)
-    assert out.shape == (B, N, D)
-
-
-def test_self_attn_causal_shape() -> None:
-    attn = _make_self_attn(causal=True)
-    x = torch.randn(B, N, D)
-    seq = make_padded(torch.ones(B, N, dtype=torch.bool))
-    out = attn(x, seq)
-    assert out.shape == (B, N, D)
-
-
-def test_self_attn_with_rope() -> None:
+@pytest.fixture
+def self_attn_rope(device_dtype: tuple[torch.device, torch.dtype]) -> SelfAttention:
+    device, dtype = device_dtype
     config = AttentionConfig(dim=D, heads=H, dim_head=DH)
-    attn = SelfAttention(
+    return SelfAttention(
         config=config,
         pos_encoding=RotaryEmbedding1D(dim_head=DH),
         bias_builder=NoBiasBuilder(),
         kernel=SDPAKernel(),
-    )
-    x = torch.randn(B, N, D)
-    seq = make_padded(torch.ones(B, N, dtype=torch.bool))
+    ).to(device=device, dtype=dtype)
+
+
+@pytest.fixture
+def x_pad(device_dtype: tuple[torch.device, torch.dtype]) -> tuple[torch.Tensor, PaddedSequence]:
+    device, dtype = device_dtype
+    x = torch.randn(B, N, D, device=device, dtype=dtype)
+    seq = make_padded(torch.ones(B, N, dtype=torch.bool, device=device))
+    return x, seq
+
+
+def test_self_attn_output_shape(
+    self_attn: SelfAttention,
+    x_pad: tuple[torch.Tensor, PaddedSequence],
+) -> None:
+    x, seq = x_pad
+    out = self_attn(x, seq)
+    assert out.shape == (B, N, D)
+
+
+def test_self_attn_causal_shape(
+    device_dtype: tuple[torch.device, torch.dtype],
+    x_pad: tuple[torch.Tensor, PaddedSequence],
+) -> None:
+    device, dtype = device_dtype
+    config = AttentionConfig(dim=D, heads=H, dim_head=DH, causal=True)
+    attn = SelfAttention(
+        config=config,
+        pos_encoding=NoPosEncoding(),
+        bias_builder=NoBiasBuilder(),
+        kernel=SDPAKernel(),
+    ).to(device=device, dtype=dtype)
+    x, seq = x_pad
     out = attn(x, seq)
     assert out.shape == (B, N, D)
 
 
-def test_self_attn_with_padding_mask() -> None:
-    attn = _make_self_attn()
-    x = torch.randn(B, N, D)
-    mask = torch.ones(B, N, dtype=torch.bool)
+def test_self_attn_with_rope(
+    self_attn_rope: SelfAttention,
+    x_pad: tuple[torch.Tensor, PaddedSequence],
+) -> None:
+    x, seq = x_pad
+    out = self_attn_rope(x, seq)
+    assert out.shape == (B, N, D)
+
+
+def test_self_attn_with_padding_mask(
+    self_attn: SelfAttention,
+    device_dtype: tuple[torch.device, torch.dtype],
+) -> None:
+    device, dtype = device_dtype
+    x = torch.randn(B, N, D, device=device, dtype=dtype)
+    mask = torch.ones(B, N, dtype=torch.bool, device=device)
     mask[1, 12:] = False
-    seq = PaddedSequence(mask=mask)
-    out = attn(x, seq)
+    out = self_attn(x, PaddedSequence(mask=mask))
     assert out.shape == (B, N, D)
 
 
-def test_self_attn_gqa() -> None:
-    """Grouped query attention: kv_heads < heads."""
+def test_self_attn_gqa(device_dtype: tuple[torch.device, torch.dtype]) -> None:
+    device, dtype = device_dtype
     config = AttentionConfig(dim=D, heads=H, dim_head=DH, kv_heads=2)
     attn = SelfAttention(
         config=config,
         pos_encoding=NoPosEncoding(),
         bias_builder=NoBiasBuilder(),
         kernel=SDPAKernel(),
-    )
-    x = torch.randn(B, N, D)
-    seq = make_padded(torch.ones(B, N, dtype=torch.bool))
+    ).to(device=device, dtype=dtype)
+    x = torch.randn(B, N, D, device=device, dtype=dtype)
+    seq = make_padded(torch.ones(B, N, dtype=torch.bool, device=device))
     out = attn(x, seq)
     assert out.shape == (B, N, D)
+
+
+def test_self_attn_gradients(device: torch.device) -> None:
+    config = AttentionConfig(dim=D, heads=H, dim_head=DH)
+    attn = SelfAttention(
+        config=config,
+        pos_encoding=NoPosEncoding(),
+        bias_builder=NoBiasBuilder(),
+        kernel=SDPAKernel(),
+    ).to(device=device)
+    x = torch.randn(B, N, D, device=device, requires_grad=True)
+    seq = make_padded(torch.ones(B, N, dtype=torch.bool, device=device))
+    attn(x, seq).sum().backward()
+    assert x.grad is not None
