@@ -49,7 +49,7 @@ class CrossAttender(nn.Module, Generic[ConfigT]):
                         config=cross_attn_cfg,
                         pos_encoding=NoPosEncoding(NoPosEncodingConfig()),
                         bias_builder=NoBiasBuilder(),
-                        kernel=SDPAKernel(dropout=config.attn.dropout),
+                        kernel=SDPAKernel(causal=False, dropout=config.attn.dropout),
                     ),
                     ff=build_ff(config.ff),
                     norm_cross=build_norm(config.norm),

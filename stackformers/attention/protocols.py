@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-import torch
-from jaxtyping import Float
 from torch import Tensor
 
 from stackformers.sequence import SequenceInfo
@@ -11,21 +9,24 @@ from stackformers.sequence import SequenceInfo
 
 @runtime_checkable
 class AttnKernel(Protocol):
-    """Compute scaled dot-product attention given projected heads.
+    """Compute scaled dot-product attention.
 
-    Implementations: SDPAKernel, VarlenSDPAKernel, WindowedSDPAKernel,
+    Works for both padded (b h n dh) and packed (nt h dh) layouts —
+    implementations dispatch on seq_info type.
+    Causal masking is configured at construction, not passed per call.
+    Implementations: SDPAKernel, WindowedSDPAKernel, VarlenSDPAKernel,
     VarlenWindowedSDPAKernel.
     """
 
     def forward(
         self,
-        q: Float[Tensor, "b h n dh"],
-        k: Float[Tensor, "b h s dh"],
-        v: Float[Tensor, "b h s dh"],
-        attn_mask: Float[Tensor, "b 1 n s"] | None,
-        attn_bias: Float[Tensor, "h n s"] | None,
-        is_causal: bool,
-    ) -> Float[Tensor, "b h n dh"]: ...
+        q: Tensor,
+        k: Tensor,
+        v: Tensor,
+        q_seq_info: SequenceInfo,
+        k_seq_info: SequenceInfo | None,
+        attn_bias: Tensor | None,
+    ) -> Tensor: ...
 
 
 @runtime_checkable
@@ -40,8 +41,8 @@ class AttnBiasBuilder(Protocol):
         self,
         n: int,
         s: int,
-        device: torch.device,
-    ) -> Float[Tensor, "h n s"] | None: ...
+        device,
+    ) -> Tensor | None: ...
 
 
 @runtime_checkable
@@ -53,22 +54,22 @@ class SelfAttn(Protocol):
 
     def __call__(
         self,
-        x: Float[Tensor, "b n d"],
+        x: Tensor,
         seq_info: SequenceInfo,
-    ) -> Float[Tensor, "b n d"]: ...
+    ) -> Tensor: ...
 
 
 @runtime_checkable
 class CrossAttn(Protocol):
-    """Cross-attention from x to context: maps (x, context, ctx_seq_info) → x.
+    """Cross-attention from x to context: maps (x, context, ...) → x.
 
     Implementation: CrossAttention.
     """
 
     def __call__(
         self,
-        x: Float[Tensor, "b n d"],
-        context: Float[Tensor, "b s d"],
+        x: Tensor,
+        context: Tensor,
         x_seq_info: SequenceInfo | None = None,
         ctx_seq_info: SequenceInfo | None = None,
-    ) -> Float[Tensor, "b n d"]: ...
+    ) -> Tensor: ...

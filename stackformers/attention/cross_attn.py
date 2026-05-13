@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import torch
 import torch.nn as nn
 from einops import rearrange, repeat
-from jaxtyping import Bool, Float
 from torch import Tensor
 
 from stackformers.attention.config import AttentionConfig
@@ -12,19 +10,26 @@ from stackformers.positional.protocols import PosEncoding
 from stackformers.sequence import PaddedSequence, SequenceInfo
 
 
-def _mask_to_float_bias(mask: Bool[Tensor, "b s"], dtype: torch.dtype) -> Float[Tensor, "b 1 1 s"]:
-    """Convert bool key-padding mask (True=valid) to additive float bias."""
-    bias = torch.zeros(mask.shape, dtype=dtype, device=mask.device)
-    bias = bias.masked_fill(~mask, torch.finfo(dtype).min)
-    return rearrange(bias, "b s -> b 1 1 s")
+class BaseCrossAttention(nn.Module):
+    """Owns all learnable parameters for cross-attention.
 
-
-class CrossAttention(nn.Module):
-    """Multi-head cross-attention: queries from x, keys/values from context.
-
-    Behavioral choices injected: pos_encoding, bias_builder, kernel.
-    Cross-attention is never causal — causal flag is not in AttentionConfig here.
+    Subclass for padded (CrossAttention) or packed (PackedCrossAttention) forward paths.
+    State dicts are compatible between subclasses — parameter names are identical.
     """
+
+    def __init__(self, config: AttentionConfig) -> None:
+        super().__init__()
+        self.config = config
+        h, kv_h, dh = config.heads, config.effective_kv_heads, config.dim_head
+        self.to_q = nn.Linear(config.dim, h * dh, bias=False)
+        self.to_k = nn.Linear(config.dim, kv_h * dh, bias=False)
+        self.to_v = nn.Linear(config.dim, kv_h * dh, bias=False)
+        self.to_out = nn.Linear(h * dh, config.dim, bias=False)
+        nn.init.normal_(self.to_out.weight, std=0.02)
+
+
+class CrossAttention(BaseCrossAttention):
+    """Padded multi-head cross-attention: queries from x, keys/values from context."""
 
     def __init__(
         self,
@@ -33,35 +38,20 @@ class CrossAttention(nn.Module):
         bias_builder: AttnBiasBuilder,
         kernel: AttnKernel,
     ) -> None:
-        super().__init__()
-        self.config = config
+        super().__init__(config)
         self.pos_encoding = pos_encoding
         self.bias_builder = bias_builder
         self.kernel = kernel
 
-        h = config.heads
-        kv_h = config.effective_kv_heads
-        dh = config.dim_head
-
-        self.to_q = nn.Linear(config.dim, h * dh, bias=False)
-        self.to_k = nn.Linear(config.dim, kv_h * dh, bias=False)
-        self.to_v = nn.Linear(config.dim, kv_h * dh, bias=False)
-        self.to_out = nn.Linear(h * dh, config.dim, bias=False)
-
-        nn.init.normal_(self.to_out.weight, std=0.02)
-
     def forward(
         self,
-        x: Float[Tensor, "b n d"],
-        context: Float[Tensor, "b s d"],
+        x: Tensor,
+        context: Tensor,
         x_seq_info: SequenceInfo | None = None,
         ctx_seq_info: SequenceInfo | None = None,
-    ) -> Float[Tensor, "b n d"]:
-        b, n, _ = x.shape
-        s = context.shape[1]
-        h = self.config.heads
-        kv_h = self.config.effective_kv_heads
-        groups = self.config.groups
+    ) -> Tensor:
+        h, kv_h, groups = self.config.heads, self.config.effective_kv_heads, self.config.groups
+        n, s = x.shape[1], context.shape[1]
 
         q = rearrange(self.to_q(x), "b n (h d) -> b h n d", h=h)
         k = rearrange(self.to_k(context), "b s (h d) -> b h s d", h=kv_h)
@@ -71,27 +61,13 @@ class CrossAttention(nn.Module):
             k = repeat(k, "b h s d -> b (h g) s d", g=groups)
             v = repeat(v, "b h s d -> b (h g) s d", g=groups)
 
-        q, k = self.pos_encoding.forward(q, k)
-
-        attn_mask: Float[Tensor, "b 1 1 s"] | None = None
-        if ctx_seq_info is not None and isinstance(ctx_seq_info, PaddedSequence):
-            attn_mask = _mask_to_float_bias(ctx_seq_info.mask, q.dtype)
-
+        q, k = self.pos_encoding.forward(q, k, x_seq_info, ctx_seq_info)
         attn_bias = self.bias_builder.forward(n, s, x.device)
+        out = self.kernel.forward(q, k, v, x_seq_info or PaddedSequence(mask=x.new_ones(x.shape[0], n, dtype=bool)), ctx_seq_info, attn_bias)
 
-        out = self.kernel.forward(
-            q,
-            k,
-            v,
-            attn_mask=attn_mask,
-            attn_bias=attn_bias,
-            is_causal=False,
-        )
+        out = self.to_out(rearrange(out, "b h n d -> b n (h d)"))
 
-        out = rearrange(out, "b h n d -> b n (h d)")
-        out = self.to_out(out)
-
-        if x_seq_info is not None and isinstance(x_seq_info, PaddedSequence):
+        if isinstance(x_seq_info, PaddedSequence):
             out = out * x_seq_info.mask.unsqueeze(-1)
 
         return out

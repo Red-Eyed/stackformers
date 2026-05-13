@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import NamedTuple
-
 import pytest
 import torch
 import torch.export
@@ -14,60 +12,42 @@ from stackformers.attention.kernels import (
     VarlenWindowedSDPAKernel,
     WindowedSDPAKernel,
 )
+from stackformers.sequence import PackedSequence, PaddedSequence, make_packed, make_padded
 
 B, H, N, DH = 2, 4, 16, 32
 
 
-class QKV(NamedTuple):
-    q: Tensor
-    k: Tensor
-    v: Tensor
-
-
-class VarlenBatch(NamedTuple):
-    q: Tensor
-    k: Tensor
-    v: Tensor
-    cu_seqlens: Tensor
-    max_seqlen: int
+@pytest.fixture
+def padded_seq(device_dtype: tuple[torch.device, torch.dtype]) -> PaddedSequence:
+    device, _ = device_dtype
+    return make_padded(torch.ones(B, N, dtype=torch.bool, device=device))
 
 
 @pytest.fixture
-def qkv(device_dtype: tuple[torch.device, torch.dtype]) -> QKV:
+def packed_seq(device_dtype: tuple[torch.device, torch.dtype]) -> PackedSequence:
+    device, _ = device_dtype
+    return make_packed(torch.tensor([0, 6, 10], dtype=torch.int32, device=device), max_seqlen=6)
+
+
+@pytest.fixture
+def qkv_padded(device_dtype: tuple[torch.device, torch.dtype]) -> tuple[Tensor, Tensor, Tensor]:
     device, dtype = device_dtype
-    return QKV(
-        q=torch.randn(B, H, N, DH, device=device, dtype=dtype),
-        k=torch.randn(B, H, N, DH, device=device, dtype=dtype),
-        v=torch.randn(B, H, N, DH, device=device, dtype=dtype),
+    return (
+        torch.randn(B, H, N, DH, device=device, dtype=dtype),
+        torch.randn(B, H, N, DH, device=device, dtype=dtype),
+        torch.randn(B, H, N, DH, device=device, dtype=dtype),
     )
 
 
 @pytest.fixture
-def varlen_batch(device_dtype: tuple[torch.device, torch.dtype]) -> VarlenBatch:
+def qkv_packed(device_dtype: tuple[torch.device, torch.dtype]) -> tuple[Tensor, Tensor, Tensor]:
     device, dtype = device_dtype
     total = 10
-    return VarlenBatch(
-        q=torch.randn(total, H, DH, device=device, dtype=dtype),
-        k=torch.randn(total, H, DH, device=device, dtype=dtype),
-        v=torch.randn(total, H, DH, device=device, dtype=dtype),
-        cu_seqlens=torch.tensor([0, 6, 10], dtype=torch.int32, device=device),
-        max_seqlen=6,
+    return (
+        torch.randn(total, H, DH, device=device, dtype=dtype),
+        torch.randn(total, H, DH, device=device, dtype=dtype),
+        torch.randn(total, H, DH, device=device, dtype=dtype),
     )
-
-
-@pytest.fixture
-def sdpa_kernel() -> SDPAKernel:
-    return SDPAKernel()
-
-
-@pytest.fixture
-def varlen_kernel() -> VarlenSDPAKernel:
-    return VarlenSDPAKernel()
-
-
-@pytest.fixture
-def varlen_causal_kernel() -> VarlenSDPAKernel:
-    return VarlenSDPAKernel(causal=True)
 
 
 # --- bias builders ---
@@ -75,8 +55,7 @@ def varlen_causal_kernel() -> VarlenSDPAKernel:
 
 def test_no_bias_builder_returns_none(device_dtype: tuple[torch.device, torch.dtype]) -> None:
     device, _ = device_dtype
-    result = NoBiasBuilder().forward(N, N, device)
-    assert result is None
+    assert NoBiasBuilder().forward(N, N, device) is None
 
 
 def test_alibi_output_shape(device_dtype: tuple[torch.device, torch.dtype]) -> None:
@@ -110,41 +89,63 @@ def test_alibi_non_power_of_two_heads(device_dtype: tuple[torch.device, torch.dt
 # --- SDPA kernel ---
 
 
-def test_sdpa_kernel_output_shape(sdpa_kernel: SDPAKernel, qkv: QKV) -> None:
-    out = sdpa_kernel(qkv.q, qkv.k, qkv.v, attn_mask=None, attn_bias=None, is_causal=False)
+def test_sdpa_kernel_output_shape(
+    qkv_padded: tuple[Tensor, Tensor, Tensor], padded_seq: PaddedSequence
+) -> None:
+    q, k, v = qkv_padded
+    out = SDPAKernel()(q, k, v, padded_seq, padded_seq, None)
     assert out.shape == (B, H, N, DH)
 
 
-def test_sdpa_kernel_with_bias(sdpa_kernel: SDPAKernel, qkv: QKV) -> None:
-    device, dtype = qkv.q.device, qkv.q.dtype
-    bias = torch.zeros(H, N, N, device=device, dtype=dtype)
-    out = sdpa_kernel(qkv.q, qkv.k, qkv.v, attn_mask=None, attn_bias=bias, is_causal=False)
+def test_sdpa_kernel_with_bias(
+    qkv_padded: tuple[Tensor, Tensor, Tensor], padded_seq: PaddedSequence
+) -> None:
+    q, k, v = qkv_padded
+    bias = torch.zeros(H, N, N, device=q.device, dtype=q.dtype)
+    out = SDPAKernel()(q, k, v, padded_seq, padded_seq, bias)
     assert out.shape == (B, H, N, DH)
 
 
-def test_sdpa_kernel_causal(sdpa_kernel: SDPAKernel, qkv: QKV) -> None:
-    out = sdpa_kernel(qkv.q, qkv.k, qkv.v, attn_mask=None, attn_bias=None, is_causal=True)
+def test_sdpa_kernel_causal(
+    qkv_padded: tuple[Tensor, Tensor, Tensor], padded_seq: PaddedSequence
+) -> None:
+    q, k, v = qkv_padded
+    out = SDPAKernel(causal=True)(q, k, v, padded_seq, padded_seq, None)
+    assert out.shape == (B, H, N, DH)
+
+
+def test_sdpa_kernel_no_k_seq_info(
+    qkv_padded: tuple[Tensor, Tensor, Tensor], padded_seq: PaddedSequence
+) -> None:
+    q, k, v = qkv_padded
+    out = SDPAKernel()(q, k, v, padded_seq, None, None)
     assert out.shape == (B, H, N, DH)
 
 
 # --- windowed kernel ---
 
 
-def test_windowed_kernel_large_window_shape(qkv: QKV) -> None:
-    kernel = WindowedSDPAKernel(window_size=64)  # window > N
-    out = kernel(qkv.q, qkv.k, qkv.v, attn_mask=None, attn_bias=None, is_causal=False)
+def test_windowed_kernel_large_window_shape(
+    qkv_padded: tuple[Tensor, Tensor, Tensor], padded_seq: PaddedSequence
+) -> None:
+    q, k, v = qkv_padded
+    out = WindowedSDPAKernel(window_size=64)(q, k, v, padded_seq, padded_seq, None)
     assert out.shape == (B, H, N, DH)
 
 
-def test_windowed_kernel_active_shape(qkv: QKV) -> None:
-    kernel = WindowedSDPAKernel(window_size=4)  # window < N → mask path
-    out = kernel(qkv.q, qkv.k, qkv.v, attn_mask=None, attn_bias=None, is_causal=False)
+def test_windowed_kernel_active_shape(
+    qkv_padded: tuple[Tensor, Tensor, Tensor], padded_seq: PaddedSequence
+) -> None:
+    q, k, v = qkv_padded
+    out = WindowedSDPAKernel(window_size=4)(q, k, v, padded_seq, padded_seq, None)
     assert out.shape == (B, H, N, DH)
 
 
-def test_windowed_kernel_causal_shape(qkv: QKV) -> None:
-    kernel = WindowedSDPAKernel(window_size=4, causal=True)
-    out = kernel(qkv.q, qkv.k, qkv.v, attn_mask=None, attn_bias=None, is_causal=False)
+def test_windowed_kernel_causal_shape(
+    qkv_padded: tuple[Tensor, Tensor, Tensor], padded_seq: PaddedSequence
+) -> None:
+    q, k, v = qkv_padded
+    out = WindowedSDPAKernel(window_size=4, causal=True)(q, k, v, padded_seq, padded_seq, None)
     assert out.shape == (B, H, N, DH)
 
 
@@ -155,49 +156,49 @@ def test_windowed_kernel_causal_masks_future(
     kernel = WindowedSDPAKernel(window_size=4, causal=True)
     q = torch.zeros(1, 1, 8, 4, device=device, dtype=dtype)
     k = torch.zeros(1, 1, 8, 4, device=device, dtype=dtype)
-    v = (
-        torch.eye(8, device=device, dtype=dtype)
-        .unsqueeze(0)
-        .unsqueeze(0)
-        .expand(1, 1, 8, 8)[..., :4]
-    )
+    v = torch.eye(8, device=device, dtype=dtype).unsqueeze(0).unsqueeze(0).expand(1, 1, 8, 8)[..., :4]
     q[0, 0, 0] = 1.0
-    out = kernel(q, k, v, attn_mask=None, attn_bias=None, is_causal=False)
+    seq = make_padded(torch.ones(1, 8, dtype=torch.bool, device=device))
+    out = kernel(q, k, v, seq, seq, None)
     assert out.shape == (1, 1, 8, 4)
 
 
 # --- varlen SDPA kernel ---
 
 
-def test_varlen_kernel_shape(varlen_kernel: VarlenSDPAKernel, varlen_batch: VarlenBatch) -> None:
-    vb = varlen_batch
-    out = varlen_kernel(vb.q, vb.k, vb.v, cu_seqlens=vb.cu_seqlens, max_seqlen=vb.max_seqlen)
-    assert out.shape == vb.q.shape
+def test_varlen_kernel_shape(
+    qkv_packed: tuple[Tensor, Tensor, Tensor], packed_seq: PackedSequence
+) -> None:
+    q, k, v = qkv_packed
+    out = VarlenSDPAKernel()(q, k, v, packed_seq, packed_seq, None)
+    assert out.shape == q.shape
 
 
 def test_varlen_kernel_causal_shape(
-    varlen_causal_kernel: VarlenSDPAKernel, varlen_batch: VarlenBatch
+    qkv_packed: tuple[Tensor, Tensor, Tensor], packed_seq: PackedSequence
 ) -> None:
-    vb = varlen_batch
-    out = varlen_causal_kernel(vb.q, vb.k, vb.v, cu_seqlens=vb.cu_seqlens, max_seqlen=vb.max_seqlen)
-    assert out.shape == vb.q.shape
+    q, k, v = qkv_packed
+    out = VarlenSDPAKernel(causal=True)(q, k, v, packed_seq, packed_seq, None)
+    assert out.shape == q.shape
 
 
 # --- varlen windowed kernel ---
 
 
-def test_varlen_windowed_kernel_shape(varlen_batch: VarlenBatch) -> None:
-    kernel = VarlenWindowedSDPAKernel(window_size=4)
-    vb = varlen_batch
-    out = kernel(vb.q, vb.k, vb.v, cu_seqlens=vb.cu_seqlens, max_seqlen=vb.max_seqlen)
-    assert out.shape == vb.q.shape
+def test_varlen_windowed_kernel_shape(
+    qkv_packed: tuple[Tensor, Tensor, Tensor], packed_seq: PackedSequence
+) -> None:
+    q, k, v = qkv_packed
+    out = VarlenWindowedSDPAKernel(window_size=4)(q, k, v, packed_seq, packed_seq, None)
+    assert out.shape == q.shape
 
 
-def test_varlen_windowed_kernel_causal_shape(varlen_batch: VarlenBatch) -> None:
-    kernel = VarlenWindowedSDPAKernel(window_size=3, causal=True)
-    vb = varlen_batch
-    out = kernel(vb.q, vb.k, vb.v, cu_seqlens=vb.cu_seqlens, max_seqlen=vb.max_seqlen)
-    assert out.shape == vb.q.shape
+def test_varlen_windowed_kernel_causal_shape(
+    qkv_packed: tuple[Tensor, Tensor, Tensor], packed_seq: PackedSequence
+) -> None:
+    q, k, v = qkv_packed
+    out = VarlenWindowedSDPAKernel(window_size=3, causal=True)(q, k, v, packed_seq, packed_seq, None)
+    assert out.shape == q.shape
 
 
 # --- torch.export ---
@@ -208,12 +209,14 @@ def _export_windowed(kernel: WindowedSDPAKernel, n: int) -> torch.export.Exporte
     q = torch.randn(1, H, n, DH)
     k = torch.randn(1, H, n, DH)
     v = torch.randn(1, H, n, DH)
+    seq = make_padded(torch.ones(1, n, dtype=torch.bool))
     n_dim = torch.export.Dim("n", min=1, max=512)
-    seq = {2: n_dim}
+    seq_shapes = {2: n_dim}
+    mask_shapes = {1: n_dim}
     return torch.export.export(
         kernel,
-        (q, k, v, None, None, False),
-        dynamic_shapes=(seq, seq, seq, None, None, None),
+        (q, k, v, seq, seq, None),
+        dynamic_shapes=(seq_shapes, seq_shapes, seq_shapes, PaddedSequence(mask_shapes), PaddedSequence(mask_shapes), None),
     )
 
 
@@ -225,14 +228,16 @@ def test_windowed_kernel_export_succeeds() -> None:
 def test_windowed_kernel_export_shorter_than_window() -> None:
     ep = _export_windowed(WindowedSDPAKernel(window_size=4), n=8)
     q = torch.randn(1, H, 3, DH)
-    out = ep.module()(q, q, q, None, None, False)
+    seq = make_padded(torch.ones(1, 3, dtype=torch.bool))
+    out = ep.module()(q, q, q, seq, seq, None)
     assert out.shape == (1, H, 3, DH)
 
 
 def test_windowed_kernel_export_longer_than_traced() -> None:
     ep = _export_windowed(WindowedSDPAKernel(window_size=4), n=8)
     q = torch.randn(1, H, 32, DH)
-    out = ep.module()(q, q, q, None, None, False)
+    seq = make_padded(torch.ones(1, 32, dtype=torch.bool))
+    out = ep.module()(q, q, q, seq, seq, None)
     assert out.shape == (1, H, 32, DH)
 
 

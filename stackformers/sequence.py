@@ -1,21 +1,23 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from typing import NamedTuple
 
 import torch
 from jaxtyping import Bool, Int
 from torch import Tensor
 
+# NamedTuple instead of dataclass: PyTorch's pytree system handles tuples natively,
+# so torch.export and torch.compile see the tensor fields without any registration.
+# Dataclasses require explicit pytree.register_dataclass() to achieve the same.
 
-@dataclass(frozen=True)
-class PaddedSequence:
+
+class PaddedSequence(NamedTuple):
     """Batch of padded sequences; mask marks valid (non-padding) positions."""
 
     mask: Bool[Tensor, "b n"]  # True = valid token
 
 
-@dataclass(frozen=True)
-class PackedSequence:
+class PackedSequence(NamedTuple):
     """Variable-length sequences packed into a single flat tensor.
 
     cu_seqlens[i] is the cumulative token count up to (not including) sequence i.

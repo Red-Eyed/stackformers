@@ -2,35 +2,24 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from jaxtyping import Float, Int
 from torch import Tensor
+
+from stackformers.sequence import SequenceInfo
 
 
 @runtime_checkable
 class PosEncoding(Protocol):
-    """Apply positional encoding to padded (b, h, n, dh) query and key tensors.
+    """Apply positional encoding to query and key tensors.
 
+    Works for both padded (b h n dh) and packed (nt h dh) layouts —
+    implementations dispatch on seq_info type.
     Null implementation: NoPosEncoding.
     """
 
     def forward(
         self,
-        q: Float[Tensor, "b h n dh"],
-        k: Float[Tensor, "b h s dh"],
-    ) -> tuple[Float[Tensor, "b h n dh"], Float[Tensor, "b h s dh"]]: ...
-
-
-@runtime_checkable
-class PackedPosEncoding(Protocol):
-    """Apply positional encoding to packed (nt, h, dh) query and key tensors.
-
-    Position ids locate each token within its document.
-    Null implementation: NoPosEncoding.
-    """
-
-    def forward_packed(
-        self,
-        q: Float[Tensor, "nt h dh"],
-        k: Float[Tensor, "nt h dh"],
-        position_ids: Int[Tensor, "nt"],
-    ) -> tuple[Float[Tensor, "nt h dh"], Float[Tensor, "nt h dh"]]: ...
+        q: Tensor,
+        k: Tensor,
+        q_seq_info: SequenceInfo | None = None,
+        k_seq_info: SequenceInfo | None = None,
+    ) -> tuple[Tensor, Tensor]: ...

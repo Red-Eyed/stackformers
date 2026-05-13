@@ -49,7 +49,7 @@ class TransformerEncoder(nn.Module, Generic[ConfigT]):
                         config=config.attn,
                         pos_encoding=pos,
                         bias_builder=NoBiasBuilder(),
-                        kernel=SDPAKernel(dropout=config.attn.dropout),
+                        kernel=SDPAKernel(causal=config.attn.causal, dropout=config.attn.dropout),
                     ),
                     ff=build_ff(config.ff),
                     norm_attn=build_norm(config.norm),

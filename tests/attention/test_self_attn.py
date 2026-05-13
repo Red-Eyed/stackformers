@@ -66,7 +66,7 @@ def test_self_attn_causal_shape(
         config=config,
         pos_encoding=NoPosEncoding(),
         bias_builder=NoBiasBuilder(),
-        kernel=SDPAKernel(),
+        kernel=SDPAKernel(causal=True),
     ).to(device=device, dtype=dtype)
     x, seq = x_pad
     out = attn(x, seq)

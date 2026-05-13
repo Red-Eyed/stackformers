@@ -24,7 +24,7 @@ from stackformers.norm.protocols import Norm
 from stackformers.norm.rms import RMSNorm
 from stackformers.positional.config import NoPosEncodingConfig, PosEncodingConfig, RoPE1DConfig
 from stackformers.positional.none import NoPosEncoding
-from stackformers.positional.protocols import PackedPosEncoding, PosEncoding
+from stackformers.positional.protocols import PosEncoding
 from stackformers.positional.rope1d import RotaryEmbedding1D
 from stackformers.positional.rope2d import RotaryEmbedding2D
 from stackformers.presets.configs import NormConfig, build_ff, build_norm, build_pos_encoding
@@ -52,7 +52,6 @@ __all__ = [
     "position_ids_from_packed",
     # protocols
     "PosEncoding",
-    "PackedPosEncoding",
     "AttnBiasBuilder",
     "AttnKernel",
     "SelfAttn",

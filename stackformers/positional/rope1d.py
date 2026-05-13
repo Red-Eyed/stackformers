@@ -4,54 +4,44 @@ import math
 
 import torch
 import torch.nn as nn
-from jaxtyping import Float, Int
 from torch import Tensor
 
 from stackformers.positional.config import RoPE1DConfig, YaRNConfig
+from stackformers.sequence import PackedSequence, SequenceInfo, position_ids_from_packed
 
 
-def _rotate_half(x: Float[Tensor, "b h n dh"]) -> Float[Tensor, "b h n dh"]:
-    """Split x into [x1 | x2] halves and return [-x2 | x1].
-
-    Matches the 'halved' RoPE convention where freqs = cat([θ, θ]).
-    Pairs (x[i], x[i+d/2]) both rotate by the same angle θ_i.
-    """
+def _rotate_half(x: Tensor) -> Tensor:
+    """Split x into [x1 | x2] halves and return [-x2 | x1]."""
     half = x.shape[-1] // 2
     x1, x2 = x[..., :half], x[..., half:]
     return torch.cat((-x2, x1), dim=-1)
 
 
-def _apply_rope(
-    t: Float[Tensor, "b h n dh"],
-    freqs: Float[Tensor, "n dh"],
-) -> Float[Tensor, "b h n dh"]:
-    """Apply RoPE frequencies to tensor t."""
+def _apply_rope_padded(t: Tensor, freqs: Tensor) -> Tensor:
+    """Apply RoPE to padded tensor (b h n dh) with freqs (n dh)."""
     cos = freqs.cos()
     sin = freqs.sin()
     return t * cos + _rotate_half(t) * sin
 
 
-def _yarn_inv_freq(
-    inv_freq: Float[Tensor, "dh_half"],
-    cfg: YaRNConfig,
-) -> Float[Tensor, "dh_half"]:
-    """Return YaRN-scaled inv_freq (Peng et al., 2023, NTK-by-parts).
+def _apply_rope_packed(t: Tensor, freqs: Tensor) -> Tensor:
+    """Apply RoPE to packed tensor (nt h dh) with freqs (nt dh)."""
+    cos = freqs.cos().unsqueeze(1)  # (nt, 1, dh) — broadcasts over h
+    sin = freqs.sin().unsqueeze(1)
+    return t * cos + _rotate_half(t) * sin
 
-    Wavelength thresholds split dimensions into three bands:
-      - high-freq (short wavelength): unchanged
-      - low-freq  (long  wavelength): scaled down by cfg.scale
-      - middle: smooth linear blend controlled by cfg.beta_fast / beta_slow
-    All ops are on tensors; this function is safe to call from __init__.
-    """
-    wavelen = 2.0 * math.pi / inv_freq  # (dh_half,)
+
+def _yarn_inv_freq(
+    inv_freq: Tensor,
+    cfg: YaRNConfig,
+) -> Tensor:
+    """Return YaRN-scaled inv_freq (Peng et al., 2023, NTK-by-parts)."""
+    wavelen = 2.0 * math.pi / inv_freq
     low_wavelen = cfg.original_max_seq_len / cfg.beta_slow
     high_wavelen = cfg.original_max_seq_len / cfg.beta_fast
-
-    # smooth ∈ [0, 1]: 0 at low-freq boundary, 1 at high-freq boundary
     smooth = (
         (cfg.original_max_seq_len / wavelen - cfg.beta_slow) / (cfg.beta_fast - cfg.beta_slow)
     ).clamp(0.0, 1.0)
-
     scaled = inv_freq / cfg.scale
     blended = smooth * inv_freq + (1.0 - smooth) * scaled
     return torch.where(
@@ -62,11 +52,8 @@ def _yarn_inv_freq(
 class RotaryEmbedding1D(nn.Module):
     """1-D Rotary Position Embedding (Su et al., 2021).
 
-    Optionally accepts a YaRNConfig to extend the effective context length
-    via NTK-by-parts frequency scaling (Peng et al., 2023).  The scaling
-    modifies inv_freq once at construction — forward() is unchanged.
-
-    Math ref: x-transformers RotaryEmbedding / apply_rotary_pos_emb.
+    Handles both padded (b h n dh) and packed (nt h dh) layouts via seq_info.
+    Optionally accepts YaRNConfig for extended context via NTK-by-parts scaling.
     """
 
     def __init__(self, config: RoPE1DConfig) -> None:
@@ -80,40 +67,31 @@ class RotaryEmbedding1D(nn.Module):
         self.register_buffer("inv_freq", inv_freq, persistent=False)
 
     @torch.no_grad()
-    def _build_freqs(self, seq_len: int, device: torch.device) -> Float[Tensor, "n dh"]:
+    def _freqs_from_length(self, seq_len: int, device: torch.device) -> Tensor:
         positions = torch.arange(seq_len, device=device, dtype=self.inv_freq.dtype)  # type: ignore[attr-defined]
         freqs = torch.einsum("n, d -> n d", positions, self.inv_freq)  # type: ignore[attr-defined]
-        return torch.cat([freqs, freqs], dim=-1)  # (n, dh)
+        return torch.cat([freqs, freqs], dim=-1)
 
     @torch.no_grad()
-    def _build_freqs_from_ids(
-        self, position_ids: Int[Tensor, "nt"], device: torch.device
-    ) -> Float[Tensor, "nt dh"]:
+    def _freqs_from_ids(self, position_ids: Tensor, device: torch.device) -> Tensor:
         ids = position_ids.to(device=device, dtype=self.inv_freq.dtype)  # type: ignore[attr-defined]
         freqs = torch.einsum("n, d -> n d", ids, self.inv_freq)  # type: ignore[attr-defined]
-        return torch.cat([freqs, freqs], dim=-1)  # (nt, dh)
+        return torch.cat([freqs, freqs], dim=-1)
 
     def forward(
         self,
-        q: Float[Tensor, "b h n dh"],
-        k: Float[Tensor, "b h s dh"],
-    ) -> tuple[Float[Tensor, "b h n dh"], Float[Tensor, "b h s dh"]]:
-        # Always build both frequency tensors — no branch on n vs s so that
-        # torch.export can trace with dynamic sequence lengths.
-        freqs_q = self._build_freqs(q.shape[-2], q.device)
-        freqs_k = self._build_freqs(k.shape[-2], k.device)
-        return _apply_rope(q, freqs_q), _apply_rope(k, freqs_k)
-
-    def forward_packed(
-        self,
-        q: Float[Tensor, "nt h dh"],
-        k: Float[Tensor, "nt h dh"],
-        position_ids: Int[Tensor, "nt"],
-    ) -> tuple[Float[Tensor, "nt h dh"], Float[Tensor, "nt h dh"]]:
-        """Apply RoPE to packed (varlen) head tensors using per-token position ids."""
-        freqs = self._build_freqs_from_ids(position_ids, q.device)  # (nt, dh)
-        cos = freqs.cos().unsqueeze(1)  # (nt, 1, dh) — broadcasts over h
-        sin = freqs.sin().unsqueeze(1)
-        q_out = q * cos + _rotate_half(q) * sin
-        k_out = k * cos + _rotate_half(k) * sin
-        return q_out, k_out
+        q: Tensor,
+        k: Tensor,
+        q_seq_info: SequenceInfo | None = None,
+        k_seq_info: SequenceInfo | None = None,
+    ) -> tuple[Tensor, Tensor]:
+        match q_seq_info:
+            case PackedSequence():
+                freqs_q = self._freqs_from_ids(position_ids_from_packed(q_seq_info), q.device)
+                k_info = k_seq_info if isinstance(k_seq_info, PackedSequence) else q_seq_info
+                freqs_k = self._freqs_from_ids(position_ids_from_packed(k_info), k.device)
+                return _apply_rope_packed(q, freqs_q), _apply_rope_packed(k, freqs_k)
+            case _:
+                freqs_q = self._freqs_from_length(q.shape[-2], q.device)
+                freqs_k = self._freqs_from_length(k.shape[-2], k.device)
+                return _apply_rope_padded(q, freqs_q), _apply_rope_padded(k, freqs_k)
