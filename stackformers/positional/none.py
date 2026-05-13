@@ -4,9 +4,14 @@ import torch.nn as nn
 from jaxtyping import Float, Int
 from torch import Tensor
 
+from stackformers.positional.config import NoPosEncodingConfig
+
 
 class NoPosEncoding(nn.Module):
     """Null object for PosEncoding and PackedPosEncoding — passes q, k unchanged."""
+
+    def __init__(self, _config: NoPosEncodingConfig = NoPosEncodingConfig()) -> None:
+        super().__init__()
 
     def forward(
         self,

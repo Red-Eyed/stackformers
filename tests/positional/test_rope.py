@@ -4,7 +4,7 @@ import pytest
 import torch
 import torch.export
 
-from stackformers.positional.config import YaRNConfig
+from stackformers.positional.config import RoPE1DConfig, YaRNConfig
 from stackformers.positional.none import NoPosEncoding
 from stackformers.positional.rope1d import RotaryEmbedding1D
 from stackformers.positional.rope2d import RotaryEmbedding2D
@@ -25,7 +25,7 @@ def qk(device_dtype: tuple[torch.device, torch.dtype]) -> tuple[torch.Tensor, to
 @pytest.fixture
 def rope1d(device_dtype: tuple[torch.device, torch.dtype]) -> RotaryEmbedding1D:
     device, dtype = device_dtype
-    return RotaryEmbedding1D(dim_head=DH).to(device=device, dtype=dtype)
+    return RotaryEmbedding1D(RoPE1DConfig(dim_head=DH)).to(device=device, dtype=dtype)
 
 
 @pytest.fixture
@@ -111,7 +111,7 @@ _YARN = YaRNConfig(scale=4.0, original_max_seq_len=512)
 @pytest.fixture
 def yarn_rope(device_dtype: tuple[torch.device, torch.dtype]) -> RotaryEmbedding1D:
     device, dtype = device_dtype
-    return RotaryEmbedding1D(dim_head=DH, yarn=_YARN).to(device=device, dtype=dtype)
+    return RotaryEmbedding1D(RoPE1DConfig(dim_head=DH, yarn=_YARN)).to(device=device, dtype=dtype)
 
 
 def test_yarn_output_shape(
@@ -142,8 +142,8 @@ def test_yarn_differs_from_base_rope(
     device_dtype: tuple[torch.device, torch.dtype],
 ) -> None:
     device, dtype = device_dtype
-    base = RotaryEmbedding1D(dim_head=DH).to(device=device, dtype=dtype)
-    yarn = RotaryEmbedding1D(dim_head=DH, yarn=_YARN).to(device=device, dtype=dtype)
+    base = RotaryEmbedding1D(RoPE1DConfig(dim_head=DH)).to(device=device, dtype=dtype)
+    yarn = RotaryEmbedding1D(RoPE1DConfig(dim_head=DH, yarn=_YARN)).to(device=device, dtype=dtype)
     q, k = qk
     q_base, _ = base(q, k)
     q_yarn, _ = yarn(q, k)
@@ -165,11 +165,11 @@ def _export_rope(
 
 
 def test_rope1d_export_succeeds() -> None:
-    assert _export_rope(RotaryEmbedding1D(dim_head=DH), n=8, s=8) is not None
+    assert _export_rope(RotaryEmbedding1D(RoPE1DConfig(dim_head=DH)), n=8, s=8) is not None
 
 
 def test_rope1d_export_runs_at_new_length() -> None:
-    mod = _export_rope(RotaryEmbedding1D(dim_head=DH), n=8, s=8).module()
+    mod = _export_rope(RotaryEmbedding1D(RoPE1DConfig(dim_head=DH)), n=8, s=8).module()
     q = torch.randn(1, H, 16, DH)
     q_out, k_out = mod(q, q)
     assert q_out.shape == (1, H, 16, DH)
@@ -177,8 +177,7 @@ def test_rope1d_export_runs_at_new_length() -> None:
 
 
 def test_rope1d_export_cross_attn_different_lengths() -> None:
-    # n != s was the removed branch — must export and run correctly
-    mod = _export_rope(RotaryEmbedding1D(dim_head=DH), n=6, s=12).module()
+    mod = _export_rope(RotaryEmbedding1D(RoPE1DConfig(dim_head=DH)), n=6, s=12).module()
     q = torch.randn(1, H, 4, DH)
     k = torch.randn(1, H, 20, DH)
     q_out, k_out = mod(q, k)
@@ -188,12 +187,16 @@ def test_rope1d_export_cross_attn_different_lengths() -> None:
 
 def test_yarn_rope_export_succeeds() -> None:
     yarn = YaRNConfig(scale=4.0, original_max_seq_len=512)
-    assert _export_rope(RotaryEmbedding1D(dim_head=DH, yarn=yarn), n=8, s=8) is not None
+    assert (
+        _export_rope(RotaryEmbedding1D(RoPE1DConfig(dim_head=DH, yarn=yarn)), n=8, s=8) is not None
+    )
 
 
 def test_yarn_rope_export_runs_at_extended_length() -> None:
     yarn = YaRNConfig(scale=4.0, original_max_seq_len=512)
-    mod = _export_rope(RotaryEmbedding1D(dim_head=DH, yarn=yarn), n=8, s=8, max_len=4096).module()
+    mod = _export_rope(
+        RotaryEmbedding1D(RoPE1DConfig(dim_head=DH, yarn=yarn)), n=8, s=8, max_len=4096
+    ).module()
     q = torch.randn(1, H, 2048, DH)
     q_out, k_out = mod(q, q)
     assert q_out.shape == (1, H, 2048, DH)

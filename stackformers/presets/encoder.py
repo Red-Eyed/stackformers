@@ -13,28 +13,25 @@ from stackformers.attention.kernels import SDPAKernel
 from stackformers.attention.self_attn import SelfAttention
 from stackformers.encoder import Encoder
 from stackformers.feedforward.config import FeedForwardConfig
-from stackformers.feedforward.swiglu import SwiGLU
 from stackformers.layers import TransformerLayer
-from stackformers.norm.rms import RMSNorm
-from stackformers.positional.rope1d import RotaryEmbedding1D
+from stackformers.positional.config import PosEncodingConfig
+from stackformers.presets.configs import NormConfig, build_ff, build_norm, build_pos_encoding
 from stackformers.sequence import SequenceInfo
 
 
 class TransformerEncoderConfig(BaseModel):
-    dim: int = Field(gt=0)
-    heads: int = Field(default=8, gt=0)
-    dim_head: int = Field(default=64, gt=0)
+    attn: AttentionConfig
+    ff: FeedForwardConfig
+    norm: NormConfig
+    pos_encoding: PosEncodingConfig
     num_layers: int = Field(gt=0)
-    ff_mult: float = Field(default=4.0, gt=0.0)
-    dropout: float = Field(default=0.0, ge=0.0, le=1.0)
-    causal: bool = False
 
 
 ConfigT = TypeVar("ConfigT", bound=TransformerEncoderConfig)
 
 
 class TransformerEncoder(nn.Module, Generic[ConfigT]):
-    """Opinionated encoder preset: RMSNorm + SwiGLU + RoPE-1D + SDPA.
+    """Opinionated encoder preset: norm, ff, pos-encoding, and SDPA kernel from config.
 
     Extend by subclassing with a richer config bound to ConfigT.
     """
@@ -43,31 +40,24 @@ class TransformerEncoder(nn.Module, Generic[ConfigT]):
         super().__init__()
         self._config = config
 
-        attn_cfg = AttentionConfig(
-            dim=config.dim,
-            heads=config.heads,
-            dim_head=config.dim_head,
-            causal=config.causal,
-        )
-        ff_cfg = FeedForwardConfig(dim=config.dim, mult=config.ff_mult)
-        pos = RotaryEmbedding1D(dim_head=config.dim_head)
+        pos = build_pos_encoding(config.pos_encoding)
 
         self._encoder = Encoder(
             layers=[
                 TransformerLayer(
                     self_attn=SelfAttention(
-                        config=attn_cfg,
+                        config=config.attn,
                         pos_encoding=pos,
                         bias_builder=NoBiasBuilder(),
-                        kernel=SDPAKernel(dropout=config.dropout),
+                        kernel=SDPAKernel(dropout=config.attn.dropout),
                     ),
-                    ff=SwiGLU(ff_cfg),
-                    norm_attn=RMSNorm(config.dim),
-                    norm_ff=RMSNorm(config.dim),
+                    ff=build_ff(config.ff),
+                    norm_attn=build_norm(config.norm),
+                    norm_ff=build_norm(config.norm),
                 )
                 for _ in range(config.num_layers)
             ],
-            final_norm=RMSNorm(config.dim),
+            final_norm=build_norm(config.norm),
         )
 
     @property

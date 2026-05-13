@@ -11,7 +11,9 @@ from stackformers.encoder import Encoder
 from stackformers.feedforward.config import FeedForwardConfig
 from stackformers.feedforward.swiglu import SwiGLU
 from stackformers.layers import TransformerLayer
+from stackformers.norm.config import RMSNormConfig
 from stackformers.norm.rms import RMSNorm
+from stackformers.positional.config import RoPE1DConfig
 from stackformers.positional.none import NoPosEncoding
 from stackformers.positional.protocols import PosEncoding
 from stackformers.positional.rope1d import RotaryEmbedding1D
@@ -29,16 +31,17 @@ def _build_encoder(
     attn_cfg = AttentionConfig(dim=D, heads=H, dim_head=DH)
     ff_cfg = FeedForwardConfig(dim=D)
     pos: PosEncoding = pos_encoding if pos_encoding is not None else NoPosEncoding()
+    norm_cfg = RMSNormConfig(dim=D)
     layers: list[TransformerLayer] = [
         TransformerLayer(
             self_attn=SelfAttention(attn_cfg, pos, NoBiasBuilder(), SDPAKernel()),
             ff=SwiGLU(ff_cfg),
-            norm_attn=RMSNorm(D),
-            norm_ff=RMSNorm(D),
+            norm_attn=RMSNorm(norm_cfg),
+            norm_ff=RMSNorm(norm_cfg),
         )
         for _ in range(NUM_LAYERS)
     ]
-    return Encoder(layers=layers, final_norm=RMSNorm(D)).to(device=device, dtype=dtype)
+    return Encoder(layers=layers, final_norm=RMSNorm(norm_cfg)).to(device=device, dtype=dtype)
 
 
 @pytest.fixture
@@ -76,7 +79,7 @@ def test_encoder_with_padding(
 
 def test_encoder_with_rope(device_dtype: tuple[torch.device, torch.dtype]) -> None:
     device, dtype = device_dtype
-    enc = _build_encoder(device, dtype, pos_encoding=RotaryEmbedding1D(dim_head=DH))
+    enc = _build_encoder(device, dtype, pos_encoding=RotaryEmbedding1D(RoPE1DConfig(dim_head=DH)))
     x = torch.randn(B, N, D, device=device, dtype=dtype)
     seq = make_padded(torch.ones(B, N, dtype=torch.bool, device=device))
     assert enc(x, seq).shape == (B, N, D)

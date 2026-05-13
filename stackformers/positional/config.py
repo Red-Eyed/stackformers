@@ -30,3 +30,16 @@ class YaRNConfig(BaseModel):
                 "Swapped values invert the high/low-frequency partition and silently break scaling."
             )
         return self
+
+
+class RoPE1DConfig(BaseModel):
+    dim_head: int = Field(gt=0)
+    base: int = Field(default=10_000, gt=0)
+    yarn: YaRNConfig | None = None
+
+
+class NoPosEncodingConfig(BaseModel):
+    pass  # null object — no parameters by design
+
+
+PosEncodingConfig = RoPE1DConfig | NoPosEncodingConfig

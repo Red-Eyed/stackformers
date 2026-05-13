@@ -10,6 +10,7 @@ from stackformers.attention.self_attn import SelfAttention
 from stackformers.feedforward.config import FeedForwardConfig
 from stackformers.feedforward.swiglu import SwiGLU
 from stackformers.layers import TransformerLayer
+from stackformers.norm.config import RMSNormConfig
 from stackformers.norm.rms import RMSNorm
 from stackformers.positional.none import NoPosEncoding
 from stackformers.sequence import PaddedSequence, make_padded
@@ -22,11 +23,12 @@ def layer(device_dtype: tuple[torch.device, torch.dtype]) -> TransformerLayer:
     device, dtype = device_dtype
     attn_cfg = AttentionConfig(dim=D, heads=H, dim_head=DH)
     ff_cfg = FeedForwardConfig(dim=D)
+    norm_cfg = RMSNormConfig(dim=D)
     return TransformerLayer(
         self_attn=SelfAttention(attn_cfg, NoPosEncoding(), NoBiasBuilder(), SDPAKernel()),
         ff=SwiGLU(ff_cfg),
-        norm_attn=RMSNorm(D),
-        norm_ff=RMSNorm(D),
+        norm_attn=RMSNorm(norm_cfg),
+        norm_ff=RMSNorm(norm_cfg),
     ).to(device=device, dtype=dtype)
 
 
@@ -58,11 +60,12 @@ def test_transformer_layer_residual_connection(
 def test_transformer_layer_gradients(device: torch.device) -> None:
     attn_cfg = AttentionConfig(dim=D, heads=H, dim_head=DH)
     ff_cfg = FeedForwardConfig(dim=D)
+    norm_cfg = RMSNormConfig(dim=D)
     layer = TransformerLayer(
         self_attn=SelfAttention(attn_cfg, NoPosEncoding(), NoBiasBuilder(), SDPAKernel()),
         ff=SwiGLU(ff_cfg),
-        norm_attn=RMSNorm(D),
-        norm_ff=RMSNorm(D),
+        norm_attn=RMSNorm(norm_cfg),
+        norm_ff=RMSNorm(norm_cfg),
     ).to(device=device)
     x = torch.randn(B, N, D, device=device, requires_grad=True)
     seq = make_padded(torch.ones(B, N, dtype=torch.bool, device=device))

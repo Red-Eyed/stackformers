@@ -7,6 +7,7 @@ from stackformers.attention.bias import NoBiasBuilder
 from stackformers.attention.config import AttentionConfig
 from stackformers.attention.kernels import SDPAKernel
 from stackformers.attention.self_attn import SelfAttention
+from stackformers.positional.config import RoPE1DConfig
 from stackformers.positional.none import NoPosEncoding
 from stackformers.positional.rope1d import RotaryEmbedding1D
 from stackformers.sequence import PaddedSequence, make_padded
@@ -32,7 +33,7 @@ def self_attn_rope(device_dtype: tuple[torch.device, torch.dtype]) -> SelfAttent
     config = AttentionConfig(dim=D, heads=H, dim_head=DH)
     return SelfAttention(
         config=config,
-        pos_encoding=RotaryEmbedding1D(dim_head=DH),
+        pos_encoding=RotaryEmbedding1D(RoPE1DConfig(dim_head=DH)),
         bias_builder=NoBiasBuilder(),
         kernel=SDPAKernel(),
     ).to(device=device, dtype=dtype)

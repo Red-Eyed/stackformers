@@ -88,12 +88,13 @@ New sequence types = new dataclass. Never add optional fields to existing varian
 
 ## Presets
 
-`presets/` contains ready-to-use `nn.Module` subclasses that wire up building blocks with fixed choices (RMSNorm + SwiGLU + RoPE-1D + SDPA). Each preset is generic over its config type so subclasses can extend the config and keep full type safety:
+`presets/` contains ready-to-use `nn.Module` subclasses that wire up building blocks with fixed choices (RMSNorm + SwiGLU + RoPE-1D + SDPA). Each preset is generic over its config type so subclasses can extend the config and keep full type safety. See `presets/README.md` for the full comparison.
 
-| Preset | Config | Notes |
-|--------|--------|-------|
-| `TransformerEncoder` | `TransformerEncoderConfig` | self-attn stack; `causal=True` for GPT-style |
-| `TransformerEncoderCross` | `TransformerEncoderCrossConfig` | self-attn + cross-attn; `context_dim == dim` |
+| Preset | Per-layer ops | Notes |
+|--------|--------------|-------|
+| `TransformerEncoder` | self-attn → ff | `causal=True` for GPT-style |
+| `TransformerEncoderCross` | self-attn → cross-attn → ff | x has its own sequence; attends to context |
+| `CrossAttender` | cross-attn → ff | x is a set of queries, no self-attention |
 
 Presets are intentionally not flexible — for custom wiring use the building blocks directly.
 

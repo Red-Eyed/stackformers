@@ -14,83 +14,60 @@ from stackformers.attention.kernels import SDPAKernel
 from stackformers.attention.self_attn import SelfAttention
 from stackformers.decoder import Decoder, DecoderLayer
 from stackformers.feedforward.config import FeedForwardConfig
-from stackformers.feedforward.swiglu import SwiGLU
-from stackformers.norm.rms import RMSNorm
+from stackformers.positional.config import NoPosEncodingConfig, PosEncodingConfig
 from stackformers.positional.none import NoPosEncoding
-from stackformers.positional.rope1d import RotaryEmbedding1D
+from stackformers.presets.configs import NormConfig, build_ff, build_norm, build_pos_encoding
 from stackformers.sequence import SequenceInfo
 
 
 class TransformerEncoderCrossConfig(BaseModel):
-    """Config for an encoder/decoder block with self-attention and cross-attention.
-
-    context must have the same dim as x. Use causal=True for decoder-style (GPT),
-    causal=False for encoder-style (BERT cross-attending to context).
-    """
-
-    dim: int = Field(gt=0)
-    heads: int = Field(default=8, gt=0)
-    dim_head: int = Field(default=64, gt=0)
+    self_attn: AttentionConfig
+    cross_attn: AttentionConfig
+    ff: FeedForwardConfig
+    norm: NormConfig
+    pos_encoding: PosEncodingConfig  # applies to self-attention only
     num_layers: int = Field(gt=0)
-    ff_mult: float = Field(default=4.0, gt=0.0)
-    dropout: float = Field(default=0.0, ge=0.0, le=1.0)
-    causal: bool = False
 
 
 ConfigT = TypeVar("ConfigT", bound=TransformerEncoderCrossConfig)
 
 
 class TransformerEncoderCross(nn.Module, Generic[ConfigT]):
-    """Opinionated cross-attention preset: RMSNorm + SwiGLU + RoPE-1D + SDPA.
+    """Opinionated cross-attention preset: self-attn → cross-attn → feed-forward per layer.
 
-    Each layer: pre-norm self-attn → pre-norm cross-attn → pre-norm feed-forward.
-    Self-attention uses RoPE; cross-attention uses no positional encoding.
-    context_dim must equal config.dim.
-
-    Extend by subclassing with a richer config bound to ConfigT.
+    Self-attention uses pos_encoding from config. Cross-attention always uses NoPosEncoding.
+    context_dim must equal self_attn.dim. Extend by subclassing with a richer config.
     """
 
     def __init__(self, config: ConfigT) -> None:
         super().__init__()
         self._config = config
 
-        self_attn_cfg = AttentionConfig(
-            dim=config.dim,
-            heads=config.heads,
-            dim_head=config.dim_head,
-            causal=config.causal,
-        )
-        cross_attn_cfg = AttentionConfig(
-            dim=config.dim,
-            heads=config.heads,
-            dim_head=config.dim_head,
-        )
-        ff_cfg = FeedForwardConfig(dim=config.dim, mult=config.ff_mult)
-        pos = RotaryEmbedding1D(dim_head=config.dim_head)
+        self_pos = build_pos_encoding(config.pos_encoding)
 
         self._decoder = Decoder(
             layers=[
                 DecoderLayer(
                     self_attn=SelfAttention(
-                        config=self_attn_cfg,
-                        pos_encoding=pos,
+                        config=config.self_attn,
+                        pos_encoding=self_pos,
                         bias_builder=NoBiasBuilder(),
-                        kernel=SDPAKernel(dropout=config.dropout),
+                        kernel=SDPAKernel(dropout=config.self_attn.dropout),
                     ),
                     cross_attn=CrossAttention(
-                        config=cross_attn_cfg,
-                        pos_encoding=NoPosEncoding(),
+                        config=config.cross_attn,
+                        pos_encoding=NoPosEncoding(NoPosEncodingConfig()),
                         bias_builder=NoBiasBuilder(),
-                        kernel=SDPAKernel(dropout=config.dropout),
+                        kernel=SDPAKernel(dropout=config.cross_attn.dropout),
                     ),
-                    ff=SwiGLU(ff_cfg),
-                    norm_self=RMSNorm(config.dim),
-                    norm_cross=RMSNorm(config.dim),
-                    norm_ff=RMSNorm(config.dim),
+                    ff=build_ff(config.ff),
+                    norm_self=build_norm(config.norm),
+                    norm_cross=build_norm(config.norm),
+                    norm_ff=build_norm(config.norm),
                 )
                 for _ in range(config.num_layers)
             ],
-            final_norm=RMSNorm(config.dim),
+            final_norm=build_norm(config.norm),
         )
 
     @property

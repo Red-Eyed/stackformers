@@ -7,7 +7,7 @@ import torch.nn as nn
 from jaxtyping import Float, Int
 from torch import Tensor
 
-from stackformers.positional.config import YaRNConfig
+from stackformers.positional.config import RoPE1DConfig, YaRNConfig
 
 
 def _rotate_half(x: Float[Tensor, "b h n dh"]) -> Float[Tensor, "b h n dh"]:
@@ -69,12 +69,14 @@ class RotaryEmbedding1D(nn.Module):
     Math ref: x-transformers RotaryEmbedding / apply_rotary_pos_emb.
     """
 
-    def __init__(self, dim_head: int, base: int = 10_000, yarn: YaRNConfig | None = None) -> None:
+    def __init__(self, config: RoPE1DConfig) -> None:
         super().__init__()
-        assert dim_head % 2 == 0, "dim_head must be even for RoPE"
-        inv_freq = 1.0 / (base ** (torch.arange(0, dim_head, 2).float() / dim_head))
-        if yarn is not None:
-            inv_freq = _yarn_inv_freq(inv_freq, yarn)
+        assert config.dim_head % 2 == 0, "dim_head must be even for RoPE"
+        inv_freq = 1.0 / (
+            config.base ** (torch.arange(0, config.dim_head, 2).float() / config.dim_head)
+        )
+        if config.yarn is not None:
+            inv_freq = _yarn_inv_freq(inv_freq, config.yarn)
         self.register_buffer("inv_freq", inv_freq, persistent=False)
 
     @torch.no_grad()

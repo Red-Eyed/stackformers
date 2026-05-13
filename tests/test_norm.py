@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 import torch
 
+from stackformers.norm.config import RMSNormConfig
 from stackformers.norm.rms import RMSNorm
 
 DIM = 32
@@ -11,7 +12,7 @@ DIM = 32
 @pytest.fixture
 def rms_norm(device_dtype: tuple[torch.device, torch.dtype]) -> RMSNorm:
     device, dtype = device_dtype
-    return RMSNorm(dim=DIM).to(device=device, dtype=dtype)
+    return RMSNorm(RMSNormConfig(dim=DIM)).to(device=device, dtype=dtype)
 
 
 @pytest.fixture
