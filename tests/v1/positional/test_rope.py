@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 import torch
+import torch.export
 
 from stackformers.v1.positional.config import YaRNConfig
 from stackformers.v1.positional.none import NoPosEncoding
@@ -147,3 +148,53 @@ def test_yarn_differs_from_base_rope(
     q_base, _ = base(q, k)
     q_yarn, _ = yarn(q, k)
     assert not torch.allclose(q_base, q_yarn)
+
+
+# --- torch.export ---
+
+
+def _export_rope(
+    rope: RotaryEmbedding1D, n: int, s: int, max_len: int = 512
+) -> torch.export.ExportedProgram:
+    rope.eval()
+    q = torch.randn(1, H, n, DH)
+    k = torch.randn(1, H, s, DH)
+    n_dim = torch.export.Dim("n", min=1, max=max_len)
+    s_dim = torch.export.Dim("s", min=1, max=max_len)
+    return torch.export.export(rope, (q, k), dynamic_shapes=({2: n_dim}, {2: s_dim}))
+
+
+def test_rope1d_export_succeeds() -> None:
+    assert _export_rope(RotaryEmbedding1D(dim_head=DH), n=8, s=8) is not None
+
+
+def test_rope1d_export_runs_at_new_length() -> None:
+    mod = _export_rope(RotaryEmbedding1D(dim_head=DH), n=8, s=8).module()
+    q = torch.randn(1, H, 16, DH)
+    q_out, k_out = mod(q, q)
+    assert q_out.shape == (1, H, 16, DH)
+    assert k_out.shape == (1, H, 16, DH)
+
+
+def test_rope1d_export_cross_attn_different_lengths() -> None:
+    # n != s was the removed branch — must export and run correctly
+    mod = _export_rope(RotaryEmbedding1D(dim_head=DH), n=6, s=12).module()
+    q = torch.randn(1, H, 4, DH)
+    k = torch.randn(1, H, 20, DH)
+    q_out, k_out = mod(q, k)
+    assert q_out.shape == (1, H, 4, DH)
+    assert k_out.shape == (1, H, 20, DH)
+
+
+def test_yarn_rope_export_succeeds() -> None:
+    yarn = YaRNConfig(scale=4.0, original_max_seq_len=512)
+    assert _export_rope(RotaryEmbedding1D(dim_head=DH, yarn=yarn), n=8, s=8) is not None
+
+
+def test_yarn_rope_export_runs_at_extended_length() -> None:
+    yarn = YaRNConfig(scale=4.0, original_max_seq_len=512)
+    mod = _export_rope(RotaryEmbedding1D(dim_head=DH, yarn=yarn), n=8, s=8, max_len=4096).module()
+    q = torch.randn(1, H, 2048, DH)
+    q_out, k_out = mod(q, q)
+    assert q_out.shape == (1, H, 2048, DH)
+    assert k_out.shape == (1, H, 2048, DH)
