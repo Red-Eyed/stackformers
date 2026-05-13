@@ -80,11 +80,22 @@ New sequence types = new dataclass. Never add optional fields to existing varian
 
 ## File organisation
 
-- All code lives under `stackformers/v1/`. Breaking changes go in `v2/`.
-- `v1/` is frozen once tagged. Its `__init__.py` is read-only after that.
+- All code lives directly under `stackformers/`. Breaking changes go in a new top-level package.
 - Configs live next to the class they configure: `attention/config.py`, `feedforward/config.py`.
-- Cross-cutting configs (`LayerConfig`, `EncoderConfig`, `DecoderConfig`) live at `v1/config.py`.
+- Cross-cutting configs (`LayerConfig`, `EncoderConfig`, `DecoderConfig`) live at `config.py`.
 - Kernel variants live in `attention/kernels/` — one file per kernel class.
+- Opinionated presets live in `presets/` — one file per preset class.
+
+## Presets
+
+`presets/` contains ready-to-use `nn.Module` subclasses that wire up building blocks with fixed choices (RMSNorm + SwiGLU + RoPE-1D + SDPA). Each preset is generic over its config type so subclasses can extend the config and keep full type safety:
+
+| Preset | Config | Notes |
+|--------|--------|-------|
+| `TransformerEncoder` | `TransformerEncoderConfig` | self-attn stack; `causal=True` for GPT-style |
+| `TransformerEncoderCross` | `TransformerEncoderCrossConfig` | self-attn + cross-attn; `context_dim == dim` |
+
+Presets are intentionally not flexible — for custom wiring use the building blocks directly.
 
 ## Testing rules
 - One test file per source file, mirroring directory structure

@@ -20,27 +20,42 @@ Behavior comes from **injected dependencies**, not constructor flags. Every arch
 
 ## Quick start
 
+### Preset — zero boilerplate
+
 ```python
-from stackformers import (
-    AttentionConfig, FeedForwardConfig, EncoderConfig, LayerConfig,
-    build_encoder, build_gpt,
-    make_padded,
-)
+from stackformers import TransformerEncoder, TransformerEncoderConfig, make_padded
 import torch
 
-# GPT-style causal backbone (RoPE + SDPA, no extra config)
-model = build_gpt(dim=768, heads=12, dim_head=64, num_layers=12)
+cfg = TransformerEncoderConfig(dim=512, heads=8, dim_head=64, num_layers=6)
+model = TransformerEncoder(cfg)
 
-x = torch.randn(2, 128, 768)
+x = torch.randn(2, 128, 512)
 mask = torch.ones(2, 128, dtype=torch.bool)
-out = model(x, make_padded(mask))   # (2, 128, 768)
+out = model(x, make_padded(mask))   # (2, 128, 512)
 ```
 
-### Custom encoder — swap every piece
+GPT-style causal backbone:
+
+```python
+cfg = TransformerEncoderConfig(dim=768, heads=12, dim_head=64, num_layers=12, causal=True)
+model = TransformerEncoder(cfg)
+```
+
+Encoder–decoder cross-attention:
+
+```python
+from stackformers import TransformerEncoderCross, TransformerEncoderCrossConfig
+
+cfg = TransformerEncoderCrossConfig(dim=512, heads=8, dim_head=64, num_layers=6)
+model = TransformerEncoderCross(cfg)
+out = model(x, context, make_padded(mask))   # context: (b, s, 512)
+```
+
+### Custom wiring — swap every piece
 
 ```python
 from stackformers import (
-    AttentionConfig, FeedForwardConfig, LayerConfig, EncoderConfig,
+    AttentionConfig, FeedForwardConfig,
     SelfAttention, SwiGLU, TransformerLayer, Encoder, RMSNorm,
     RotaryEmbedding1D, ALiBiBuilder, SDPAKernel,
     make_padded,
@@ -102,16 +117,18 @@ All tensor arguments are annotated with [jaxtyping](https://github.com/patrick-k
 ## Module map
 
 ```
-stackformers/v1/
+stackformers/
 ├── sequence.py              PaddedSequence, PackedSequence, SequenceInfo
 ├── config.py                LayerConfig, EncoderConfig, DecoderConfig
 ├── layers.py                TransformerLayer (pre-norm residual)
 ├── encoder.py               Encoder
 ├── decoder.py               DecoderLayer, Decoder
-├── factories.py             build_encoder(), build_decoder(), build_gpt()
+├── presets/
+│   ├── encoder.py           TransformerEncoder, TransformerEncoderConfig
+│   └── encoder_cross.py     TransformerEncoderCross, TransformerEncoderCrossConfig
 ├── attention/
 │   ├── config.py            AttentionConfig
-│   ├── protocols.py         AttnKernel, AttnBiasBuilder
+│   ├── protocols.py         AttnKernel, AttnBiasBuilder, SelfAttn, CrossAttn
 │   ├── bias.py              NoBiasBuilder, ALiBiBuilder
 │   ├── kernels/
 │   │   ├── sdpa.py          SDPAKernel
@@ -123,6 +140,7 @@ stackformers/v1/
 │   └── cross_attn.py        CrossAttention
 ├── feedforward/
 │   ├── config.py            FeedForwardConfig
+│   ├── protocols.py         FeedForward
 │   └── swiglu.py            SwiGLU
 ├── norm/
 │   ├── protocols.py         Norm
@@ -214,19 +232,13 @@ just clean       remove build artifacts
 | `layers.py` — TransformerLayer | ✅ done | Pre-norm residual |
 | `encoder.py` — Encoder | ✅ done | |
 | `decoder.py` — DecoderLayer, Decoder | ✅ done | |
-| `factories.py` — build_encoder, build_decoder, build_gpt | ✅ done | |
-| `v2/` — breaking-change namespace | 🔲 planned | Trigger: first API-breaking change after v1 tag |
+| `presets/encoder.py` — TransformerEncoder | ✅ done | |
+| `presets/encoder_cross.py` — TransformerEncoderCross | ✅ done | |
 | FlexAttention kernel | 🔲 planned | `torch.nn.attention.flex_attention` |
 | MLA (Multi-Latent Attention) | 🔲 planned | Latent Q/KV projections |
 | Sparse / mixture-of-experts FFN | 🔲 planned | Drop-in SwiGLU replacement |
 | KV-cache support | 🔲 planned | Incremental decode path |
 | `beartype` integration in tests | 🔲 planned | Runtime shape contract checking |
-
----
-
-## Versioning
-
-All stable code lives under `stackformers/v1/`. When breaking changes are needed a new `v2/` package is created. `v1/` is frozen once tagged — its `__init__.py` becomes read-only.
 
 ---
 
