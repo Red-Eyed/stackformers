@@ -1,4 +1,4 @@
-# CLAUDE.md — stackformer
+# CLAUDE.md — stackformers
 
 ## What this project is
 Typed, composable, SOLID transformer library for PyTorch.
@@ -12,6 +12,53 @@ Behavior comes from injected dependencies, not constructor flags.
 - `forward()` must be traceable by torch.compile and torch.export — no Python control flow on tensors
 - One concept per file — if you can't describe it in one sentence, split it
 - All tensor args annotated with jaxtyping shape strings using project dim vocabulary
+
+## Protocols
+
+Every collaborator accepted by `__init__` must be typed as a protocol, never as a concrete class.
+
+```python
+# wrong
+def __init__(self, norm: RMSNorm, ff: SwiGLU): ...
+
+# right
+def __init__(self, norm: Norm, ff: FeedForward): ...
+```
+
+### Two kinds of protocols
+
+**High-level** — called at the `nn.Module` call site via `()`.
+Declare `__call__`, not `forward`. This is what type checkers need to recognise them as callable.
+
+| Protocol | `__call__` signature | Implementations |
+|----------|---------------------|-----------------|
+| `Norm` | `(x: b n d) → b n d` | `RMSNorm` |
+| `FeedForward` | `(x: b n d) → b n d` | `SwiGLU` |
+| `SelfAttn` | `(x: b n d, seq_info) → b n d` | `SelfAttention` |
+| `CrossAttn` | `(x: b n d, context: b s d, ctx_seq_info?) → b n d` | `CrossAttention` |
+
+**Low-level** — called explicitly via `.forward()` inside another module's `forward`.
+Declare `forward`, not `__call__`.
+
+| Protocol | `forward` signature | Implementations |
+|----------|---------------------|-----------------|
+| `AttnKernel` | `(q, k, v, attn_mask, attn_bias, is_causal) → b h n dh` | `SDPAKernel`, `WindowedSDPAKernel`, … |
+| `AttnBiasBuilder` | `(n, s, device) → h n s \| None` | `ALiBiBuilder`, `NoBiasBuilder` |
+| `PosEncoding` | `(q: b h n dh, k: b h s dh) → (q, k)` | `RotaryEmbedding1D`, `NoPosEncoding` |
+| `PackedPosEncoding` | `(q: nt h dh, k, position_ids) → (q, k)` | `RotaryEmbedding1D`, `NoPosEncoding` |
+
+### Protocol placement
+
+Define each protocol in the module it most naturally belongs to — not in a central `protocols.py`.
+
+| Protocol file | Contains |
+|--------------|---------|
+| `attention/protocols.py` | `AttnKernel`, `AttnBiasBuilder`, `SelfAttn`, `CrossAttn` |
+| `positional/protocols.py` | `PosEncoding`, `PackedPosEncoding` |
+| `feedforward/protocols.py` | `FeedForward` |
+| `norm/protocols.py` | `Norm` |
+
+Implementations satisfy protocols structurally — they never import the protocol they implement.
 
 ## Dim naming convention (use everywhere)
 | Symbol | Meaning |
@@ -31,37 +78,43 @@ SequenceInfo = PaddedSequence | PackedSequence
 ```
 New sequence types = new dataclass. Never add optional fields to existing variants.
 
-## Versioning
-All code lives under `stackformer/v1/`. When breaking changes are needed, create `v2/`.
-`v1/` is frozen once tagged. Its `__init__.py` is read-only after that.
+## File organisation
+
+- All code lives under `stackformers/v1/`. Breaking changes go in `v2/`.
+- `v1/` is frozen once tagged. Its `__init__.py` is read-only after that.
+- Configs live next to the class they configure: `attention/config.py`, `feedforward/config.py`.
+- Cross-cutting configs (`LayerConfig`, `EncoderConfig`, `DecoderConfig`) live at `v1/config.py`.
+- Kernel variants live in `attention/kernels/` — one file per kernel class.
 
 ## Testing rules
 - One test file per source file, mirroring directory structure
-- Every module testable in isolation — no more than ~10 lines of setup per test
-- @beartype active in all tests, stripped in prod
+- Use pytest fixtures for module construction, inputs, and sequence objects — no plain helper functions
+- Parametrise over `device_dtype` (all device×dtype combos) for compute tests; use `device` alone (float32) for gradient tests
 - Test shape contracts, not numeric values
+- Numerical assertions (norm preservation etc.) use `atol(dtype)` from `tests/conftest.py`
 
 ## Dependencies
-- PyTorch native first: F.scaled_dot_product_attention, flex_attention
-- Third-party (flash-attn, local-attention) only in separate optional kernel files
-- Never import third-party kernels at module load time — import inside __init__ of the kernel class
+- PyTorch native first: `F.scaled_dot_product_attention`, `torch.nn.attention.varlen.varlen_attn`
+- No optional third-party kernel dependencies — all kernels are pure PyTorch
+- Pydantic for configs; use `Field(gt=0)` / `Field(ge=0)` constraints, not `@field_validator`, for simple bounds
 
 ## x-transformers reference
-Cloned at ./x-transformers/ — read for math and implementation details only.
+Cloned at `./x-transformers/` — read for math and implementation details only.
 Do not copy its architecture.
 
 ## Commands
 ```bash
 # Install (uv)
-uv sync --extra dev
+uv sync --group dev
 
-# Lint
-ruff check stackformer tests
-ruff format --check stackformer tests
+# Lint / format
+just lint
+just fmt
 
 # Type-check
-pyright stackformer
+just types        # runs pyrefly
 
 # Tests
-pytest --cov=stackformer tests/
+just test
+just check        # full CI gate: fmt-check + lint + types + test
 ```
