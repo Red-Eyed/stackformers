@@ -39,9 +39,11 @@ class VarlenWindowedSDPAKernel(nn.Module):
         v: Tensor,
         q_seq_info: SequenceInfo,
         k_seq_info: SequenceInfo | None,
-        _attn_bias: Tensor | None,
+        attn_bias: Tensor | None,
     ) -> Tensor:
-        assert isinstance(q_seq_info, PackedSequence), "VarlenWindowedSDPAKernel requires PackedSequence"
+        assert isinstance(q_seq_info, PackedSequence), (
+            "VarlenWindowedSDPAKernel requires PackedSequence"
+        )
         k_info = k_seq_info if isinstance(k_seq_info, PackedSequence) else q_seq_info
 
         if _HAS_VARLEN_ATTN and q.is_cuda and q.dtype in (torch.float16, torch.bfloat16):

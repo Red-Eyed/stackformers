@@ -28,7 +28,7 @@ class SDPAKernel(nn.Module):
         q: Tensor,
         k: Tensor,
         v: Tensor,
-        _q_seq_info: SequenceInfo,
+        q_seq_info: SequenceInfo,
         k_seq_info: SequenceInfo | None,
         attn_bias: Tensor | None,
     ) -> Tensor:
@@ -43,7 +43,9 @@ class SDPAKernel(nn.Module):
 
         dropout_p = self.dropout if self.training else 0.0
         return F.scaled_dot_product_attention(
-            q, k, v,
+            q,
+            k,
+            v,
             attn_mask=combined,
             dropout_p=dropout_p,
             is_causal=self.causal and combined is None,

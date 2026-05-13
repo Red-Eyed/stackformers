@@ -37,7 +37,7 @@ class VarlenSDPAKernel(nn.Module):
         v: Tensor,
         q_seq_info: SequenceInfo,
         k_seq_info: SequenceInfo | None,
-        _attn_bias: Tensor | None,
+        attn_bias: Tensor | None,
     ) -> Tensor:
         assert isinstance(q_seq_info, PackedSequence), "VarlenSDPAKernel requires PackedSequence"
         k_info = k_seq_info if isinstance(k_seq_info, PackedSequence) else q_seq_info
@@ -81,6 +81,8 @@ class VarlenSDPAKernel(nn.Module):
             ki = rearrange(k[ks:ke], "s h d -> 1 h s d")
             vi = rearrange(v[ks:ke], "s h d -> 1 h s d")
             dropout_p = self.dropout if self.training else 0.0
-            out_i = F.scaled_dot_product_attention(qi, ki, vi, dropout_p=dropout_p, is_causal=self.causal)
+            out_i = F.scaled_dot_product_attention(
+                qi, ki, vi, dropout_p=dropout_p, is_causal=self.causal
+            )
             outputs.append(rearrange(out_i, "1 h n d -> n h d"))
         return torch.cat(outputs, dim=0)

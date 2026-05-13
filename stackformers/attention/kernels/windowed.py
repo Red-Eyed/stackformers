@@ -27,7 +27,7 @@ class WindowedSDPAKernel(nn.Module):
         q: Tensor,
         k: Tensor,
         v: Tensor,
-        _q_seq_info: SequenceInfo,
+        q_seq_info: SequenceInfo,
         k_seq_info: SequenceInfo | None,
         attn_bias: Tensor | None,
     ) -> Tensor:

@@ -17,7 +17,7 @@ class NoPosEncoding(nn.Module):
         self,
         q: Tensor,
         k: Tensor,
-        _q_seq_info: SequenceInfo | None = None,
-        _k_seq_info: SequenceInfo | None = None,
+        q_seq_info: SequenceInfo | None = None,
+        k_seq_info: SequenceInfo | None = None,
     ) -> tuple[Tensor, Tensor]:
         return q, k

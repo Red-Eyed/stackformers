@@ -156,7 +156,12 @@ def test_windowed_kernel_causal_masks_future(
     kernel = WindowedSDPAKernel(window_size=4, causal=True)
     q = torch.zeros(1, 1, 8, 4, device=device, dtype=dtype)
     k = torch.zeros(1, 1, 8, 4, device=device, dtype=dtype)
-    v = torch.eye(8, device=device, dtype=dtype).unsqueeze(0).unsqueeze(0).expand(1, 1, 8, 8)[..., :4]
+    v = (
+        torch.eye(8, device=device, dtype=dtype)
+        .unsqueeze(0)
+        .unsqueeze(0)
+        .expand(1, 1, 8, 8)[..., :4]
+    )
     q[0, 0, 0] = 1.0
     seq = make_padded(torch.ones(1, 8, dtype=torch.bool, device=device))
     out = kernel(q, k, v, seq, seq, None)
@@ -197,7 +202,9 @@ def test_varlen_windowed_kernel_causal_shape(
     qkv_packed: tuple[Tensor, Tensor, Tensor], packed_seq: PackedSequence
 ) -> None:
     q, k, v = qkv_packed
-    out = VarlenWindowedSDPAKernel(window_size=3, causal=True)(q, k, v, packed_seq, packed_seq, None)
+    out = VarlenWindowedSDPAKernel(window_size=3, causal=True)(
+        q, k, v, packed_seq, packed_seq, None
+    )
     assert out.shape == q.shape
 
 
@@ -216,7 +223,14 @@ def _export_windowed(kernel: WindowedSDPAKernel, n: int) -> torch.export.Exporte
     return torch.export.export(
         kernel,
         (q, k, v, seq, seq, None),
-        dynamic_shapes=(seq_shapes, seq_shapes, seq_shapes, PaddedSequence(mask_shapes), PaddedSequence(mask_shapes), None),
+        dynamic_shapes=(
+            seq_shapes,
+            seq_shapes,
+            seq_shapes,
+            PaddedSequence(mask_shapes),  # type: ignore[arg-type]
+            PaddedSequence(mask_shapes),  # type: ignore[arg-type]
+            None,
+        ),
     )
 
 

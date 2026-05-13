@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import torch
 import torch.nn as nn
 from einops import rearrange, repeat
 from torch import Tensor
@@ -63,7 +64,14 @@ class CrossAttention(BaseCrossAttention):
 
         q, k = self.pos_encoding.forward(q, k, x_seq_info, ctx_seq_info)
         attn_bias = self.bias_builder.forward(n, s, x.device)
-        out = self.kernel.forward(q, k, v, x_seq_info or PaddedSequence(mask=x.new_ones(x.shape[0], n, dtype=bool)), ctx_seq_info, attn_bias)
+        out = self.kernel.forward(
+            q,
+            k,
+            v,
+            x_seq_info or PaddedSequence(mask=x.new_ones(x.shape[0], n, dtype=torch.bool)),
+            ctx_seq_info,
+            attn_bias,
+        )
 
         out = self.to_out(rearrange(out, "b h n d -> b n (h d)"))
 
