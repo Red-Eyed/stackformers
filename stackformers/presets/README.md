@@ -47,19 +47,18 @@ CrossAttenderConfig
 
 ## Extending a preset
 
-Subclass the preset and its config:
+Subclass the config to add fields, then subclass the preset and override `__init__`:
 
 ```python
 class MyEncoderConfig(TransformerEncoderConfig):
     extra_field: int = 4
 
-class MyEncoder(TransformerEncoder[MyEncoderConfig]):
+class MyEncoder(TransformerEncoder):
     def __init__(self, config: MyEncoderConfig) -> None:
         super().__init__(config)
+        self.config: MyEncoderConfig  # narrow the type for IDE support
         # use config.extra_field
 ```
-
-`Generic[ConfigT]` ensures `self.config` is typed as the subclass config throughout.
 
 ## Padded vs packed sequences
 

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Generic, TypeVar
-
 import torch.nn as nn
 from jaxtyping import Float
 from pydantic import BaseModel, Field
@@ -29,19 +27,16 @@ class TransformerDecoderConfig(BaseModel):
     num_layers: int = Field(gt=0)
 
 
-ConfigT = TypeVar("ConfigT", bound=TransformerDecoderConfig)
-
-
-class TransformerDecoder(nn.Module, Generic[ConfigT]):
+class TransformerDecoder(nn.Module):
     """Opinionated decoder preset: causal self-attn → cross-attn → feed-forward per layer.
 
     Self-attention is always causal. Cross-attention uses NoPosEncoding.
-    context_dim must equal self_attn.dim. Extend by subclassing with a richer config.
+    context_dim must equal self_attn.dim.
     """
 
-    def __init__(self, config: ConfigT) -> None:
+    def __init__(self, config: TransformerDecoderConfig) -> None:
         super().__init__()
-        self._config = config
+        self.config = config
 
         self_attn_cfg = config.self_attn.model_copy(update={"causal": True})
         self_pos = build_pos_encoding(config.pos_encoding)
@@ -70,10 +65,6 @@ class TransformerDecoder(nn.Module, Generic[ConfigT]):
             ],
             final_norm=build_norm(config.norm),
         )
-
-    @property
-    def config(self) -> ConfigT:
-        return self._config
 
     def forward(
         self,

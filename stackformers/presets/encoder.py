@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Generic, TypeVar
-
 import torch.nn as nn
 from jaxtyping import Float
 from pydantic import BaseModel, Field
@@ -27,18 +25,12 @@ class TransformerEncoderConfig(BaseModel):
     num_layers: int = Field(gt=0)
 
 
-ConfigT = TypeVar("ConfigT", bound=TransformerEncoderConfig)
+class TransformerEncoder(nn.Module):
+    """Opinionated encoder preset: norm, ff, pos-encoding, and SDPA kernel from config."""
 
-
-class TransformerEncoder(nn.Module, Generic[ConfigT]):
-    """Opinionated encoder preset: norm, ff, pos-encoding, and SDPA kernel from config.
-
-    Extend by subclassing with a richer config bound to ConfigT.
-    """
-
-    def __init__(self, config: ConfigT) -> None:
+    def __init__(self, config: TransformerEncoderConfig) -> None:
         super().__init__()
-        self._config = config
+        self.config = config
 
         pos = build_pos_encoding(config.pos_encoding)
 
@@ -59,10 +51,6 @@ class TransformerEncoder(nn.Module, Generic[ConfigT]):
             ],
             final_norm=build_norm(config.norm),
         )
-
-    @property
-    def config(self) -> ConfigT:
-        return self._config
 
     def forward(
         self,

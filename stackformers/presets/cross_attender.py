@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Generic, TypeVar
-
 import torch.nn as nn
 from jaxtyping import Float
 from pydantic import BaseModel, Field
@@ -26,19 +24,16 @@ class CrossAttenderConfig(BaseModel):
     num_layers: int = Field(gt=0)
 
 
-ConfigT = TypeVar("ConfigT", bound=CrossAttenderConfig)
-
-
-class CrossAttender(nn.Module, Generic[ConfigT]):
+class CrossAttender(nn.Module):
     """Opinionated cross-attender preset: queries from x attend to context, no self-attention.
 
     Each layer: pre-norm cross-attn → pre-norm feed-forward.
-    context_dim must equal attn.dim. Extend by subclassing with a richer config.
+    context_dim must equal attn.dim.
     """
 
-    def __init__(self, config: ConfigT) -> None:
+    def __init__(self, config: CrossAttenderConfig) -> None:
         super().__init__()
-        self._config = config
+        self.config = config
 
         cross_attn_cfg = config.attn.model_copy(update={"causal": False})
 
@@ -59,10 +54,6 @@ class CrossAttender(nn.Module, Generic[ConfigT]):
             ],
             final_norm=build_norm(config.norm),
         )
-
-    @property
-    def config(self) -> ConfigT:
-        return self._config
 
     def forward(
         self,
