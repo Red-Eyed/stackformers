@@ -59,16 +59,11 @@ class RotaryEmbedding1D(nn.Module):
         q: Float[Tensor, "b h n dh"],
         k: Float[Tensor, "b h s dh"],
     ) -> tuple[Float[Tensor, "b h n dh"], Float[Tensor, "b h s dh"]]:
-        n = q.shape[-2]
-        s = k.shape[-2]
-        device = q.device
-
-        freqs_q = self._build_freqs(n, device)
-        freqs_k = self._build_freqs(s, device) if s != n else freqs_q
-
-        q_out = _apply_rope(q, freqs_q)
-        k_out = _apply_rope(k, freqs_k)
-        return q_out, k_out
+        # Always build both frequency tensors — no branch on n vs s so that
+        # torch.export can trace with dynamic sequence lengths.
+        freqs_q = self._build_freqs(q.shape[-2], q.device)
+        freqs_k = self._build_freqs(k.shape[-2], k.device)
+        return _apply_rope(q, freqs_q), _apply_rope(k, freqs_k)
 
     def forward_packed(
         self,
