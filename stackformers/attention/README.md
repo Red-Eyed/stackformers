@@ -8,9 +8,11 @@ Attention modules: projections, kernels, and bias builders.
 |------|----------|
 | `config.py` | `AttentionConfig` — dim, heads, dim_head, kv_heads, dropout, causal |
 | `protocols.py` | `AttnKernel`, `AttnBiasBuilder` (low-level); `SelfAttn`, `CrossAttn` (high-level) |
-| `self_attn.py` | `SelfAttention` — Q/K/V projections + kernel dispatch for padded sequences |
+| `self_attn.py` | `SelfAttention` — Q/K/V projections + kernel dispatch |
 | `cross_attn.py` | `CrossAttention` — same as above but keys/values come from a separate context tensor |
 | `bias.py` | `NoBiasBuilder` (null object), `ALiBiBuilder` (position bias without positional encodings) |
+| `bias_config.py` | `NoBiasConfig`, `ALiBiConfig`; discriminated union `BiasBuilderConfig` |
+| `bias_factory.py` | `build_bias_builder(config, heads, causal) -> AttnBiasBuilder` — dispatches on `kind` |
 | `kernels/` | One file per `AttnKernel` implementation (see below) |
 
 ## Kernels

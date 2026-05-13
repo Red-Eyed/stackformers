@@ -6,11 +6,12 @@ Positional encoding modules. Applied inside attention to Q and K tensors — not
 
 | File | Contents |
 |------|----------|
-| `config.py` | `YaRNConfig`, `RoPE1DConfig`, `NoPosEncodingConfig`; union alias `PosEncodingConfig` |
+| `config.py` | `YaRNConfig`, `RoPE1DConfig`, `NoPosEncodingConfig`; discriminated union `PosEncodingConfig` |
 | `protocols.py` | `PosEncoding` (padded), `PackedPosEncoding` (packed) |
 | `rope1d.py` | `RotaryEmbedding1D` — standard RoPE for 1-D sequences; supports YaRN context extension |
 | `rope2d.py` | `RotaryEmbedding2D` — RoPE for 2-D grids (row + col position ids) |
 | `none.py` | `NoPosEncoding` — null object; passes Q and K through unchanged |
+| `factory.py` | `build_pos_encoding(config: PosEncodingConfig) -> PosEncoding` — dispatches on `kind` |
 
 ## How it fits into attention
 
@@ -22,6 +23,6 @@ Positional encoding modules. Applied inside attention to Q and K tensors — not
 
 ## Adding a new encoding
 
-1. Add its config class to `config.py` and include it in the `PosEncodingConfig` union.
+1. Add its config class to `config.py` with a `kind: Literal["your_kind"]` field and include it in the `PosEncodingConfig` union.
 2. Implement the class; satisfy `PosEncoding` (and optionally `PackedPosEncoding`) structurally.
-3. Add a `case NewConfig()` branch in `presets/configs.py::build_pos_encoding`.
+3. Add a `case NewConfig()` branch in `factory.py::build_pos_encoding`.

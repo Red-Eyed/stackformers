@@ -23,62 +23,112 @@ Behavior comes from **injected dependencies**, not constructor flags. Every arch
 ### Preset — zero boilerplate
 
 ```python
-from stackformers import TransformerEncoder, TransformerEncoderConfig, make_padded
 import torch
+from stackformers import (
+    TransformerEncoder, TransformerEncoderConfig,
+    AttentionConfig, FeedForwardConfig, RMSNormConfig, RoPE1DConfig,
+    make_padded_input,
+)
 
-cfg = TransformerEncoderConfig(dim=512, heads=8, dim_head=64, num_layers=6)
+cfg = TransformerEncoderConfig(
+    attn=AttentionConfig(dim=512, heads=8, dim_head=64),
+    ff=FeedForwardConfig(dim=512),
+    norm=RMSNormConfig(dim=512),
+    pos_encoding=RoPE1DConfig(dim_head=64),
+    num_layers=6,
+)
 model = TransformerEncoder(cfg)
 
-x = torch.randn(2, 128, 512)
+x    = torch.randn(2, 128, 512)
 mask = torch.ones(2, 128, dtype=torch.bool)
-out = model(x, make_padded(mask))   # (2, 128, 512)
+out  = model(make_padded_input(x, mask))   # (2, 128, 512)
 ```
 
 GPT-style causal backbone:
 
 ```python
-cfg = TransformerEncoderConfig(dim=768, heads=12, dim_head=64, num_layers=12, causal=True)
-model = TransformerEncoder(cfg)
+cfg = TransformerEncoderConfig(
+    attn=AttentionConfig(dim=768, heads=12, dim_head=64, causal=True),
+    ff=FeedForwardConfig(dim=768),
+    norm=RMSNormConfig(dim=768),
+    pos_encoding=RoPE1DConfig(dim_head=64),
+    num_layers=12,
+)
 ```
 
-Encoder–decoder cross-attention:
+Sliding-window local attention (swap one config field):
 
 ```python
-from stackformers import TransformerEncoderCross, TransformerEncoderCrossConfig
+from stackformers import WindowedSDPAKernelConfig
 
-cfg = TransformerEncoderCrossConfig(dim=512, heads=8, dim_head=64, num_layers=6)
-model = TransformerEncoderCross(cfg)
-out = model(x, context, make_padded(mask))   # context: (b, s, 512)
+cfg = TransformerEncoderConfig(
+    attn=AttentionConfig(dim=512, heads=8, dim_head=64),
+    ff=FeedForwardConfig(dim=512),
+    norm=RMSNormConfig(dim=512),
+    pos_encoding=RoPE1DConfig(dim_head=64),
+    kernel=WindowedSDPAKernelConfig(window_size=128),
+    num_layers=6,
+)
+```
+
+Encoder–decoder:
+
+```python
+from stackformers import TransformerDecoder, TransformerDecoderConfig
+
+cfg = TransformerDecoderConfig(
+    self_attn=AttentionConfig(dim=512, heads=8, dim_head=64),
+    cross_attn=AttentionConfig(dim=512, heads=8, dim_head=64),
+    ff=FeedForwardConfig(dim=512),
+    norm=RMSNormConfig(dim=512),
+    pos_encoding=RoPE1DConfig(dim_head=64),
+    num_layers=6,
+)
+model = TransformerDecoder(cfg)
+out = model(make_padded_input(x, mask), make_padded_input(context, ctx_mask))
+```
+
+### JSON config round-trip
+
+All union config fields carry a `kind` discriminator field, so configs serialise and deserialise cleanly:
+
+```python
+import json
+from stackformers import TransformerEncoderConfig
+
+cfg  = TransformerEncoderConfig(...)
+data = cfg.model_dump()          # → dict with kind tags
+cfg2 = TransformerEncoderConfig.model_validate(data)  # ← reconstructed
 ```
 
 ### Custom wiring — swap every piece
 
 ```python
 from stackformers import (
-    AttentionConfig, FeedForwardConfig,
+    AttentionConfig, FeedForwardConfig, RMSNormConfig, RoPE1DConfig,
     SelfAttention, SwiGLU, TransformerLayer, Encoder, RMSNorm,
     RotaryEmbedding1D, ALiBiBuilder, SDPAKernel,
-    make_padded,
+    make_padded_input,
 )
 
-attn_cfg = AttentionConfig(dim=512, heads=8, dim_head=64, causal=False)
-ff_cfg   = FeedForwardConfig(dim=512, mult=4.0)
+attn_cfg = AttentionConfig(dim=512, heads=8, dim_head=64)
+ff_cfg   = FeedForwardConfig(dim=512)
 
 layers = [
     TransformerLayer(
         self_attn=SelfAttention(
             config=attn_cfg,
-            pos_encoding=RotaryEmbedding1D(dim_head=64),
+            pos_encoding=RotaryEmbedding1D(RoPE1DConfig(dim_head=64)),
             bias_builder=ALiBiBuilder(heads=8),
             kernel=SDPAKernel(),
         ),
         ff=SwiGLU(ff_cfg),
-        norm_attn=RMSNorm(512),
-        norm_ff=RMSNorm(512),
+        norm_attn=RMSNorm(RMSNormConfig(dim=512)),
+        norm_ff=RMSNorm(RMSNormConfig(dim=512)),
     )
     for _ in range(6)
 ]
-encoder = Encoder(layers=layers, final_norm=RMSNorm(512))
+encoder = Encoder(layers=layers, final_norm=RMSNorm(RMSNormConfig(dim=512)))
 ```
 
 ---
@@ -118,38 +168,49 @@ All tensor arguments are annotated with [jaxtyping](https://github.com/patrick-k
 
 ```
 stackformers/
-├── sequence.py              PaddedSequence, PackedSequence, SequenceInfo
+├── sequence.py              PaddedSequence, PackedSequence, PaddedInput, PackedInput, SequenceInfo
 ├── config.py                LayerConfig, EncoderConfig, DecoderConfig
 ├── layers.py                TransformerLayer (pre-norm residual)
 ├── encoder.py               Encoder
 ├── decoder.py               DecoderLayer, Decoder
-├── presets/
-│   ├── encoder.py           TransformerEncoder, TransformerEncoderConfig
-│   └── encoder_cross.py     TransformerEncoderCross, TransformerEncoderCrossConfig
+├── cross_attender.py        CrossAttenderLayer, CrossAttenderStack
 ├── attention/
 │   ├── config.py            AttentionConfig
 │   ├── protocols.py         AttnKernel, AttnBiasBuilder, SelfAttn, CrossAttn
 │   ├── bias.py              NoBiasBuilder, ALiBiBuilder
-│   ├── kernels/
-│   │   ├── sdpa.py          SDPAKernel
-│   │   ├── varlen.py        VarlenSDPAKernel
-│   │   ├── windowed.py      WindowedSDPAKernel
-│   │   ├── varlen_windowed.py  VarlenWindowedSDPAKernel
-│   │   └── _mask.py         build_window_mask (shared helper)
+│   ├── bias_config.py       NoBiasConfig, ALiBiConfig, BiasBuilderConfig
+│   ├── bias_factory.py      build_bias_builder
 │   ├── self_attn.py         SelfAttention
-│   └── cross_attn.py        CrossAttention
+│   ├── cross_attn.py        CrossAttention
+│   └── kernels/
+│       ├── config.py        SDPAKernelConfig, WindowedSDPAKernelConfig, …, KernelConfig
+│       ├── factory.py       build_kernel
+│       ├── sdpa.py          SDPAKernel
+│       ├── windowed.py      WindowedSDPAKernel
+│       ├── varlen.py        VarlenSDPAKernel
+│       ├── varlen_windowed.py  VarlenWindowedSDPAKernel
+│       └── _mask.py         build_window_mask (internal helper)
 ├── feedforward/
 │   ├── config.py            FeedForwardConfig
 │   ├── protocols.py         FeedForward
-│   └── swiglu.py            SwiGLU
+│   ├── swiglu.py            SwiGLU
+│   └── factory.py           build_ff
 ├── norm/
+│   ├── config.py            RMSNormConfig, LayerNormConfig, NormConfig
 │   ├── protocols.py         Norm
-│   └── rms.py               RMSNorm
-└── positional/
-    ├── protocols.py         PosEncoding, PackedPosEncoding
-    ├── none.py              NoPosEncoding (null object)
-    ├── rope1d.py            RotaryEmbedding1D
-    └── rope2d.py            RotaryEmbedding2D
+│   ├── rms.py               RMSNorm
+│   └── factory.py           build_norm
+├── positional/
+│   ├── config.py            YaRNConfig, RoPE1DConfig, NoPosEncodingConfig, PosEncodingConfig
+│   ├── protocols.py         PosEncoding, PackedPosEncoding
+│   ├── none.py              NoPosEncoding (null object)
+│   ├── rope1d.py            RotaryEmbedding1D
+│   ├── rope2d.py            RotaryEmbedding2D
+│   └── factory.py           build_pos_encoding
+└── presets/
+    ├── encoder.py           TransformerEncoder, TransformerEncoderConfig
+    ├── decoder.py           TransformerDecoder, TransformerDecoderConfig
+    └── cross_attender.py    CrossAttender, CrossAttenderConfig
 ```
 
 ---
@@ -157,13 +218,13 @@ stackformers/
 ## Sequence types
 
 ```python
-from stackformers import PaddedSequence, PackedSequence, make_padded, make_packed
+from stackformers import make_padded_input, make_packed_input
 
 # Padded batch — mask is True for valid tokens
-seq = make_padded(mask)                          # Bool[Tensor, "b n"]
+inp = make_padded_input(x, mask)           # PaddedInput(x, PaddedSequence(mask))
 
 # Packed batch (variable-length, FlashAttention convention)
-seq = make_packed(cu_seqlens, max_seqlen=512)    # Int[Tensor, "b+1"], int
+inp = make_packed_input(x, cu_seqlens, max_seqlen=512)  # PackedInput(x, PackedSequence(...))
 ```
 
 `SequenceInfo = PaddedSequence | PackedSequence` is a sealed union. New sequence types are new dataclasses — existing variants are never modified.
@@ -217,12 +278,13 @@ just clean       remove build artifacts
 
 | Area | Status | Notes |
 |------|--------|-------|
-| `sequence.py` — PaddedSequence, PackedSequence | ✅ done | Sealed union, frozen dataclasses |
+| `sequence.py` — PaddedSequence, PackedSequence, PaddedInput, PackedInput | ✅ done | Sealed union, frozen dataclasses |
 | `*/protocols.py` — PosEncoding, AttnBiasBuilder, AttnKernel, Norm | ✅ done | Per-module, `@runtime_checkable` |
-| `*/config.py` — Pydantic models | ✅ done | AttentionConfig, FeedForwardConfig, LayerConfig, EncoderConfig, DecoderConfig; `Field(gt=...)` constraints |
+| `*/config.py` — Pydantic models with `kind` discriminators | ✅ done | AttentionConfig, FeedForwardConfig, NormConfig, PosEncodingConfig, KernelConfig, BiasBuilderConfig |
+| `*/factory.py` — per-component builder functions | ✅ done | build_norm, build_ff, build_pos_encoding, build_kernel, build_bias_builder |
 | `norm/rms.py` — RMSNorm | ✅ done | |
 | `positional/none.py` — NoPosEncoding | ✅ done | Null object for padded + packed protocols |
-| `positional/rope1d.py` — RotaryEmbedding1D | ✅ done | Halved-convention; `forward_packed` for packed sequences |
+| `positional/rope1d.py` — RotaryEmbedding1D | ✅ done | Halved-convention; YaRN context extension |
 | `positional/rope2d.py` — RotaryEmbedding2D | ✅ done | Row/col split |
 | `attention/bias.py` — NoBiasBuilder, ALiBiBuilder | ✅ done | |
 | `attention/kernels/` — SDPAKernel, VarlenSDPAKernel, WindowedSDPAKernel, VarlenWindowedSDPAKernel | ✅ done | One file per kernel; pure PyTorch, no extra deps |
@@ -232,8 +294,8 @@ just clean       remove build artifacts
 | `layers.py` — TransformerLayer | ✅ done | Pre-norm residual |
 | `encoder.py` — Encoder | ✅ done | |
 | `decoder.py` — DecoderLayer, Decoder | ✅ done | |
-| `presets/encoder.py` — TransformerEncoder | ✅ done | |
-| `presets/encoder_cross.py` — TransformerEncoderCross | ✅ done | |
+| `cross_attender.py` — CrossAttenderLayer, CrossAttenderStack | ✅ done | |
+| `presets/` — TransformerEncoder, TransformerDecoder, CrossAttender | ✅ done | Kernel and bias builder fully config-driven |
 | FlexAttention kernel | 🔲 planned | `torch.nn.attention.flex_attention` |
 | MLA (Multi-Latent Attention) | 🔲 planned | Latent Q/KV projections |
 | Sparse / mixture-of-experts FFN | 🔲 planned | Drop-in SwiGLU replacement |
