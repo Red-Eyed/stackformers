@@ -55,6 +55,4 @@ def position_ids_from_packed(seq: PackedSequence) -> Int[Tensor, "nt"]:
     """Build per-token position indices [0..len_i-1] for each document in the pack."""
     cu = seq.cu_seqlens
     lengths = (cu[1:] - cu[:-1]).tolist()
-    return torch.cat(
-        [torch.arange(int(l), device=cu.device, dtype=torch.long) for l in lengths]
-    )
+    return torch.cat([torch.arange(int(n), device=cu.device, dtype=torch.long) for n in lengths])

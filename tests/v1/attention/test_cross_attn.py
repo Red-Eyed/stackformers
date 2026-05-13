@@ -4,9 +4,9 @@ import pytest
 import torch
 
 from stackformers.v1.attention.bias import NoBiasBuilder
+from stackformers.v1.attention.config import AttentionConfig
 from stackformers.v1.attention.cross_attn import CrossAttention
 from stackformers.v1.attention.kernels import SDPAKernel
-from stackformers.v1.attention.config import AttentionConfig
 from stackformers.v1.positional.none import NoPosEncoding
 from stackformers.v1.sequence import make_padded
 

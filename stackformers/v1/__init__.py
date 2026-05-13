@@ -10,13 +10,13 @@ from stackformers.v1.attention.kernels import (
     WindowedSDPAKernel,
 )
 from stackformers.v1.attention.protocols import AttnBiasBuilder, AttnKernel, CrossAttn, SelfAttn
-from stackformers.v1.feedforward.protocols import FeedForward
 from stackformers.v1.attention.self_attn import SelfAttention
 from stackformers.v1.config import DecoderConfig, EncoderConfig, LayerConfig
 from stackformers.v1.decoder import Decoder, DecoderLayer
 from stackformers.v1.encoder import Encoder
 from stackformers.v1.factories import build_decoder, build_encoder, build_gpt
 from stackformers.v1.feedforward.config import FeedForwardConfig
+from stackformers.v1.feedforward.protocols import FeedForward
 from stackformers.v1.feedforward.swiglu import SwiGLU
 from stackformers.v1.layers import TransformerLayer
 from stackformers.v1.norm.protocols import Norm
