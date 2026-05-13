@@ -1,33 +1,11 @@
 # attention/kernels
 
-One file per `AttnKernel` implementation. Add new kernels here without touching any other module.
+`AttnKernel` implementations — one file per kernel. Padded kernels operate on `(b, h, n, dh)` tensors; packed kernels operate on `(nt, h, dh)` flat tensors with cumulative sequence lengths.
 
-## Files
+Packed kernels use `torch.nn.attention.varlen.varlen_attn` on CUDA with fp16/bf16 and fall back to a per-sequence loop otherwise.
 
-| File | Contents |
-|------|----------|
-| `sdpa.py` | `SDPAKernel` — padded full attention |
-| `windowed.py` | `WindowedSDPAKernel` — padded sliding-window attention |
-| `varlen.py` | `VarlenSDPAKernel` — packed full attention |
-| `varlen_windowed.py` | `VarlenWindowedSDPAKernel` — packed sliding-window attention |
-| `config.py` | `SDPAKernelConfig`, `WindowedSDPAKernelConfig`, `VarlenSDPAKernelConfig`, `VarlenWindowedSDPAKernelConfig`; discriminated union `KernelConfig` |
-| `factory.py` | `build_kernel(config, causal, dropout) -> AttnKernel` — dispatches on `kind` |
-| `_mask.py` | `build_window_mask` — shared helper, not public API |
+## Adding a new kernel
 
-## Implementing a new kernel
-
-Satisfy the `AttnKernel` protocol — do not import it:
-
-```python
-def forward(
-    self,
-    q: Tensor,          # (b h n dh) padded  or  (nt h dh) packed
-    k: Tensor,          # (b h s dh) padded  or  (nt h dh) packed
-    v: Tensor,          # (b h s dh) padded  or  (nt h dh) packed
-    q_seq_info: SequenceInfo,
-    k_seq_info: SequenceInfo | None,
-    attn_bias: Tensor | None,
-) -> Tensor: ...
-```
-
-Then add a config class with a `kind: Literal["your_kind"]` field to `config.py`, include it in the `KernelConfig` union, and add a `case` branch in `factory.py::build_kernel`.
+1. Add a config class with a `kind: Literal[...]` discriminator to `config.py` and include it in the `KernelConfig` union.
+2. Implement the class satisfying `AttnKernel` structurally — do not import the protocol.
+3. Add a `case` branch in `factory.py::build_kernel`.

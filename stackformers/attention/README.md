@@ -1,36 +1,9 @@
 # attention
 
-Attention modules: projections, kernels, and bias builders.
+Q/K/V projections, kernel dispatch, and additive bias.
 
-## Files
+`SelfAttention` and `CrossAttention` own the linear projections and GQA head-repeat logic. They delegate the actual dot-product computation to an injected `AttnKernel` and additive bias computation to an injected `AttnBiasBuilder`. These are low-level protocols called via `.forward()`, not `()`.
 
-| File | Contents |
-|------|----------|
-| `config.py` | `AttentionConfig` — dim, heads, dim_head, kv_heads, dropout, causal |
-| `protocols.py` | `AttnKernel`, `AttnBiasBuilder` (low-level); `SelfAttn`, `CrossAttn` (high-level) |
-| `self_attn.py` | `SelfAttention` — Q/K/V projections + kernel dispatch |
-| `cross_attn.py` | `CrossAttention` — same as above but keys/values come from a separate context tensor |
-| `bias.py` | `NoBiasBuilder` (null object), `ALiBiBuilder` (position bias without positional encodings) |
-| `bias_config.py` | `NoBiasConfig`, `ALiBiConfig`; discriminated union `BiasBuilderConfig` |
-| `bias_factory.py` | `build_bias_builder(config, heads, causal) -> AttnBiasBuilder` — dispatches on `kind` |
-| `kernels/` | One file per `AttnKernel` implementation (see below) |
+`NoBiasBuilder` is the null object — it returns `None` so the kernel receives no bias without any branching in the attention module. `ALiBiBuilder` computes head-specific distance penalties.
 
-## Kernels
-
-| Kernel | Sequence format | Notes |
-|--------|----------------|-------|
-| `SDPAKernel` | padded `(b, h, n, dh)` | `F.scaled_dot_product_attention`; supports causal mask + attention bias |
-| `WindowedSDPAKernel` | padded `(b, h, n, dh)` | sliding-window local attention via `F.scaled_dot_product_attention` |
-| `VarlenSDPAKernel` | packed `(nt, h, dh)` | fused `varlen_attn` on CUDA; per-sequence loop fallback on CPU |
-| `VarlenWindowedSDPAKernel` | packed `(nt, h, dh)` | packed + sliding-window |
-
-## Self-attn vs cross-attn
-
-- `SelfAttention`: x → Q, K, V (same source). Accepts a `SequenceInfo` for masking.
-- `CrossAttention`: x → Q, context → K, V. Accepts optional `ctx_seq_info` for context masking.
-
-Both implement their respective high-level protocol (`SelfAttn`, `CrossAttn`) and delegate the actual dot-product computation to an injected `AttnKernel`.
-
-## GQA / MQA
-
-Set `kv_heads < heads` in `AttentionConfig`. Keys and values are repeated via `expand` to match the query head count before kernel dispatch — no kernel changes needed.
+GQA and MQA are enabled by setting `kv_heads < heads` in `AttentionConfig`. Key and value heads are repeated via `expand` before kernel dispatch — no kernel changes needed.
