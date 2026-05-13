@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import warnings
 
 import torch
 import torch.nn as nn
@@ -33,6 +34,16 @@ class ALiBiBuilder(nn.Module):
     def __init__(self, heads: int, causal: bool = False) -> None:
         super().__init__()
         self.causal = causal
+        if not math.log2(heads).is_integer():
+            warnings.warn(
+                f"ALiBiBuilder: heads={heads} is not a power of 2. "
+                "Slopes are interpolated from the nearest power-of-2 formula, "
+                "which deviates from the original ALiBi paper. "
+                "Consider using heads=2^k (e.g. "
+                f"{2 ** math.floor(math.log2(heads))} or {2 ** math.ceil(math.log2(heads))}).",
+                UserWarning,
+                stacklevel=2,
+            )
         slopes = self._get_slopes(heads)
         self.register_buffer("slopes", slopes, persistent=True)
 
