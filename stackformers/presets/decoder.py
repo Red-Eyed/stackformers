@@ -14,8 +14,9 @@ from stackformers.attention.self_attn import SelfAttention
 from stackformers.decoder import Decoder, DecoderLayer
 from stackformers.feedforward.config import FeedForwardConfig
 from stackformers.feedforward.factory import build_ff
+from stackformers.norm.config import RMSNormConfig
 from stackformers.norm.factory import NormConfig, build_norm
-from stackformers.positional.config import NoPosEncodingConfig, PosEncodingConfig
+from stackformers.positional.config import NoPosEncodingConfig, PosEncodingConfig, RoPE1DConfig
 from stackformers.positional.factory import build_pos_encoding
 from stackformers.positional.none import NoPosEncoding
 from stackformers.sequence import SequenceInput
@@ -32,6 +33,33 @@ class TransformerDecoderConfig(BaseModel):
     cross_attn_kernel: KernelConfig = SDPAKernelConfig()
     cross_attn_bias: BiasBuilderConfig = NoBiasConfig()
     num_layers: int = Field(gt=0)
+
+
+def plain_decoder_config(
+    dim: int,
+    heads: int,
+    num_layers: int,
+    *,
+    ff_mult: float = 4.0,
+    dropout: float = 0.0,
+) -> TransformerDecoderConfig:
+    """Padded SDPA decoder with RoPE-1D self-attention, no-pos cross-attention, RMSNorm, SwiGLU FF.
+
+    Self-attention is always causal. Cross-attention uses no positional encoding.
+    Both self- and cross-attention share dim and heads; context must have the same dim.
+    """
+    dim_head = dim // heads
+    attn = AttentionConfig(dim=dim, heads=heads, dim_head=dim_head, dropout=dropout)
+    return TransformerDecoderConfig(
+        self_attn=attn,
+        cross_attn=attn,
+        ff=FeedForwardConfig(dim=dim, mult=ff_mult, dropout=dropout),
+        norm=RMSNormConfig(dim=dim),
+        pos_encoding=RoPE1DConfig(dim_head=dim_head),
+        self_attn_kernel=SDPAKernelConfig(),
+        cross_attn_kernel=SDPAKernelConfig(),
+        num_layers=num_layers,
+    )
 
 
 class TransformerDecoder(nn.Module):

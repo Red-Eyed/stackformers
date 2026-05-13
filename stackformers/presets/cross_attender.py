@@ -13,6 +13,7 @@ from stackformers.attention.kernels.factory import build_kernel
 from stackformers.cross_attender import CrossAttenderLayer, CrossAttenderStack
 from stackformers.feedforward.config import FeedForwardConfig
 from stackformers.feedforward.factory import build_ff
+from stackformers.norm.config import RMSNormConfig
 from stackformers.norm.factory import NormConfig, build_norm
 from stackformers.positional.config import NoPosEncodingConfig
 from stackformers.positional.none import NoPosEncoding
@@ -26,6 +27,30 @@ class CrossAttenderConfig(BaseModel):
     kernel: KernelConfig = SDPAKernelConfig()
     bias: BiasBuilderConfig = NoBiasConfig()
     num_layers: int = Field(gt=0)
+
+
+def plain_cross_attender_config(
+    dim: int,
+    heads: int,
+    num_layers: int,
+    *,
+    ff_mult: float = 4.0,
+    dropout: float = 0.0,
+) -> CrossAttenderConfig:
+    """Padded SDPA cross-attender with RMSNorm and SwiGLU FF.
+
+    Queries from x attend to context with no positional encoding or self-attention.
+    Context must have the same dim. Suitable for Perceiver-style or slot-attention architectures.
+    """
+    dim_head = dim // heads
+    return CrossAttenderConfig(
+        attn=AttentionConfig(dim=dim, heads=heads, dim_head=dim_head, dropout=dropout),
+        ff=FeedForwardConfig(dim=dim, mult=ff_mult, dropout=dropout),
+        norm=RMSNormConfig(dim=dim),
+        kernel=SDPAKernelConfig(),
+        bias=NoBiasConfig(),
+        num_layers=num_layers,
+    )
 
 
 class CrossAttender(nn.Module):
