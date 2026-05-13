@@ -68,31 +68,70 @@ encoder = Encoder(layers=layers, final_norm=RMSNorm(512))
 
 ---
 
+## Glossary
+
+### Dimension symbols
+
+All tensor arguments are annotated with [jaxtyping](https://github.com/patrick-kidger/jaxtyping) shape strings using these symbols consistently across the entire codebase:
+
+| Symbol | Meaning |
+|--------|---------|
+| `b` | batch size |
+| `n` | query sequence length |
+| `s` | key / value sequence length (`s = n` for self-attention) |
+| `d` | model dimension |
+| `h` | number of query heads |
+| `dh` | dimension per head (`d = h × dh`) |
+| `w` | window size (local attention) |
+| `nt` | total tokens in a packed sequence (`nt = Σ lengths`) |
+
+### Common tensor shapes
+
+| Shape | Where it appears | Meaning |
+|-------|-----------------|---------|
+| `b n d` | module inputs / outputs | token embeddings — one vector per position |
+| `b h n dh` | inside attention | query heads, padded batch |
+| `b h s dh` | inside attention | key / value heads, padded batch |
+| `b 1 n s` | attention mask | additive bias broadcast over heads; `0` = keep, `-inf` = mask |
+| `h n s` | attention bias | per-head additive bias (e.g. ALiBi) |
+| `nt h dh` | packed attention | flat token × head tensor; no batch dim |
+| `bp1` | packed sequence | cumulative sequence lengths, length `batch + 1` |
+
+---
+
 ## Module map
 
 ```
 stackformers/v1/
-├── sequence.py          PaddedSequence, PackedSequence, SequenceInfo
-├── protocols.py         PosEncoding, AttnBiasBuilder, AttnKernel, Norm
-├── configs.py           Pydantic configs with validators
-├── layers.py            TransformerLayer (pre-norm residual)
-├── encoder.py           Encoder
-├── decoder.py           DecoderLayer, Decoder
-├── factories.py         build_encoder(), build_decoder(), build_gpt()
+├── sequence.py              PaddedSequence, PackedSequence, SequenceInfo
+├── config.py                LayerConfig, EncoderConfig, DecoderConfig
+├── layers.py                TransformerLayer (pre-norm residual)
+├── encoder.py               Encoder
+├── decoder.py               DecoderLayer, Decoder
+├── factories.py             build_encoder(), build_decoder(), build_gpt()
 ├── attention/
-│   ├── bias.py          NoBiasBuilder, ALiBiBuilder
-│   ├── kernels.py       SDPAKernel, VarlenSDPAKernel, WindowedSDPAKernel
-│   ├── kernels_flash.py FlashVarlenKernel (optional; requires flash-attn)
-│   ├── self_attn.py     SelfAttention
-│   └── cross_attn.py   CrossAttention
+│   ├── config.py            AttentionConfig
+│   ├── protocols.py         AttnKernel, AttnBiasBuilder
+│   ├── bias.py              NoBiasBuilder, ALiBiBuilder
+│   ├── kernels/
+│   │   ├── sdpa.py          SDPAKernel
+│   │   ├── varlen.py        VarlenSDPAKernel
+│   │   ├── windowed.py      WindowedSDPAKernel
+│   │   ├── varlen_windowed.py  VarlenWindowedSDPAKernel
+│   │   └── _mask.py         build_window_mask (shared helper)
+│   ├── self_attn.py         SelfAttention
+│   └── cross_attn.py        CrossAttention
 ├── feedforward/
-│   └── swiglu.py        SwiGLU
+│   ├── config.py            FeedForwardConfig
+│   └── swiglu.py            SwiGLU
 ├── norm/
-│   └── rms.py           RMSNorm
+│   ├── protocols.py         Norm
+│   └── rms.py               RMSNorm
 └── positional/
-    ├── none.py          NoPosEncoding (null object)
-    ├── rope1d.py        RotaryEmbedding1D
-    └── rope2d.py        RotaryEmbedding2D
+    ├── protocols.py         PosEncoding, PackedPosEncoding
+    ├── none.py              NoPosEncoding (null object)
+    ├── rope1d.py            RotaryEmbedding1D
+    └── rope2d.py            RotaryEmbedding2D
 ```
 
 ---
@@ -115,14 +154,14 @@ seq = make_packed(cu_seqlens, max_seqlen=512)    # Int[Tensor, "b+1"], int
 
 ## Attention kernels
 
-| Kernel | Use case |
-|--------|----------|
-| `SDPAKernel` | Default; uses `F.scaled_dot_product_attention` (padded batches) |
-| `VarlenSDPAKernel` | Packed sequences; loops over variable-length items |
-| `WindowedSDPAKernel` | Local sliding-window; falls back to full SDPA when window ≥ seq len |
-| `FlashVarlenKernel` | Packed sequences via `flash_attn_varlen_func` (optional install) |
+| Kernel | Sequence type | Use case |
+|--------|--------------|---------|
+| `SDPAKernel` | padded | Default; `F.scaled_dot_product_attention` |
+| `WindowedSDPAKernel` | padded | Sliding-window local attention; pure PyTorch mask, no extra deps |
+| `VarlenSDPAKernel` | packed | Full attention; `varlen_attn` on CUDA+fp16, loop fallback on CPU |
+| `VarlenWindowedSDPAKernel` | packed | Sliding-window local attention; `varlen_attn` with finite window on CUDA+fp16, loop fallback on CPU |
 
-Third-party kernels are never imported at module load time — only inside `__init__`.
+All kernels are pure PyTorch — no optional third-party installs required.
 
 ---
 
@@ -136,12 +175,6 @@ uv add stackformers
 git clone <repo>
 cd stackformers
 uv sync --group dev
-```
-
-Optional flash-attn support:
-
-```bash
-pip install flash-attn --no-build-isolation
 ```
 
 ---
@@ -167,15 +200,14 @@ just clean       remove build artifacts
 | Area | Status | Notes |
 |------|--------|-------|
 | `sequence.py` — PaddedSequence, PackedSequence | ✅ done | Sealed union, frozen dataclasses |
-| `protocols.py` — PosEncoding, AttnBiasBuilder, AttnKernel, Norm | ✅ done | `@runtime_checkable` |
-| `configs.py` — Pydantic models + validators | ✅ done | AttentionConfig, FeedForwardConfig, LayerConfig, EncoderConfig, DecoderConfig |
+| `*/protocols.py` — PosEncoding, AttnBiasBuilder, AttnKernel, Norm | ✅ done | Per-module, `@runtime_checkable` |
+| `*/config.py` — Pydantic models | ✅ done | AttentionConfig, FeedForwardConfig, LayerConfig, EncoderConfig, DecoderConfig; `Field(gt=...)` constraints |
 | `norm/rms.py` — RMSNorm | ✅ done | |
-| `positional/none.py` — NoPosEncoding | ✅ done | Null object |
-| `positional/rope1d.py` — RotaryEmbedding1D | ✅ done | Halved-convention, norm-preserving |
+| `positional/none.py` — NoPosEncoding | ✅ done | Null object for padded + packed protocols |
+| `positional/rope1d.py` — RotaryEmbedding1D | ✅ done | Halved-convention; `forward_packed` for packed sequences |
 | `positional/rope2d.py` — RotaryEmbedding2D | ✅ done | Row/col split |
 | `attention/bias.py` — NoBiasBuilder, ALiBiBuilder | ✅ done | |
-| `attention/kernels.py` — SDPAKernel, VarlenSDPAKernel, WindowedSDPAKernel | ✅ done | |
-| `attention/kernels_flash.py` — FlashVarlenKernel | ✅ done | Lazy import; requires flash-attn |
+| `attention/kernels/` — SDPAKernel, VarlenSDPAKernel, WindowedSDPAKernel, VarlenWindowedSDPAKernel | ✅ done | One file per kernel; pure PyTorch, no extra deps |
 | `attention/self_attn.py` — SelfAttention (MHA / GQA / MQA) | ✅ done | |
 | `attention/cross_attn.py` — CrossAttention | ✅ done | |
 | `feedforward/swiglu.py` — SwiGLU | ✅ done | |
