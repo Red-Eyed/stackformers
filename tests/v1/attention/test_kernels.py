@@ -135,8 +135,8 @@ def test_sdpa_kernel_causal(
 # --- windowed kernel ---
 
 
-def test_windowed_kernel_fallback_shape(qkv: QKV) -> None:
-    kernel = WindowedSDPAKernel(window_size=64)  # window > N → fallback
+def test_windowed_kernel_large_window_shape(qkv: QKV) -> None:
+    kernel = WindowedSDPAKernel(window_size=64)  # window > N
     out = kernel(qkv.q, qkv.k, qkv.v, attn_mask=None, attn_bias=None, is_causal=False)
     assert out.shape == (B, H, N, DH)
 

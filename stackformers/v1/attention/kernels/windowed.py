@@ -13,8 +13,11 @@ class WindowedSDPAKernel(nn.Module):
 
     Implements local attention via a pure-PyTorch additive mask — no external
     dependencies. window_size controls the one-sided lookback (causal) or
-    half-width (bidirectional). Falls back to full SDPA when window_size >=
-    the sequence length.
+    half-width (bidirectional).
+
+    The window mask is always built and applied unconditionally so that
+    torch.export can trace the module with dynamic sequence lengths without
+    hitting a data-dependent Python branch on n vs window_size.
     """
 
     def __init__(
@@ -40,19 +43,6 @@ class WindowedSDPAKernel(nn.Module):
         n, s = q.shape[-2], k.shape[-2]
         dropout_p = self.dropout if self.training else 0.0
         effective_causal = is_causal or self.causal
-
-        if n <= self.window_size:
-            plain_mask: Tensor | None
-            if attn_bias is not None:
-                plain_mask = attn_bias.unsqueeze(0) + (attn_mask if attn_mask is not None else 0.0)
-            else:
-                plain_mask = attn_mask
-            return F.scaled_dot_product_attention(
-                q, k, v,
-                attn_mask=plain_mask,
-                dropout_p=dropout_p,
-                is_causal=effective_causal and plain_mask is None,
-            )
 
         combined: Tensor = build_window_mask(n, s, self.window_size, effective_causal, q.device)
         if attn_bias is not None:
