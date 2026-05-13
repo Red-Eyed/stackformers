@@ -83,8 +83,19 @@ New sequence types = new dataclass. Never add optional fields to existing varian
 - All code lives directly under `stackformers/`. Breaking changes go in a new top-level package.
 - Configs live next to the class they configure: `attention/config.py`, `feedforward/config.py`.
 - Cross-cutting configs (`LayerConfig`, `EncoderConfig`, `DecoderConfig`) live at `config.py`.
+- Each module has a `factory.py` with a `build_*` function that dispatches on config type via `match`.
 - Kernel variants live in `attention/kernels/` — one file per kernel class.
 - Opinionated presets live in `presets/` — one file per preset class.
+
+## Config and factory conventions
+
+Every union config type uses a `kind: Literal[...]` discriminator field so configs round-trip through JSON unambiguously. The union itself is an `Annotated[... , Field(discriminator="kind")]` alias defined in the same `config.py`.
+
+Each module owns its builder in a co-located `factory.py`. The function signature is `build_*(config: *Config, ...) -> Protocol`. Presets call these factories — they never instantiate concrete classes directly.
+
+## Module-level READMEs
+
+Each subdirectory has a `README.md` that covers: the module's purpose in one or two sentences, key design decisions, and how to extend it with a new variant. READMEs must not reflect code — no file tables, no copied signatures. If the README would just restate what reading the source gives you, don't write it.
 
 ## Presets
 
