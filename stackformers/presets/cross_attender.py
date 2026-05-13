@@ -68,6 +68,7 @@ class CrossAttender(nn.Module, Generic[ConfigT]):
         self,
         x: Float[Tensor, "b n d"],
         context: Float[Tensor, "b s d"],
+        x_seq_info: SequenceInfo | None = None,
         ctx_seq_info: SequenceInfo | None = None,
     ) -> Float[Tensor, "b n d"]:
-        return self._stack(x, context, ctx_seq_info)
+        return self._stack(x, context, x_seq_info, ctx_seq_info)

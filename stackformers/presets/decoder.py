@@ -20,7 +20,7 @@ from stackformers.presets.configs import NormConfig, build_ff, build_norm, build
 from stackformers.sequence import SequenceInfo
 
 
-class TransformerEncoderCrossConfig(BaseModel):
+class TransformerDecoderConfig(BaseModel):
     self_attn: AttentionConfig
     cross_attn: AttentionConfig
     ff: FeedForwardConfig
@@ -29,13 +29,13 @@ class TransformerEncoderCrossConfig(BaseModel):
     num_layers: int = Field(gt=0)
 
 
-ConfigT = TypeVar("ConfigT", bound=TransformerEncoderCrossConfig)
+ConfigT = TypeVar("ConfigT", bound=TransformerDecoderConfig)
 
 
-class TransformerEncoderCross(nn.Module, Generic[ConfigT]):
-    """Opinionated cross-attention preset: self-attn → cross-attn → feed-forward per layer.
+class TransformerDecoder(nn.Module, Generic[ConfigT]):
+    """Opinionated decoder preset: causal self-attn → cross-attn → feed-forward per layer.
 
-    Self-attention uses pos_encoding from config. Cross-attention always uses NoPosEncoding.
+    Self-attention is always causal. Cross-attention uses NoPosEncoding.
     context_dim must equal self_attn.dim. Extend by subclassing with a richer config.
     """
 
@@ -43,13 +43,14 @@ class TransformerEncoderCross(nn.Module, Generic[ConfigT]):
         super().__init__()
         self._config = config
 
+        self_attn_cfg = config.self_attn.model_copy(update={"causal": True})
         self_pos = build_pos_encoding(config.pos_encoding)
 
         self._decoder = Decoder(
             layers=[
                 DecoderLayer(
                     self_attn=SelfAttention(
-                        config=config.self_attn,
+                        config=self_attn_cfg,
                         pos_encoding=self_pos,
                         bias_builder=NoBiasBuilder(),
                         kernel=SDPAKernel(dropout=config.self_attn.dropout),

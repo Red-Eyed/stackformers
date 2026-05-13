@@ -73,6 +73,19 @@ def test_cross_attender_with_ctx_padding(
     assert out.shape == (B, N, D)
 
 
+def test_cross_attender_with_x_padding(
+    cross_attender: CrossAttender,
+    device_dtype: tuple[torch.device, torch.dtype],
+) -> None:
+    device, dtype = device_dtype
+    x = torch.randn(B, N, D, device=device, dtype=dtype)
+    context = torch.randn(B, S, D, device=device, dtype=dtype)
+    mask = torch.ones(B, N, dtype=torch.bool, device=device)
+    mask[0, 5:] = False
+    out = cross_attender(x, context, x_seq_info=PaddedSequence(mask=mask))
+    assert out.shape == (B, N, D)
+
+
 def test_cross_attender_gradients(device: torch.device) -> None:
     cfg = CrossAttenderConfig(
         attn=AttentionConfig(dim=D, heads=H, dim_head=DH),

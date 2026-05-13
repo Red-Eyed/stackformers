@@ -35,7 +35,7 @@ Declare `__call__`, not `forward`. This is what type checkers need to recognise 
 | `Norm` | `(x: b n d) → b n d` | `RMSNorm` |
 | `FeedForward` | `(x: b n d) → b n d` | `SwiGLU` |
 | `SelfAttn` | `(x: b n d, seq_info) → b n d` | `SelfAttention` |
-| `CrossAttn` | `(x: b n d, context: b s d, ctx_seq_info?) → b n d` | `CrossAttention` |
+| `CrossAttn` | `(x: b n d, context: b s d, x_seq_info?, ctx_seq_info?) → b n d` | `CrossAttention` |
 
 **Low-level** — called explicitly via `.forward()` inside another module's `forward`.
 Declare `forward`, not `__call__`.
@@ -93,7 +93,7 @@ New sequence types = new dataclass. Never add optional fields to existing varian
 | Preset | Per-layer ops | Notes |
 |--------|--------------|-------|
 | `TransformerEncoder` | self-attn → ff | `causal=True` for GPT-style |
-| `TransformerEncoderCross` | self-attn → cross-attn → ff | x has its own sequence; attends to context |
+| `TransformerDecoder` | causal self-attn → cross-attn → ff | target sequence attends to context; self-attn always causal |
 | `CrossAttender` | cross-attn → ff | x is a set of queries, no self-attention |
 
 Presets are intentionally not flexible — for custom wiring use the building blocks directly.

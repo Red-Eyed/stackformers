@@ -69,5 +69,6 @@ class CrossAttn(Protocol):
         self,
         x: Float[Tensor, "b n d"],
         context: Float[Tensor, "b s d"],
+        x_seq_info: SequenceInfo | None = None,
         ctx_seq_info: SequenceInfo | None = None,
     ) -> Float[Tensor, "b n d"]: ...

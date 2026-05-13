@@ -38,7 +38,7 @@ class DecoderLayer(nn.Module):
         ctx_seq_info: SequenceInfo | None = None,
     ) -> Float[Tensor, "b n d"]:
         x = x + self.self_attn(self.norm_self(x), tgt_seq_info)
-        x = x + self.cross_attn(self.norm_cross(x), context, ctx_seq_info)
+        x = x + self.cross_attn(self.norm_cross(x), context, tgt_seq_info, ctx_seq_info)
         x = x + self.ff(self.norm_ff(x))
         return x
 

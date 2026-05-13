@@ -54,6 +54,7 @@ class CrossAttention(nn.Module):
         self,
         x: Float[Tensor, "b n d"],
         context: Float[Tensor, "b s d"],
+        x_seq_info: SequenceInfo | None = None,
         ctx_seq_info: SequenceInfo | None = None,
     ) -> Float[Tensor, "b n d"]:
         b, n, _ = x.shape
@@ -88,4 +89,9 @@ class CrossAttention(nn.Module):
         )
 
         out = rearrange(out, "b h n d -> b n (h d)")
-        return self.to_out(out)
+        out = self.to_out(out)
+
+        if x_seq_info is not None and isinstance(x_seq_info, PaddedSequence):
+            out = out * x_seq_info.mask.unsqueeze(-1)
+
+        return out

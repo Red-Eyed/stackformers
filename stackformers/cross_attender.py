@@ -30,9 +30,10 @@ class CrossAttenderLayer(nn.Module):
         self,
         x: Float[Tensor, "b n d"],
         context: Float[Tensor, "b s d"],
+        x_seq_info: SequenceInfo | None = None,
         ctx_seq_info: SequenceInfo | None = None,
     ) -> Float[Tensor, "b n d"]:
-        x = x + self.cross_attn(self.norm_cross(x), context, ctx_seq_info)
+        x = x + self.cross_attn(self.norm_cross(x), context, x_seq_info, ctx_seq_info)
         x = x + self.ff(self.norm_ff(x))
         return x
 
@@ -53,8 +54,9 @@ class CrossAttenderStack(nn.Module):
         self,
         x: Float[Tensor, "b n d"],
         context: Float[Tensor, "b s d"],
+        x_seq_info: SequenceInfo | None = None,
         ctx_seq_info: SequenceInfo | None = None,
     ) -> Float[Tensor, "b n d"]:
         for layer in self.layers:
-            x = layer(x, context, ctx_seq_info)
+            x = layer(x, context, x_seq_info, ctx_seq_info)
         return self.final_norm(x)

@@ -57,6 +57,19 @@ def test_cross_attn_with_ctx_mask(
     assert out.shape == (B, N, D)
 
 
+def test_cross_attn_with_x_mask(
+    cross_attn: CrossAttention,
+    x_ctx: tuple[torch.Tensor, torch.Tensor],
+) -> None:
+    x, ctx = x_ctx
+    device = x.device
+    mask = torch.ones(B, N, dtype=torch.bool, device=device)
+    mask[0, 5:] = False
+    out = cross_attn(x, ctx, x_seq_info=make_padded(mask))
+    assert out.shape == (B, N, D)
+    assert out[0, 5:].eq(0).all()
+
+
 def test_cross_attn_different_seq_lengths(
     device_dtype: tuple[torch.device, torch.dtype],
 ) -> None:

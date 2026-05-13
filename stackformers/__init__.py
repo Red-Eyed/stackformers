@@ -29,11 +29,8 @@ from stackformers.positional.rope1d import RotaryEmbedding1D
 from stackformers.positional.rope2d import RotaryEmbedding2D
 from stackformers.presets.configs import NormConfig, build_ff, build_norm, build_pos_encoding
 from stackformers.presets.cross_attender import CrossAttender, CrossAttenderConfig
+from stackformers.presets.decoder import TransformerDecoder, TransformerDecoderConfig
 from stackformers.presets.encoder import TransformerEncoder, TransformerEncoderConfig
-from stackformers.presets.encoder_cross import (
-    TransformerEncoderCross,
-    TransformerEncoderCrossConfig,
-)
 from stackformers.sequence import (
     PackedSequence,
     PaddedSequence,
@@ -107,8 +104,8 @@ __all__ = [
     # presets
     "TransformerEncoderConfig",
     "TransformerEncoder",
-    "TransformerEncoderCrossConfig",
-    "TransformerEncoderCross",
+    "TransformerDecoderConfig",
+    "TransformerDecoder",
     "CrossAttenderConfig",
     "CrossAttender",
 ]
