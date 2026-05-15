@@ -1,0 +1,17 @@
+# Lock files - never useful to read
+uv.lock
+poetry.lock
+package-lock.json
+yarn.lock
+Cargo.lock
+*.lock
+
+# Other noise
+__pycache__/
+*.pyc
+.venv/
+dist/
+build/
+*.egg-info/
+.mypy_cache/
+.ruff_cache/

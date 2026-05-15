@@ -41,11 +41,17 @@ class RoPE1DConfig(BaseModel):
     yarn: YaRNConfig | None = None
 
 
+class RoPE2DConfig(BaseModel):
+    kind: Literal["rope2d"] = "rope2d"
+    dim_head: int = Field(gt=0)
+    base: int = Field(default=10_000, gt=0)
+
+
 class NoPosEncodingConfig(BaseModel):
     kind: Literal["none"] = "none"
 
 
 PosEncodingConfig = Annotated[
-    RoPE1DConfig | NoPosEncodingConfig,
+    RoPE1DConfig | RoPE2DConfig | NoPosEncodingConfig,
     Field(discriminator="kind"),
 ]

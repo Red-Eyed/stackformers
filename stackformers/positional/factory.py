@@ -1,15 +1,18 @@
 from __future__ import annotations
 
-from stackformers.positional.config import NoPosEncodingConfig, PosEncodingConfig, RoPE1DConfig
+from stackformers.positional.config import NoPosEncodingConfig, PosEncodingConfig, RoPE1DConfig, RoPE2DConfig
 from stackformers.positional.none import NoPosEncoding
 from stackformers.positional.protocols import PosEncoding
 from stackformers.positional.rope1d import RotaryEmbedding1D
+from stackformers.positional.rope2d import RotaryEmbedding2D
 
 
 def build_pos_encoding(config: PosEncodingConfig) -> PosEncoding:
     match config:
         case RoPE1DConfig():
             return RotaryEmbedding1D(config)
+        case RoPE2DConfig():
+            return RotaryEmbedding2D(config)
         case NoPosEncodingConfig():
             return NoPosEncoding(config)
         case _:

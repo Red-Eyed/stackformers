@@ -26,7 +26,7 @@ from stackformers.attention.kernels.factory import build_kernel
 from stackformers.attention.protocols import AttnBiasBuilder, AttnKernel, CrossAttn, SelfAttn
 from stackformers.attention.self_attn import SelfAttention
 from stackformers.config import DecoderConfig, EncoderConfig, LayerConfig
-from stackformers.cross_attender import CrossAttenderLayer, CrossAttenderStack
+from stackformers.cross_attender import CrossAttenderLayer, CrossAttenderStack, PackedCrossAttenderLayer, PackedCrossAttenderStack
 from stackformers.decoder import Decoder, DecoderLayer
 from stackformers.encoder import Encoder
 from stackformers.feedforward.config import FeedForwardConfig
@@ -38,15 +38,15 @@ from stackformers.norm.config import LayerNormConfig, RMSNormConfig
 from stackformers.norm.factory import NormConfig, build_norm
 from stackformers.norm.protocols import Norm
 from stackformers.norm.rms import RMSNorm
-from stackformers.positional.config import NoPosEncodingConfig, PosEncodingConfig, RoPE1DConfig
+from stackformers.positional.config import NoPosEncodingConfig, PosEncodingConfig, RoPE1DConfig, RoPE2DConfig
 from stackformers.positional.factory import build_pos_encoding
 from stackformers.positional.none import NoPosEncoding
 from stackformers.positional.protocols import PosEncoding
 from stackformers.positional.rope1d import RotaryEmbedding1D
 from stackformers.positional.rope2d import RotaryEmbedding2D
-from stackformers.presets.cross_attender import CrossAttender, CrossAttenderConfig
+from stackformers.presets.cross_attender import CrossAttender, CrossAttenderConfig, PackedCrossAttender, packed_cross_attender_config
 from stackformers.presets.decoder import TransformerDecoder, TransformerDecoderConfig
-from stackformers.presets.encoder import TransformerEncoder, TransformerEncoderConfig
+from stackformers.presets.encoder import PackedTransformerEncoder, TransformerEncoder, TransformerEncoderConfig
 from stackformers.sequence import (
     PackedInput,
     PackedSequence,
@@ -99,6 +99,7 @@ __all__ = [
     "NormConfig",
     # configs — positional
     "RoPE1DConfig",
+    "RoPE2DConfig",
     "NoPosEncodingConfig",
     "PosEncodingConfig",
     # norm
@@ -125,6 +126,8 @@ __all__ = [
     "Decoder",
     "CrossAttenderLayer",
     "CrossAttenderStack",
+    "PackedCrossAttenderLayer",
+    "PackedCrossAttenderStack",
     # presets — builders
     "NormConfig",
     "build_norm",
@@ -143,8 +146,11 @@ __all__ = [
     # presets
     "TransformerEncoderConfig",
     "TransformerEncoder",
+    "PackedTransformerEncoder",
     "TransformerDecoderConfig",
     "TransformerDecoder",
     "CrossAttenderConfig",
     "CrossAttender",
+    "PackedCrossAttender",
+    "packed_cross_attender_config",
 ]

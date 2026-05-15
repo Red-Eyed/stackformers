@@ -4,7 +4,7 @@ import pytest
 import torch
 import torch.export
 
-from stackformers.positional.config import RoPE1DConfig, YaRNConfig
+from stackformers.positional.config import RoPE1DConfig, RoPE2DConfig, YaRNConfig
 from stackformers.positional.none import NoPosEncoding
 from stackformers.positional.rope1d import RotaryEmbedding1D
 from stackformers.positional.rope2d import RotaryEmbedding2D
@@ -44,7 +44,7 @@ def rope1d(device_dtype: tuple[torch.device, torch.dtype]) -> RotaryEmbedding1D:
 @pytest.fixture
 def rope2d(device_dtype: tuple[torch.device, torch.dtype]) -> RotaryEmbedding2D:
     device, dtype = device_dtype
-    return RotaryEmbedding2D(dim_head=DH).to(device=device, dtype=dtype)
+    return RotaryEmbedding2D(RoPE2DConfig(dim_head=DH)).to(device=device, dtype=dtype)
 
 
 def test_no_pos_encoding_passthrough(
