@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from stackformers.feedforward.config import FeedForwardConfig
+from stackformers.feedforward.config import SwiGLUConfig
 from stackformers.feedforward.swiglu import SwiGLU
 
 B, N, D = 2, 16, 64
@@ -12,7 +12,7 @@ B, N, D = 2, 16, 64
 @pytest.fixture
 def swiglu(device_dtype: tuple[torch.device, torch.dtype]) -> SwiGLU:
     device, dtype = device_dtype
-    return SwiGLU(FeedForwardConfig(dim=D)).to(device=device, dtype=dtype)
+    return SwiGLU(SwiGLUConfig(dim=D)).to(device=device, dtype=dtype)
 
 
 @pytest.fixture
@@ -31,19 +31,19 @@ def test_swiglu_no_bias(swiglu: SwiGLU) -> None:
 
 
 def test_swiglu_inner_dim_scaled() -> None:
-    config = FeedForwardConfig(dim=64, mult=4.0)
+    config = SwiGLUConfig(dim=64, mult=4.0)
     assert config.inner_dim == int(64 * 4.0 * 2 / 3)
 
 
 def test_swiglu_different_mult(device_dtype: tuple[torch.device, torch.dtype]) -> None:
     device, dtype = device_dtype
-    ff = SwiGLU(FeedForwardConfig(dim=D, mult=8.0)).to(device=device, dtype=dtype)
+    ff = SwiGLU(SwiGLUConfig(dim=D, mult=8.0)).to(device=device, dtype=dtype)
     x = torch.randn(B, N, D, device=device, dtype=dtype)
     assert ff(x).shape == (B, N, D)
 
 
 def test_swiglu_gradients_flow(device: torch.device) -> None:
-    ff = SwiGLU(FeedForwardConfig(dim=D)).to(device=device)
+    ff = SwiGLU(SwiGLUConfig(dim=D)).to(device=device)
     x = torch.randn(B, N, D, device=device, requires_grad=True)
     ff(x).sum().backward()
     assert x.grad is not None

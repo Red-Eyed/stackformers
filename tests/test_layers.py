@@ -7,7 +7,7 @@ from stackformers.attention.bias import NoBiasBuilder
 from stackformers.attention.config import AttentionConfig
 from stackformers.attention.kernels import SDPAKernel
 from stackformers.attention.self_attn import SelfAttention
-from stackformers.feedforward.config import FeedForwardConfig
+from stackformers.feedforward.config import SwiGLUConfig
 from stackformers.feedforward.swiglu import SwiGLU
 from stackformers.layers import TransformerLayer
 from stackformers.norm.config import RMSNormConfig
@@ -22,7 +22,7 @@ B, N, D, H, DH = 2, 16, 64, 4, 16
 def layer(device_dtype: tuple[torch.device, torch.dtype]) -> TransformerLayer:
     device, dtype = device_dtype
     attn_cfg = AttentionConfig(dim=D, heads=H, dim_head=DH)
-    ff_cfg = FeedForwardConfig(dim=D)
+    ff_cfg = SwiGLUConfig(dim=D)
     norm_cfg = RMSNormConfig(dim=D)
     return TransformerLayer(
         self_attn=SelfAttention(attn_cfg, NoPosEncoding(), NoBiasBuilder(), SDPAKernel()),
@@ -58,7 +58,7 @@ def test_transformer_layer_residual_connection(
 
 def test_transformer_layer_gradients(device: torch.device) -> None:
     attn_cfg = AttentionConfig(dim=D, heads=H, dim_head=DH)
-    ff_cfg = FeedForwardConfig(dim=D)
+    ff_cfg = SwiGLUConfig(dim=D)
     norm_cfg = RMSNormConfig(dim=D)
     layer = TransformerLayer(
         self_attn=SelfAttention(attn_cfg, NoPosEncoding(), NoBiasBuilder(), SDPAKernel()),

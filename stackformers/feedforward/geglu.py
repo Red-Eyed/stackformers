@@ -5,19 +5,20 @@ import torch.nn.functional as F
 from jaxtyping import Float
 from torch import Tensor
 
-from stackformers.feedforward.config import SwiGLUConfig
+from stackformers.feedforward.config import GEGLUConfig
 
 
-class SwiGLU(nn.Module):
-    """SwiGLU feed-forward network.
+class GEGLU(nn.Module):
+    """GEGLU feed-forward network.
 
-    Uses two parallel gate matrices (W1, W2) and one output projection (W3).
+    GLU variant that gates with GELU instead of SiLU (SwiGLU). Empirically
+    competitive with SwiGLU; slightly smoother gradient signal near zero.
     inner_dim = 2/3 * dim * mult so total params match a standard 4x GELU FFN.
 
     Paper: "GLU Variants Improve Transformers" — https://arxiv.org/abs/2002.05202
     """
 
-    def __init__(self, config: SwiGLUConfig) -> None:
+    def __init__(self, config: GEGLUConfig) -> None:
         super().__init__()
         inner_dim = config.inner_dim
 
@@ -29,6 +30,6 @@ class SwiGLU(nn.Module):
         nn.init.normal_(self.w3.weight, std=0.02)
 
     def forward(self, x: Float[Tensor, "b n d"]) -> Float[Tensor, "b n d"]:
-        gate = F.silu(self.w1(x))
+        gate = F.gelu(self.w1(x))
         hidden = gate * self.w2(x)
         return self.w3(self.dropout(hidden))

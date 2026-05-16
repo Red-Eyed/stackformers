@@ -12,7 +12,7 @@ from stackformers.attention.kernels.config import SDPAKernelConfig, VarlenSDPAKe
 from stackformers.attention.kernels.factory import build_kernel
 from stackformers.attention.packed_cross_attn import PackedCrossAttention
 from stackformers.cross_attender import CrossAttenderLayer, CrossAttenderStack, PackedCrossAttenderLayer, PackedCrossAttenderStack
-from stackformers.feedforward.config import FeedForwardConfig
+from stackformers.feedforward.config import FeedForwardConfig, SwiGLUConfig
 from stackformers.feedforward.factory import build_ff
 from stackformers.norm.config import RMSNormConfig
 from stackformers.norm.factory import NormConfig, build_norm
@@ -44,7 +44,7 @@ def plain_cross_attender_config(
         attn=AttentionConfig(
             dim=dim, heads=heads, dim_head=dim_head, dropout=dropout, kernel=SDPAKernelConfig()
         ),
-        ff=FeedForwardConfig(dim=dim, mult=ff_mult, dropout=dropout),
+        ff=SwiGLUConfig(dim=dim, mult=ff_mult, dropout=dropout),
         norm=RMSNormConfig(dim=dim),
         num_layers=num_layers,
     )
@@ -64,7 +64,7 @@ def packed_cross_attender_config(
         attn=AttentionConfig(
             dim=dim, heads=heads, dim_head=dim_head, dropout=dropout, kernel=VarlenSDPAKernelConfig()
         ),
-        ff=FeedForwardConfig(dim=dim, mult=ff_mult, dropout=dropout),
+        ff=SwiGLUConfig(dim=dim, mult=ff_mult, dropout=dropout),
         norm=RMSNormConfig(dim=dim),
         pos_encoding=RoPE1DConfig(dim_head=dim_head),
         num_layers=num_layers,

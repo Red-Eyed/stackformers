@@ -16,7 +16,7 @@ from stackformers.attention.kernels.factory import build_kernel
 from stackformers.attention.packed_self_attn import PackedSelfAttention
 from stackformers.attention.self_attn import SelfAttention
 from stackformers.encoder import Encoder
-from stackformers.feedforward.config import FeedForwardConfig
+from stackformers.feedforward.config import FeedForwardConfig, SwiGLUConfig
 from stackformers.feedforward.factory import build_ff
 from stackformers.layers import TransformerLayer
 from stackformers.norm.config import RMSNormConfig
@@ -55,7 +55,7 @@ def plain_encoder_config(
             dim=dim, heads=heads, dim_head=dim_head, causal=causal, dropout=dropout,
             kernel=SDPAKernelConfig(),
         ),
-        ff=FeedForwardConfig(dim=dim, mult=ff_mult, dropout=dropout),
+        ff=SwiGLUConfig(dim=dim, mult=ff_mult, dropout=dropout),
         norm=RMSNormConfig(dim=dim),
         pos_encoding=RoPE1DConfig(dim_head=dim_head),
         bias=NoBiasConfig(),
@@ -84,7 +84,7 @@ def windowed_encoder_config(
             dim=dim, heads=heads, dim_head=dim_head, causal=causal, dropout=dropout,
             kernel=WindowedSDPAKernelConfig(window_size=window_size),
         ),
-        ff=FeedForwardConfig(dim=dim, mult=ff_mult, dropout=dropout),
+        ff=SwiGLUConfig(dim=dim, mult=ff_mult, dropout=dropout),
         norm=RMSNormConfig(dim=dim),
         pos_encoding=RoPE1DConfig(dim_head=dim_head),
         bias=NoBiasConfig(),
@@ -112,7 +112,7 @@ def packed_encoder_config(
             dim=dim, heads=heads, dim_head=dim_head, causal=causal, dropout=dropout,
             kernel=VarlenSDPAKernelConfig(),
         ),
-        ff=FeedForwardConfig(dim=dim, mult=ff_mult, dropout=dropout),
+        ff=SwiGLUConfig(dim=dim, mult=ff_mult, dropout=dropout),
         norm=RMSNormConfig(dim=dim),
         pos_encoding=RoPE1DConfig(dim_head=dim_head),
         bias=NoBiasConfig(),

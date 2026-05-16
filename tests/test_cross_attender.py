@@ -4,7 +4,7 @@ import pytest
 import torch
 
 from stackformers.attention.config import AttentionConfig
-from stackformers.feedforward.config import FeedForwardConfig
+from stackformers.feedforward.config import SwiGLUConfig
 from stackformers.norm.config import RMSNormConfig
 from stackformers.presets.cross_attender import CrossAttender, CrossAttenderConfig
 from stackformers.sequence import make_padded_input
@@ -16,7 +16,7 @@ B, N, S, D, H, DH = 2, 8, 12, 64, 4, 16
 def config() -> CrossAttenderConfig:
     return CrossAttenderConfig(
         attn=AttentionConfig(dim=D, heads=H, dim_head=DH),
-        ff=FeedForwardConfig(dim=D),
+        ff=SwiGLUConfig(dim=D),
         norm=RMSNormConfig(dim=D),
         num_layers=2,
     )
@@ -85,7 +85,7 @@ def test_cross_attender_with_x_padding(
 def test_cross_attender_gradients(device: torch.device) -> None:
     cfg = CrossAttenderConfig(
         attn=AttentionConfig(dim=D, heads=H, dim_head=DH),
-        ff=FeedForwardConfig(dim=D),
+        ff=SwiGLUConfig(dim=D),
         norm=RMSNormConfig(dim=D),
         num_layers=2,
     )
@@ -107,7 +107,7 @@ def test_cross_attender_config_accessor(config: CrossAttenderConfig) -> None:
 def test_cross_attender_causal_forced_false() -> None:
     causal_cfg = CrossAttenderConfig(
         attn=AttentionConfig(dim=D, heads=H, dim_head=DH, causal=True),
-        ff=FeedForwardConfig(dim=D),
+        ff=SwiGLUConfig(dim=D),
         norm=RMSNormConfig(dim=D),
         num_layers=1,
     )

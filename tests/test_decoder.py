@@ -4,7 +4,7 @@ import pytest
 import torch
 
 from stackformers.attention.config import AttentionConfig
-from stackformers.feedforward.config import FeedForwardConfig
+from stackformers.feedforward.config import SwiGLUConfig
 from stackformers.norm.config import RMSNormConfig
 from stackformers.positional.config import NoPosEncodingConfig, RoPE1DConfig
 from stackformers.presets.decoder import TransformerDecoder, TransformerDecoderConfig
@@ -18,7 +18,7 @@ def config() -> TransformerDecoderConfig:
     return TransformerDecoderConfig(
         self_attn=AttentionConfig(dim=D, heads=H, dim_head=DH),
         cross_attn=AttentionConfig(dim=D, heads=H, dim_head=DH),
-        ff=FeedForwardConfig(dim=D),
+        ff=SwiGLUConfig(dim=D),
         norm=RMSNormConfig(dim=D),
         pos_encoding=NoPosEncodingConfig(),
         num_layers=2,
@@ -86,7 +86,7 @@ def test_decoder_self_attn_always_causal() -> None:
     cfg = TransformerDecoderConfig(
         self_attn=AttentionConfig(dim=D, heads=H, dim_head=DH, causal=False),
         cross_attn=AttentionConfig(dim=D, heads=H, dim_head=DH),
-        ff=FeedForwardConfig(dim=D),
+        ff=SwiGLUConfig(dim=D),
         norm=RMSNormConfig(dim=D),
         pos_encoding=NoPosEncodingConfig(),
         num_layers=1,
@@ -104,7 +104,7 @@ def test_decoder_with_rope(device_dtype: tuple[torch.device, torch.dtype]) -> No
     cfg = TransformerDecoderConfig(
         self_attn=AttentionConfig(dim=D, heads=H, dim_head=DH),
         cross_attn=AttentionConfig(dim=D, heads=H, dim_head=DH),
-        ff=FeedForwardConfig(dim=D),
+        ff=SwiGLUConfig(dim=D),
         norm=RMSNormConfig(dim=D),
         pos_encoding=RoPE1DConfig(dim_head=DH),
         num_layers=2,
@@ -121,7 +121,7 @@ def test_decoder_gradients(device: torch.device) -> None:
     cfg = TransformerDecoderConfig(
         self_attn=AttentionConfig(dim=D, heads=H, dim_head=DH),
         cross_attn=AttentionConfig(dim=D, heads=H, dim_head=DH),
-        ff=FeedForwardConfig(dim=D),
+        ff=SwiGLUConfig(dim=D),
         norm=RMSNormConfig(dim=D),
         pos_encoding=NoPosEncodingConfig(),
         num_layers=2,
