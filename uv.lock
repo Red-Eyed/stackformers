@@ -232,20 +232,6 @@ wheels = [
 ]
 
 [[package]]
-name = "hyper-connections"
-version = "0.4.10"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "einops" },
-    { name = "torch" },
-    { name = "torch-einops-utils" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/ba/14/99ea7cfd949435d367492643a3646586e116cf60f007e7a4f2c7a4467726/hyper_connections-0.4.10.tar.gz", hash = "sha256:8dd0534c04df17905a8270ada6d87c99822b34dabfa82238790b8f148522971c", size = 17642, upload-time = "2026-04-21T18:00:27.257Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d7/32/6f6cf9cfde214487866adc9e7375a68c1638ce3704c782b33b3f145c6344/hyper_connections-0.4.10-py3-none-any.whl", hash = "sha256:9ddef0d034740551fd053813fa13f5b983ce89e7345c22dacf75d5296d80378c", size = 29263, upload-time = "2026-04-21T18:00:26.149Z" },
-]
-
-[[package]]
 name = "iniconfig"
 version = "2.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -276,20 +262,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/df/bf/f7da0350254c0ed7c72f3e33cef02e048281fec7ecec5f032d4aac52226b/jinja2-3.1.6.tar.gz", hash = "sha256:0137fb05990d35f1275a587e9aee6d56da821fc83491a0fb838183be43f66d6d", size = 245115, upload-time = "2025-03-05T20:05:02.478Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/62/a1/3d680cbfd5f4b8f15abc1d571870c5fc3e594bb582bc3b64ea099db13e56/jinja2-3.1.6-py3-none-any.whl", hash = "sha256:85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67", size = 134899, upload-time = "2025-03-05T20:05:00.369Z" },
-]
-
-[[package]]
-name = "local-attention"
-version = "1.11.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "einops" },
-    { name = "hyper-connections" },
-    { name = "torch" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/9b/b4/7cc5b3122ff63d58c7dd58cb122edfc8f5c74c88b14fcd22b444f0527952/local_attention-1.11.2.tar.gz", hash = "sha256:94e48fec748e96fa81ac6c3e27a357950eaab22cd8f69a10c50b23d6eec8f09c", size = 10918, upload-time = "2025-07-16T14:30:37.094Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d8/f6/074ef5c98f2d062177af24a9e20db20b009d141e4ca827c1e419461595b0/local_attention-1.11.2-py3-none-any.whl", hash = "sha256:8bbb03cef6a6f0b694de64f9ecd81886fd1e73ef367b57f02995b469ac52fd16", size = 9504, upload-time = "2025-07-16T14:30:35.9Z" },
 ]
 
 [[package]]
@@ -839,13 +811,12 @@ wheels = [
 
 [[package]]
 name = "stackformers"
-version = "2.0.1"
+version = "2.0.2"
 source = { editable = "." }
 dependencies = [
     { name = "beartype" },
     { name = "einops" },
     { name = "jaxtyping" },
-    { name = "local-attention" },
     { name = "numpy" },
     { name = "pydantic" },
     { name = "torch" },
@@ -864,7 +835,6 @@ requires-dist = [
     { name = "beartype", specifier = ">=0.18" },
     { name = "einops", specifier = ">=0.7" },
     { name = "jaxtyping", specifier = ">=0.2" },
-    { name = "local-attention", specifier = ">=1.9" },
     { name = "numpy", specifier = ">=2.4.4" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "torch", specifier = ">=2.2" },
@@ -989,19 +959,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/fd/66/54a56a4a6ceaffb567231994a9745821d3af922a854ed33b0b3a278e0a99/torch-2.11.0-cp314-cp314t-manylinux_2_28_aarch64.whl", hash = "sha256:ab9a8482f475f9ba20e12db84b0e55e2f58784bdca43a854a6ccd3fd4b9f75e6", size = 419735835, upload-time = "2026-03-23T18:07:18.974Z" },
     { url = "https://files.pythonhosted.org/packages/b1/e7/0b6665f533aa9e337662dc190425abc0af1fe3234088f4454c52393ded61/torch-2.11.0-cp314-cp314t-manylinux_2_28_x86_64.whl", hash = "sha256:563ed3d25542d7e7bbc5b235ccfacfeb97fb470c7fee257eae599adb8005c8a2", size = 530613405, upload-time = "2026-03-23T18:08:07.014Z" },
     { url = "https://files.pythonhosted.org/packages/cf/bf/c8d12a2c86dbfd7f40fb2f56fbf5a505ccf2d9ce131eb559dfc7c51e1a04/torch-2.11.0-cp314-cp314t-win_amd64.whl", hash = "sha256:b2a43985ff5ef6ddd923bbcf99943e5f58059805787c5c9a2622bf05ca2965b0", size = 114792991, upload-time = "2026-03-23T18:08:19.216Z" },
-]
-
-[[package]]
-name = "torch-einops-utils"
-version = "0.0.33"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "einops" },
-    { name = "torch" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/6d/ab/be8ce0b1fbaff74fc65dafa7492474e6b77fcf3b2b0815c5c1fffb4b7113/torch_einops_utils-0.0.33.tar.gz", hash = "sha256:d1b33aee762ee1d35bb14ece49db356b545205024b343044bec2b0ab1cb253fa", size = 9856, upload-time = "2026-05-11T19:29:43.162Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/6d/1f/e2c2883f57129cfa11de06c25115cd0e077ee42e6467b4b759e96056e2c2/torch_einops_utils-0.0.33-py3-none-any.whl", hash = "sha256:de5bf25747d996fa7304cd4449d2a3d6b8bfec34453a085601d1220e5a5cc0c7", size = 7703, upload-time = "2026-05-11T19:29:41.871Z" },
 ]
 
 [[package]]
