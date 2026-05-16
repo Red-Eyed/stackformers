@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import torch.nn as nn
-import torch.nn.functional as F
 from jaxtyping import Float
 from torch import Tensor
 
@@ -26,10 +25,11 @@ class GEGLU(nn.Module):
         self.w2 = nn.Linear(config.dim, inner_dim, bias=False)
         self.w3 = nn.Linear(inner_dim, config.dim, bias=False)
         self.dropout = nn.Dropout(config.dropout)
+        self.act = nn.GELU()
 
         nn.init.normal_(self.w3.weight, std=0.02)
 
     def forward(self, x: Float[Tensor, "b n d"]) -> Float[Tensor, "b n d"]:
-        gate = F.gelu(self.w1(x))
+        gate = self.act(self.w1(x))
         hidden = gate * self.w2(x)
         return self.w3(self.dropout(hidden))

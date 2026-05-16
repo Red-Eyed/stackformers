@@ -120,6 +120,7 @@ Presets are intentionally not flexible — for custom wiring use the building bl
 - PyTorch native first: `F.scaled_dot_product_attention`, `torch.nn.attention.varlen.varlen_attn`
 - No optional third-party kernel dependencies — all kernels are pure PyTorch
 - Pydantic for configs; use `Field(gt=0)` / `Field(ge=0)` constraints, not `@field_validator`, for simple bounds
+- Prefer `nn.Module` activations (`nn.SiLU()`, `nn.GELU()`) over `torch.nn.functional` calls — module attributes appear in the module tree and can be swapped at runtime via `model.modules()` iteration
 
 ## x-transformers reference
 Cloned at `./x-transformers/` — read for math and implementation details only.
