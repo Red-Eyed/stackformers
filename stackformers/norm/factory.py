@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import torch.nn as nn
-
 from stackformers.norm.config import LayerNormConfig, NormConfig, RMSNormConfig
+from stackformers.norm.layer_norm import LayerNorm
 from stackformers.norm.protocols import Norm
 from stackformers.norm.rms import RMSNorm
 
@@ -14,6 +13,6 @@ def build_norm(config: NormConfig) -> Norm:
         case RMSNormConfig():
             return RMSNorm(config)
         case LayerNormConfig():
-            return nn.LayerNorm(config.dim, eps=config.eps)
+            return LayerNorm(config)
         case _:
             raise AssertionError(f"Unhandled norm config: {type(config)}")
