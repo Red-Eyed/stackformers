@@ -11,6 +11,7 @@ from stackformers.attention.kernels.config import (
     WindowedSDPAKernelConfig,
 )
 from stackformers.attention.kernels.factory import build_kernel
+from stackformers.attention.packed_self_attn import PackedSelfAttention
 from stackformers.attention.self_attn import SelfAttention
 from stackformers.encoder import Encoder
 from stackformers.feedforward.config import FeedForwardConfig, SwiGLUConfig
@@ -20,7 +21,7 @@ from stackformers.norm.config import RMSNormConfig
 from stackformers.norm.factory import NormConfig, build_norm
 from stackformers.positional.config import PosEncodingConfig, RoPE1DConfig
 from stackformers.positional.factory import build_pos_encoding
-from stackformers.sequence import SequenceInput
+from stackformers.sequence import PackedInput, SequenceInput
 
 
 class TransformerEncoderConfig(BaseModel):
@@ -40,9 +41,10 @@ def plain_encoder_config(
     ff_mult: float = 4.0,
     dropout: float = 0.0,
 ) -> TransformerEncoderConfig:
-    """Full-sequence SDPA encoder with RoPE-1D, RMSNorm, and SwiGLU FF.
+    """Padded full-sequence SDPA encoder with RoPE-1D, RMSNorm, and SwiGLU FF.
 
-    Accepts PaddedInput or PackedInput — kernel choice in config controls the path.
+    The default choice for most tasks. Accepts PaddedInput; padding is handled
+    via an additive attention mask so no sequence packing is required.
     """
     dim_head = dim // heads
     return TransformerEncoderConfig(
@@ -71,9 +73,10 @@ def windowed_encoder_config(
     ff_mult: float = 4.0,
     dropout: float = 0.0,
 ) -> TransformerEncoderConfig:
-    """Local-window SDPA encoder — O(n·w) attention for long sequences.
+    """Padded local-window SDPA encoder — O(n·w) attention for long sequences.
 
     Each token attends only within a sliding window of size `window_size`.
+    Accepts PaddedInput.
     """
     dim_head = dim // heads
     return TransformerEncoderConfig(
@@ -101,9 +104,10 @@ def packed_encoder_config(
     ff_mult: float = 4.0,
     dropout: float = 0.0,
 ) -> TransformerEncoderConfig:
-    """Varlen SDPA encoder — no padding overhead, optimised for training.
+    """Packed varlen SDPA encoder — no padding overhead, requires PackedInput.
 
-    Pass PackedInput during training; the same model accepts PaddedInput at inference.
+    Sequences of different lengths are concatenated into a single flat tensor.
+    Best for batches with high length variance.
     """
     dim_head = dim // heads
     return TransformerEncoderConfig(
@@ -123,11 +127,7 @@ def packed_encoder_config(
 
 
 class TransformerEncoder(nn.Module):
-    """Opinionated encoder preset: norm, ff, pos-encoding, and kernel from config.
-
-    Pass PackedInput for training (no padding overhead) and PaddedInput for inference
-    — same model, same weights, no class swap required.
-    """
+    """Opinionated encoder preset: norm, ff, pos-encoding, and kernel from config."""
 
     def __init__(self, config: TransformerEncoderConfig) -> None:
         super().__init__()
@@ -153,4 +153,47 @@ class TransformerEncoder(nn.Module):
         )
 
     def forward(self, input: SequenceInput) -> Tensor:
+        return self._encoder(input)
+
+
+class PackedTransformerEncoder(nn.Module):
+    """Encoder preset for packed (variable-length) sequences.
+
+    Uses PackedSelfAttention — no padding compute or memory overhead.
+    Accepts PackedInput only.
+
+    State dict is identical to TransformerEncoder built from the same config,
+    so you can train packed and export padded::
+
+        cfg = packed_encoder_config(dim=512, heads=8, num_layers=6)
+        train_model = PackedTransformerEncoder(cfg)   # trains on PackedInput
+        # ... training loop ...
+        export_model = TransformerEncoder(cfg)        # accepts PaddedInput
+        export_model.load_state_dict(train_model.state_dict())
+    """
+
+    def __init__(self, config: TransformerEncoderConfig) -> None:
+        super().__init__()
+        self.config = config
+
+        pos = build_pos_encoding(config.pos_encoding)
+
+        self._encoder = Encoder(
+            layers=[
+                TransformerLayer(
+                    self_attn=PackedSelfAttention(
+                        config=config.attn,
+                        pos_encoding=pos,
+                        kernel=build_kernel(config.attn),
+                    ),
+                    ff=build_ff(config.ff),
+                    norm_attn=build_norm(config.norm),
+                    norm_ff=build_norm(config.norm),
+                )
+                for _ in range(config.num_layers)
+            ],
+            final_norm=build_norm(config.norm),
+        )
+
+    def forward(self, input: PackedInput) -> Tensor:
         return self._encoder(input)

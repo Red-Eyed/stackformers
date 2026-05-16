@@ -4,6 +4,7 @@ import pytest
 import torch
 
 from stackformers.presets.encoder import (
+    PackedTransformerEncoder,
     TransformerEncoder,
     packed_encoder_config,
     plain_encoder_config,
@@ -57,8 +58,18 @@ def test_packed_encoder_output_shape(
 ) -> None:
     device, dtype = device_dtype
     cfg = packed_encoder_config(D, H, num_layers=2)
-    out = TransformerEncoder(cfg).to(device=device, dtype=dtype)(packed_input)
+    out = PackedTransformerEncoder(cfg).to(device=device, dtype=dtype)(packed_input)
     assert out.shape == (NT, D)
+
+
+def test_packed_and_padded_encoder_state_dict_compatible() -> None:
+    cfg = plain_encoder_config(D, H, num_layers=2)
+    packed_cfg = packed_encoder_config(D, H, num_layers=2)
+    enc = TransformerEncoder(cfg)
+    penc = PackedTransformerEncoder(packed_cfg)
+    assert set(enc.state_dict().keys()) == set(penc.state_dict().keys())
+    for key in enc.state_dict():
+        assert enc.state_dict()[key].shape == penc.state_dict()[key].shape, key
 
 
 def test_plain_encoder_causal(

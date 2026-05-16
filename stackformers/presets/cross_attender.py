@@ -8,14 +8,20 @@ from stackformers.attention.config import AttentionConfig
 from stackformers.attention.cross_attn import CrossAttention
 from stackformers.attention.kernels.config import SDPAKernelConfig, VarlenSDPAKernelConfig
 from stackformers.attention.kernels.factory import build_kernel
-from stackformers.cross_attender import CrossAttenderLayer, CrossAttenderStack
+from stackformers.attention.packed_cross_attn import PackedCrossAttention
+from stackformers.cross_attender import (
+    CrossAttenderLayer,
+    CrossAttenderStack,
+    PackedCrossAttenderLayer,
+    PackedCrossAttenderStack,
+)
 from stackformers.feedforward.config import FeedForwardConfig, SwiGLUConfig
 from stackformers.feedforward.factory import build_ff
 from stackformers.norm.config import RMSNormConfig
 from stackformers.norm.factory import NormConfig, build_norm
 from stackformers.positional.config import NoPosEncodingConfig, PosEncodingConfig, RoPE1DConfig
 from stackformers.positional.factory import build_pos_encoding
-from stackformers.sequence import SequenceInput
+from stackformers.sequence import PackedInput, SequenceInput
 
 
 class CrossAttenderConfig(BaseModel):
@@ -34,7 +40,7 @@ def plain_cross_attender_config(
     ff_mult: float = 4.0,
     dropout: float = 0.0,
 ) -> CrossAttenderConfig:
-    """SDPA cross-attender with RMSNorm and SwiGLU FF, no positional encoding."""
+    """Padded SDPA cross-attender with RMSNorm and SwiGLU FF, no positional encoding."""
     dim_head = dim // heads
     return CrossAttenderConfig(
         attn=AttentionConfig(
@@ -54,10 +60,7 @@ def packed_cross_attender_config(
     ff_mult: float = 4.0,
     dropout: float = 0.0,
 ) -> CrossAttenderConfig:
-    """Varlen SDPA cross-attender with RMSNorm, SwiGLU FF, and RoPE-1D.
-
-    Pass PackedInput during training; same model accepts PaddedInput at inference.
-    """
+    """Packed varlen SDPA cross-attender with RMSNorm, SwiGLU FF, and RoPE-1D."""
     dim_head = dim // heads
     return CrossAttenderConfig(
         attn=AttentionConfig(
@@ -75,11 +78,7 @@ def packed_cross_attender_config(
 
 
 class CrossAttender(nn.Module):
-    """Opinionated cross-attender preset: queries from x attend to context, no self-attention.
-
-    Pass PackedInput for training (no padding overhead) and PaddedInput for inference
-    — same model, same weights, no class swap required.
-    """
+    """Opinionated cross-attender preset: queries from x attend to context, no self-attention."""
 
     def __init__(self, config: CrossAttenderConfig) -> None:
         super().__init__()
@@ -106,4 +105,35 @@ class CrossAttender(nn.Module):
         )
 
     def forward(self, x_input: SequenceInput, ctx_input: SequenceInput) -> Tensor:
+        return self._stack(x_input, ctx_input)
+
+
+class PackedCrossAttender(nn.Module):
+    """Packed cross-attender: both queries and context are PackedInput (varlen)."""
+
+    def __init__(self, config: CrossAttenderConfig) -> None:
+        super().__init__()
+        self.config = config
+
+        cross_attn_cfg = config.attn.model_copy(update={"causal": False})
+        pos = build_pos_encoding(config.pos_encoding)
+
+        self._stack = PackedCrossAttenderStack(
+            layers=[
+                PackedCrossAttenderLayer(
+                    cross_attn=PackedCrossAttention(
+                        config=cross_attn_cfg,
+                        pos_encoding=pos,
+                        kernel=build_kernel(cross_attn_cfg),
+                    ),
+                    ff=build_ff(config.ff),
+                    norm_cross=build_norm(config.norm),
+                    norm_ff=build_norm(config.norm),
+                )
+                for _ in range(config.num_layers)
+            ],
+            final_norm=build_norm(config.norm),
+        )
+
+    def forward(self, x_input: PackedInput, ctx_input: PackedInput) -> Tensor:
         return self._stack(x_input, ctx_input)
