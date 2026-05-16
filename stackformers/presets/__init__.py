@@ -12,6 +12,7 @@ from stackformers.positional.factory import build_pos_encoding
 from stackformers.presets.cross_attender import (
     CrossAttender,
     CrossAttenderConfig,
+    packed_cross_attender_config,
     plain_cross_attender_config,
 )
 from stackformers.presets.decoder import (
@@ -20,7 +21,6 @@ from stackformers.presets.decoder import (
     plain_decoder_config,
 )
 from stackformers.presets.encoder import (
-    PackedTransformerEncoder,
     TransformerEncoder,
     TransformerEncoderConfig,
     packed_encoder_config,
@@ -46,10 +46,10 @@ __all__ = [
     "packed_encoder_config",
     "plain_decoder_config",
     "plain_cross_attender_config",
+    "packed_cross_attender_config",
     # presets
     "TransformerEncoderConfig",
     "TransformerEncoder",
-    "PackedTransformerEncoder",
     "TransformerDecoderConfig",
     "TransformerDecoder",
     "CrossAttenderConfig",
