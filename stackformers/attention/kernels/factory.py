@@ -20,7 +20,10 @@ def build_kernel(attn: "AttentionConfig") -> AttnKernel:
             return SDPAKernel(causal=attn.causal, dropout=attn.dropout)
         case WindowedSDPAKernelConfig():
             return WindowedSDPAKernel(
-                window_size=attn.kernel.window_size, causal=attn.causal, dropout=attn.dropout
+                window_size=attn.kernel.window_size,
+                causal=attn.causal,
+                dropout=attn.dropout,
+                mode=attn.kernel.mode,
             )
         case VarlenSDPAKernelConfig():
             return VarlenSDPAKernel(causal=attn.causal, dropout=attn.dropout)

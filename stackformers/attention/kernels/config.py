@@ -12,6 +12,7 @@ class SDPAKernelConfig(BaseModel):
 class WindowedSDPAKernelConfig(BaseModel):
     kind: Literal["windowed_sdpa"] = "windowed_sdpa"
     window_size: int = Field(gt=0)
+    mode: Literal["mask", "unfold"] = "mask"
 
 
 class VarlenSDPAKernelConfig(BaseModel):
