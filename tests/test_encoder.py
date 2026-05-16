@@ -3,8 +3,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from stackformers.attention.config import AttentionConfig
-from stackformers.attention.kernels import SDPAKernel
+from stackformers.attention.config import SelfAttentionConfig
 from stackformers.attention.self_attn import SelfAttention
 from stackformers.encoder import Encoder
 from stackformers.feedforward.config import SwiGLUConfig
@@ -27,13 +26,13 @@ def _build_encoder(
     dtype: torch.dtype,
     pos_encoding: PosEncoding | None = None,
 ) -> Encoder:
-    attn_cfg = AttentionConfig(dim=D, heads=H, dim_head=DH)
+    attn_cfg = SelfAttentionConfig(dim=D, heads=H, dim_head=DH)
     ff_cfg = SwiGLUConfig(dim=D)
     pos: PosEncoding = pos_encoding if pos_encoding is not None else NoPosEncoding()
     norm_cfg = RMSNormConfig(dim=D)
     layers: list[TransformerLayer] = [
         TransformerLayer(
-            self_attn=SelfAttention(attn_cfg, pos, SDPAKernel()),
+            self_attn=SelfAttention(attn_cfg, pos),
             ff=SwiGLU(ff_cfg),
             norm_attn=RMSNorm(norm_cfg),
             norm_ff=RMSNorm(norm_cfg),

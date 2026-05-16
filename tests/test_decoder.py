@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from stackformers.attention.config import AttentionConfig
+from stackformers.attention.config import CrossAttentionConfig, SelfAttentionConfig
 from stackformers.feedforward.config import SwiGLUConfig
 from stackformers.norm.config import RMSNormConfig
 from stackformers.positional.config import NoPosEncodingConfig, RoPE1DConfig
@@ -16,8 +16,8 @@ B, N, S, D, H, DH = 2, 8, 12, 64, 4, 16
 @pytest.fixture
 def config() -> TransformerDecoderConfig:
     return TransformerDecoderConfig(
-        self_attn=AttentionConfig(dim=D, heads=H, dim_head=DH),
-        cross_attn=AttentionConfig(dim=D, heads=H, dim_head=DH),
+        self_attn=SelfAttentionConfig(dim=D, heads=H, dim_head=DH, causal=True),
+        cross_attn=CrossAttentionConfig(dim=D, heads=H, dim_head=DH),
         ff=SwiGLUConfig(dim=D),
         norm=RMSNormConfig(dim=D),
         pos_encoding=NoPosEncodingConfig(),
@@ -82,10 +82,11 @@ def test_decoder_with_tgt_padding(
     assert decoder(x_inp, ctx_inp).shape == (B, N, D)
 
 
-def test_decoder_self_attn_always_causal() -> None:
+def test_decoder_causal_self_attn_shape() -> None:
+    """Decoder with causal=True in self_attn config runs without error."""
     cfg = TransformerDecoderConfig(
-        self_attn=AttentionConfig(dim=D, heads=H, dim_head=DH, causal=False),
-        cross_attn=AttentionConfig(dim=D, heads=H, dim_head=DH),
+        self_attn=SelfAttentionConfig(dim=D, heads=H, dim_head=DH, causal=True),
+        cross_attn=CrossAttentionConfig(dim=D, heads=H, dim_head=DH),
         ff=SwiGLUConfig(dim=D),
         norm=RMSNormConfig(dim=D),
         pos_encoding=NoPosEncodingConfig(),
@@ -102,8 +103,8 @@ def test_decoder_self_attn_always_causal() -> None:
 def test_decoder_with_rope(device_dtype: tuple[torch.device, torch.dtype]) -> None:
     device, dtype = device_dtype
     cfg = TransformerDecoderConfig(
-        self_attn=AttentionConfig(dim=D, heads=H, dim_head=DH),
-        cross_attn=AttentionConfig(dim=D, heads=H, dim_head=DH),
+        self_attn=SelfAttentionConfig(dim=D, heads=H, dim_head=DH, causal=True),
+        cross_attn=CrossAttentionConfig(dim=D, heads=H, dim_head=DH),
         ff=SwiGLUConfig(dim=D),
         norm=RMSNormConfig(dim=D),
         pos_encoding=RoPE1DConfig(dim_head=DH),
@@ -119,8 +120,8 @@ def test_decoder_with_rope(device_dtype: tuple[torch.device, torch.dtype]) -> No
 
 def test_decoder_gradients(device: torch.device) -> None:
     cfg = TransformerDecoderConfig(
-        self_attn=AttentionConfig(dim=D, heads=H, dim_head=DH),
-        cross_attn=AttentionConfig(dim=D, heads=H, dim_head=DH),
+        self_attn=SelfAttentionConfig(dim=D, heads=H, dim_head=DH, causal=True),
+        cross_attn=CrossAttentionConfig(dim=D, heads=H, dim_head=DH),
         ff=SwiGLUConfig(dim=D),
         norm=RMSNormConfig(dim=D),
         pos_encoding=NoPosEncodingConfig(),

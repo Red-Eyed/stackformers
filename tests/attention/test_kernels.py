@@ -1,310 +1,170 @@
+"""Windowed and global self-attention behavioral tests.
+
+Previously this file tested kernel classes (SDPAKernel, WindowedSDPAKernel, etc.).
+Those classes were removed — math is now inline in SelfAttention.
+Tests here verify the behavioral contracts: correct shapes for all combinations
+of global/windowed × causal/non-causal × padded/packed, and causal mask correctness.
+"""
+
 from __future__ import annotations
 
 import pytest
 import torch
-import torch.export
-from torch import Tensor
 
-from stackformers.attention.kernels import (
-    SDPAKernel,
-    VarlenSDPAKernel,
-    VarlenWindowedSDPAKernel,
-    WindowedSDPAKernel,
-)
-from stackformers.sequence import PackedSequence, PaddedSequence, make_packed, make_padded
+from stackformers.attention.config import SelfAttentionConfig
+from stackformers.attention.self_attn import SelfAttention
+from stackformers.positional.none import NoPosEncoding
+from stackformers.sequence import PackedInput, PaddedInput, make_packed_input, make_padded_input
 from tests.conftest import atol
 
-B, H, N, DH = 2, 4, 16, 32
+B, N, D, H, DH = 2, 16, 64, 4, 16
+NT = 10  # two packed seqs: 6 + 4
+
+
+def _attn(
+    device: torch.device,
+    dtype: torch.dtype,
+    *,
+    window_size: int | None = None,
+    causal: bool = False,
+) -> SelfAttention:
+    cfg = SelfAttentionConfig(dim=D, heads=H, dim_head=DH, window_size=window_size, causal=causal)
+    return SelfAttention(cfg, NoPosEncoding()).to(device=device, dtype=dtype).eval()
 
 
 @pytest.fixture
-def padded_seq(device_dtype: tuple[torch.device, torch.dtype]) -> PaddedSequence:
-    device, _ = device_dtype
-    return make_padded(torch.ones(B, N, dtype=torch.bool, device=device))
-
-
-@pytest.fixture
-def packed_seq(device_dtype: tuple[torch.device, torch.dtype]) -> PackedSequence:
-    device, _ = device_dtype
-    return make_packed(torch.tensor([0, 6, 10], dtype=torch.int32, device=device), max_seqlen=6)
-
-
-@pytest.fixture
-def qkv_padded(device_dtype: tuple[torch.device, torch.dtype]) -> tuple[Tensor, Tensor, Tensor]:
+def padded_input(device_dtype: tuple[torch.device, torch.dtype]) -> PaddedInput:
     device, dtype = device_dtype
-    return (
-        torch.randn(B, H, N, DH, device=device, dtype=dtype),
-        torch.randn(B, H, N, DH, device=device, dtype=dtype),
-        torch.randn(B, H, N, DH, device=device, dtype=dtype),
+    return make_padded_input(
+        torch.randn(B, N, D, device=device, dtype=dtype),
+        torch.ones(B, N, dtype=torch.bool, device=device),
     )
 
 
 @pytest.fixture
-def qkv_packed(device_dtype: tuple[torch.device, torch.dtype]) -> tuple[Tensor, Tensor, Tensor]:
+def packed_input(device_dtype: tuple[torch.device, torch.dtype]) -> PackedInput:
     device, dtype = device_dtype
-    total = 10
-    return (
-        torch.randn(total, H, DH, device=device, dtype=dtype),
-        torch.randn(total, H, DH, device=device, dtype=dtype),
-        torch.randn(total, H, DH, device=device, dtype=dtype),
-    )
+    x = torch.randn(NT, D, device=device, dtype=dtype)
+    cu = torch.tensor([0, 6, 10], dtype=torch.int32, device=device)
+    return make_packed_input(x, cu, max_seqlen=6)
 
 
-# --- SDPA kernel ---
+# --- shape contracts ---
 
 
-def test_sdpa_kernel_output_shape(
-    qkv_padded: tuple[Tensor, Tensor, Tensor], padded_seq: PaddedSequence
+def test_global_padded_shape(
+    device_dtype: tuple[torch.device, torch.dtype],
+    padded_input: PaddedInput,
 ) -> None:
-    q, k, v = qkv_padded
-    out = SDPAKernel()(q, k, v, padded_seq, padded_seq)
-    assert out.shape == (B, H, N, DH)
+    device, dtype = device_dtype
+    assert _attn(device, dtype)(padded_input).shape == (B, N, D)
 
 
-def test_sdpa_kernel_causal(
-    qkv_padded: tuple[Tensor, Tensor, Tensor], padded_seq: PaddedSequence
+def test_global_causal_padded_shape(
+    device_dtype: tuple[torch.device, torch.dtype],
+    padded_input: PaddedInput,
 ) -> None:
-    q, k, v = qkv_padded
-    out = SDPAKernel(causal=True)(q, k, v, padded_seq, padded_seq)
-    assert out.shape == (B, H, N, DH)
+    device, dtype = device_dtype
+    assert _attn(device, dtype, causal=True)(padded_input).shape == (B, N, D)
 
 
-def test_sdpa_kernel_no_k_seq_info(
-    qkv_padded: tuple[Tensor, Tensor, Tensor], padded_seq: PaddedSequence
+def test_global_packed_shape(
+    device_dtype: tuple[torch.device, torch.dtype],
+    packed_input: PackedInput,
 ) -> None:
-    q, k, v = qkv_padded
-    out = SDPAKernel()(q, k, v, padded_seq, None)
-    assert out.shape == (B, H, N, DH)
+    device, dtype = device_dtype
+    assert _attn(device, dtype)(packed_input).shape == (NT, D)
 
 
-# --- windowed kernel ---
-
-
-def test_windowed_kernel_large_window_shape(
-    qkv_padded: tuple[Tensor, Tensor, Tensor], padded_seq: PaddedSequence
+def test_global_causal_packed_shape(
+    device_dtype: tuple[torch.device, torch.dtype],
+    packed_input: PackedInput,
 ) -> None:
-    q, k, v = qkv_padded
-    out = WindowedSDPAKernel(window_size=64)(q, k, v, padded_seq, padded_seq)
-    assert out.shape == (B, H, N, DH)
+    device, dtype = device_dtype
+    assert _attn(device, dtype, causal=True)(packed_input).shape == (NT, D)
 
 
-def test_windowed_kernel_active_shape(
-    qkv_padded: tuple[Tensor, Tensor, Tensor], padded_seq: PaddedSequence
+def test_windowed_padded_shape(
+    device_dtype: tuple[torch.device, torch.dtype],
+    padded_input: PaddedInput,
 ) -> None:
-    q, k, v = qkv_padded
-    out = WindowedSDPAKernel(window_size=4)(q, k, v, padded_seq, padded_seq)
-    assert out.shape == (B, H, N, DH)
+    device, dtype = device_dtype
+    assert _attn(device, dtype, window_size=4)(padded_input).shape == (B, N, D)
 
 
-def test_windowed_kernel_causal_shape(
-    qkv_padded: tuple[Tensor, Tensor, Tensor], padded_seq: PaddedSequence
+def test_windowed_causal_padded_shape(
+    device_dtype: tuple[torch.device, torch.dtype],
+    padded_input: PaddedInput,
 ) -> None:
-    q, k, v = qkv_padded
-    out = WindowedSDPAKernel(window_size=4, causal=True)(q, k, v, padded_seq, padded_seq)
-    assert out.shape == (B, H, N, DH)
+    device, dtype = device_dtype
+    assert _attn(device, dtype, window_size=4, causal=True)(padded_input).shape == (B, N, D)
 
 
-def test_windowed_kernel_causal_masks_future(
+def test_windowed_packed_shape(
+    device_dtype: tuple[torch.device, torch.dtype],
+    packed_input: PackedInput,
+) -> None:
+    device, dtype = device_dtype
+    assert _attn(device, dtype, window_size=4)(packed_input).shape == (NT, D)
+
+
+def test_windowed_causal_packed_shape(
+    device_dtype: tuple[torch.device, torch.dtype],
+    packed_input: PackedInput,
+) -> None:
+    device, dtype = device_dtype
+    assert _attn(device, dtype, window_size=4, causal=True)(packed_input).shape == (NT, D)
+
+
+def test_windowed_large_window_padded_shape(
+    device_dtype: tuple[torch.device, torch.dtype],
+    padded_input: PaddedInput,
+) -> None:
+    """Window larger than sequence length — degenerates to global attention."""
+    device, dtype = device_dtype
+    assert _attn(device, dtype, window_size=64)(padded_input).shape == (B, N, D)
+
+
+# --- causal masking correctness ---
+
+
+def test_windowed_causal_masks_future(
     device_dtype: tuple[torch.device, torch.dtype],
 ) -> None:
+    """Token 0 with a causal window can only attend to itself; future tokens must be invisible."""
     device, dtype = device_dtype
-    kernel = WindowedSDPAKernel(window_size=4, causal=True)
-    q = torch.zeros(1, 1, 8, 4, device=device, dtype=dtype)
-    k = torch.zeros(1, 1, 8, 4, device=device, dtype=dtype)
-    v = (
-        torch.eye(8, device=device, dtype=dtype)
-        .unsqueeze(0)
-        .unsqueeze(0)
-        .expand(1, 1, 8, 8)[..., :4]
-    )
-    q[0, 0, 0] = 1.0
-    seq = make_padded(torch.ones(1, 8, dtype=torch.bool, device=device))
-    out = kernel(q, k, v, seq, seq)
-    assert out.shape == (1, 1, 8, 4)
-    # Token 0 is causal: window covers only itself. With k=zeros, softmax=1.0 on key 0.
-    # If future tokens leaked, out[0,0,0] would be a mixture of multiple v rows.
-    assert torch.allclose(out[0, 0, 0], v[0, 0, 0], atol=atol(dtype))
+    N8, D8, H1, DH8 = 8, 64, 1, 64
+    # Wire q/k projections to zero so attention weights are uniform within the window.
+    # Wire v/out projections to identity so output = weighted sum of v = input rows.
+    cfg = SelfAttentionConfig(dim=D8, heads=H1, dim_head=DH8, window_size=4, causal=True)
+    model = SelfAttention(cfg, NoPosEncoding()).to(device=device, dtype=dtype).eval()
+    with torch.no_grad():
+        model.to_q.weight.zero_()
+        model.to_k.weight.zero_()
+        model.to_v.weight.copy_(torch.eye(D8, device=device, dtype=dtype))
+        model.to_out.weight.copy_(torch.eye(D8, device=device, dtype=dtype))
+
+    x = torch.eye(N8, D8, device=device, dtype=dtype).unsqueeze(0)  # 1 N8 D8
+    inp = make_padded_input(x, torch.ones(1, N8, dtype=torch.bool, device=device))
+    out = model(inp)
+    # Token 0: causal window = [0 - 4, 0] ∩ [0, N8-1] = {0}. Uniform softmax over {0} → v[0].
+    assert torch.allclose(out[0, 0], x[0, 0], atol=atol(dtype))
 
 
-# --- windowed kernel (unfold mode) ---
-
-
-def test_windowed_unfold_kernel_shape(
-    qkv_padded: tuple[Tensor, Tensor, Tensor], padded_seq: PaddedSequence
-) -> None:
-    q, k, v = qkv_padded
-    out = WindowedSDPAKernel(window_size=4, mode="unfold")(q, k, v, padded_seq, padded_seq)
-    assert out.shape == (B, H, N, DH)
-
-
-def test_windowed_unfold_kernel_large_window_shape(
-    qkv_padded: tuple[Tensor, Tensor, Tensor], padded_seq: PaddedSequence
-) -> None:
-    q, k, v = qkv_padded
-    out = WindowedSDPAKernel(window_size=64, mode="unfold")(q, k, v, padded_seq, padded_seq)
-    assert out.shape == (B, H, N, DH)
-
-
-def test_windowed_unfold_kernel_causal_shape(
-    qkv_padded: tuple[Tensor, Tensor, Tensor], padded_seq: PaddedSequence
-) -> None:
-    q, k, v = qkv_padded
-    out = WindowedSDPAKernel(window_size=4, causal=True, mode="unfold")(
-        q, k, v, padded_seq, padded_seq
-    )
-    assert out.shape == (B, H, N, DH)
-
-
-def test_windowed_unfold_kernel_causal_masks_future(
+def test_padding_mask_respected(
     device_dtype: tuple[torch.device, torch.dtype],
 ) -> None:
+    """Replacing padded-position values with large poison values must not change valid outputs."""
     device, dtype = device_dtype
-    kernel = WindowedSDPAKernel(window_size=4, causal=True, mode="unfold")
-    q = torch.zeros(1, 1, 8, 4, device=device, dtype=dtype)
-    k = torch.zeros(1, 1, 8, 4, device=device, dtype=dtype)
-    v = (
-        torch.eye(8, device=device, dtype=dtype)
-        .unsqueeze(0)
-        .unsqueeze(0)
-        .expand(1, 1, 8, 8)[..., :4]
-    )
-    q[0, 0, 0] = 1.0
-    seq = make_padded(torch.ones(1, 8, dtype=torch.bool, device=device))
-    out = kernel(q, k, v, seq, seq)
-    assert out.shape == (1, 1, 8, 4)
-    # Same invariant as mask mode: token 0's causal window contains only itself.
-    assert torch.allclose(out[0, 0, 0], v[0, 0, 0], atol=atol(dtype))
-
-
-def test_windowed_unfold_matches_mask(
-    device_dtype: tuple[torch.device, torch.dtype],
-) -> None:
-    device, dtype = device_dtype
-    q = torch.randn(B, H, N, DH, device=device, dtype=dtype)
-    k = torch.randn(B, H, N, DH, device=device, dtype=dtype)
-    v = torch.randn(B, H, N, DH, device=device, dtype=dtype)
-    seq = make_padded(torch.ones(B, N, dtype=torch.bool, device=device))
-    out_mask = WindowedSDPAKernel(window_size=4)(q, k, v, seq, seq)
-    out_unfold = WindowedSDPAKernel(window_size=4, mode="unfold")(q, k, v, seq, seq)
-    assert torch.allclose(out_mask, out_unfold, atol=atol(dtype))
-
-
-def test_windowed_unfold_causal_matches_mask(
-    device_dtype: tuple[torch.device, torch.dtype],
-) -> None:
-    device, dtype = device_dtype
-    q = torch.randn(B, H, N, DH, device=device, dtype=dtype)
-    k = torch.randn(B, H, N, DH, device=device, dtype=dtype)
-    v = torch.randn(B, H, N, DH, device=device, dtype=dtype)
-    seq = make_padded(torch.ones(B, N, dtype=torch.bool, device=device))
-    out_mask = WindowedSDPAKernel(window_size=4, causal=True)(q, k, v, seq, seq)
-    out_unfold = WindowedSDPAKernel(window_size=4, causal=True, mode="unfold")(q, k, v, seq, seq)
-    assert torch.allclose(out_mask, out_unfold, atol=atol(dtype))
-
-
-def test_windowed_unfold_padding_blocks_invalid_keys(
-    device_dtype: tuple[torch.device, torch.dtype],
-) -> None:
-    # Padding keys must not contaminate output: replacing their v with large values must be a no-op.
-    device, dtype = device_dtype
-    q = torch.randn(1, 1, 8, 4, device=device, dtype=dtype)
-    k = torch.randn(1, 1, 8, 4, device=device, dtype=dtype)
-    v = torch.randn(1, 1, 8, 4, device=device, dtype=dtype)
-    # First 4 keys are valid; keys 4-7 are padding.
-    key_mask = torch.tensor([[True, True, True, True, False, False, False, False]], device=device)
-    seq = make_padded(key_mask)
-    out = WindowedSDPAKernel(window_size=4, mode="unfold")(q, k, v, seq, seq)
-    v_poisoned = v.clone()
-    v_poisoned[0, 0, 4:] = 1e4
-    out_poisoned = WindowedSDPAKernel(window_size=4, mode="unfold")(q, k, v_poisoned, seq, seq)
-    # Query positions 0-3 only attend to valid keys — output must be identical.
-    assert torch.allclose(out[..., :4, :], out_poisoned[..., :4, :], atol=atol(dtype))
-
-
-# --- varlen SDPA kernel ---
-
-
-def test_varlen_kernel_shape(
-    qkv_packed: tuple[Tensor, Tensor, Tensor], packed_seq: PackedSequence
-) -> None:
-    q, k, v = qkv_packed
-    out = VarlenSDPAKernel()(q, k, v, packed_seq, packed_seq)
-    assert out.shape == q.shape
-
-
-def test_varlen_kernel_causal_shape(
-    qkv_packed: tuple[Tensor, Tensor, Tensor], packed_seq: PackedSequence
-) -> None:
-    q, k, v = qkv_packed
-    out = VarlenSDPAKernel(causal=True)(q, k, v, packed_seq, packed_seq)
-    assert out.shape == q.shape
-
-
-# --- varlen windowed kernel ---
-
-
-def test_varlen_windowed_kernel_shape(
-    qkv_packed: tuple[Tensor, Tensor, Tensor], packed_seq: PackedSequence
-) -> None:
-    q, k, v = qkv_packed
-    out = VarlenWindowedSDPAKernel(window_size=4)(q, k, v, packed_seq, packed_seq)
-    assert out.shape == q.shape
-
-
-def test_varlen_windowed_kernel_causal_shape(
-    qkv_packed: tuple[Tensor, Tensor, Tensor], packed_seq: PackedSequence
-) -> None:
-    q, k, v = qkv_packed
-    out = VarlenWindowedSDPAKernel(window_size=3, causal=True)(q, k, v, packed_seq, packed_seq)
-    assert out.shape == q.shape
-
-
-# --- torch.export ---
-
-
-def _export_windowed(kernel: WindowedSDPAKernel, n: int) -> torch.export.ExportedProgram:
-    kernel.eval()
-    q = torch.randn(1, H, n, DH)
-    k = torch.randn(1, H, n, DH)
-    v = torch.randn(1, H, n, DH)
-    seq = make_padded(torch.ones(1, n, dtype=torch.bool))
-    n_dim = torch.export.Dim("n", min=1, max=512)
-    seq_shapes = {2: n_dim}
-    mask_shapes = {1: n_dim}
-    return torch.export.export(
-        kernel,
-        (q, k, v, seq, seq),
-        dynamic_shapes=(
-            seq_shapes,
-            seq_shapes,
-            seq_shapes,
-            PaddedSequence(mask_shapes),  # type: ignore[arg-type]
-            PaddedSequence(mask_shapes),  # type: ignore[arg-type]
-        ),
-    )
-
-
-def test_windowed_kernel_export_succeeds() -> None:
-    ep = _export_windowed(WindowedSDPAKernel(window_size=4), n=8)
-    assert ep is not None
-
-
-def test_windowed_kernel_export_shorter_than_window() -> None:
-    ep = _export_windowed(WindowedSDPAKernel(window_size=4), n=8)
-    q = torch.randn(1, H, 3, DH)
-    seq = make_padded(torch.ones(1, 3, dtype=torch.bool))
-    out = ep.module()(q, q, q, seq, seq)
-    assert out.shape == (1, H, 3, DH)
-
-
-def test_windowed_kernel_export_longer_than_traced() -> None:
-    ep = _export_windowed(WindowedSDPAKernel(window_size=4), n=8)
-    q = torch.randn(1, H, 32, DH)
-    seq = make_padded(torch.ones(1, 32, dtype=torch.bool))
-    out = ep.module()(q, q, q, seq, seq)
-    assert out.shape == (1, H, 32, DH)
-
-
-def test_windowed_causal_kernel_export_succeeds() -> None:
-    ep = _export_windowed(WindowedSDPAKernel(window_size=4, causal=True), n=8)
-    assert ep is not None
+    cfg = SelfAttentionConfig(dim=D, heads=H, dim_head=DH, window_size=4)
+    model = SelfAttention(cfg, NoPosEncoding()).to(device=device, dtype=dtype).eval()
+    key_mask = torch.ones(1, N, dtype=torch.bool, device=device)
+    key_mask[0, N // 2 :] = False  # second half is padding
+    x = torch.randn(1, N, D, device=device, dtype=dtype)
+    x_poisoned = x.clone()
+    x_poisoned[0, N // 2 :] = 1e4
+    with torch.no_grad():
+        out = model(make_padded_input(x, key_mask))
+        out_poisoned = model(make_padded_input(x_poisoned, key_mask))
+    # Valid positions must be unaffected by the poison values in padding positions.
+    assert torch.allclose(out[0, : N // 2], out_poisoned[0, : N // 2], atol=atol(dtype))

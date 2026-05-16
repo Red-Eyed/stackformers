@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from stackformers.attention.config import AttentionConfig
+from stackformers.attention.config import CrossAttentionConfig
 from stackformers.feedforward.config import SwiGLUConfig
 from stackformers.norm.config import RMSNormConfig
 from stackformers.presets.cross_attender import CrossAttender, CrossAttenderConfig
@@ -15,7 +15,7 @@ B, N, S, D, H, DH = 2, 8, 12, 64, 4, 16
 @pytest.fixture
 def config() -> CrossAttenderConfig:
     return CrossAttenderConfig(
-        attn=AttentionConfig(dim=D, heads=H, dim_head=DH),
+        attn=CrossAttentionConfig(dim=D, heads=H, dim_head=DH),
         ff=SwiGLUConfig(dim=D),
         norm=RMSNormConfig(dim=D),
         num_layers=2,
@@ -63,8 +63,7 @@ def test_cross_attender_with_ctx_padding(
     mask[1, 8:] = False
     x_inp = make_padded_input(x, torch.ones(B, N, dtype=torch.bool, device=device))
     ctx_inp = make_padded_input(context, mask)
-    out = cross_attender(x_inp, ctx_inp)
-    assert out.shape == (B, N, D)
+    assert cross_attender(x_inp, ctx_inp).shape == (B, N, D)
 
 
 def test_cross_attender_with_x_padding(
@@ -78,13 +77,12 @@ def test_cross_attender_with_x_padding(
     mask[0, 5:] = False
     x_inp = make_padded_input(x, mask)
     ctx_inp = make_padded_input(context, torch.ones(B, S, dtype=torch.bool, device=device))
-    out = cross_attender(x_inp, ctx_inp)
-    assert out.shape == (B, N, D)
+    assert cross_attender(x_inp, ctx_inp).shape == (B, N, D)
 
 
 def test_cross_attender_gradients(device: torch.device) -> None:
     cfg = CrossAttenderConfig(
-        attn=AttentionConfig(dim=D, heads=H, dim_head=DH),
+        attn=CrossAttentionConfig(dim=D, heads=H, dim_head=DH),
         ff=SwiGLUConfig(dim=D),
         norm=RMSNormConfig(dim=D),
         num_layers=2,
@@ -104,17 +102,17 @@ def test_cross_attender_config_accessor(config: CrossAttenderConfig) -> None:
     assert model.config is config
 
 
-def test_cross_attender_causal_forced_false() -> None:
-    causal_cfg = CrossAttenderConfig(
-        attn=AttentionConfig(dim=D, heads=H, dim_head=DH, causal=True),
+def test_cross_attender_gqa(device_dtype: tuple[torch.device, torch.dtype]) -> None:
+    device, dtype = device_dtype
+    cfg = CrossAttenderConfig(
+        attn=CrossAttentionConfig(dim=D, heads=H, dim_head=DH, kv_heads=2),
         ff=SwiGLUConfig(dim=D),
         norm=RMSNormConfig(dim=D),
         num_layers=1,
     )
-    model = CrossAttender(causal_cfg)
-    x = torch.randn(B, N, D)
-    context = torch.randn(B, S, D)
-    x_inp = make_padded_input(x, torch.ones(B, N, dtype=torch.bool))
-    ctx_inp = make_padded_input(context, torch.ones(B, S, dtype=torch.bool))
-    out = model(x_inp, ctx_inp)
-    assert out.shape == (B, N, D)
+    model = CrossAttender(cfg).to(device=device, dtype=dtype)
+    x = torch.randn(B, N, D, device=device, dtype=dtype)
+    context = torch.randn(B, S, D, device=device, dtype=dtype)
+    x_inp = make_padded_input(x, torch.ones(B, N, dtype=torch.bool, device=device))
+    ctx_inp = make_padded_input(context, torch.ones(B, S, dtype=torch.bool, device=device))
+    assert model(x_inp, ctx_inp).shape == (B, N, D)

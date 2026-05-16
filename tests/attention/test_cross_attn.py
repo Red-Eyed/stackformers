@@ -3,9 +3,8 @@ from __future__ import annotations
 import pytest
 import torch
 
-from stackformers.attention.config import AttentionConfig
+from stackformers.attention.config import CrossAttentionConfig
 from stackformers.attention.cross_attn import CrossAttention
-from stackformers.attention.kernels import SDPAKernel
 from stackformers.positional.none import NoPosEncoding
 from stackformers.sequence import make_padded_input
 
@@ -15,12 +14,10 @@ B, N, S, D, H, DH = 2, 8, 12, 64, 4, 16
 @pytest.fixture
 def cross_attn(device_dtype: tuple[torch.device, torch.dtype]) -> CrossAttention:
     device, dtype = device_dtype
-    config = AttentionConfig(dim=D, heads=H, dim_head=DH)
-    return CrossAttention(
-        config=config,
-        pos_encoding=NoPosEncoding(),
-        kernel=SDPAKernel(),
-    ).to(device=device, dtype=dtype)
+    config = CrossAttentionConfig(dim=D, heads=H, dim_head=DH)
+    return CrossAttention(config=config, pos_encoding=NoPosEncoding()).to(
+        device=device, dtype=dtype
+    )
 
 
 @pytest.fixture
@@ -43,8 +40,7 @@ def test_cross_attn_output_shape(
     device = x.device
     x_inp = make_padded_input(x, torch.ones(B, N, dtype=torch.bool, device=device))
     ctx_inp = make_padded_input(ctx, torch.ones(B, S, dtype=torch.bool, device=device))
-    out = cross_attn(x_inp, ctx_inp)
-    assert out.shape == (B, N, D)
+    assert cross_attn(x_inp, ctx_inp).shape == (B, N, D)
 
 
 def test_cross_attn_with_ctx_mask(
@@ -58,8 +54,7 @@ def test_cross_attn_with_ctx_mask(
     mask = torch.ones(B, S, dtype=torch.bool, device=device)
     mask[0, 10:] = False
     ctx_inp = make_padded_input(ctx, mask)
-    out = cross_attn(x_inp, ctx_inp)
-    assert out.shape == (B, N, D)
+    assert cross_attn(x_inp, ctx_inp).shape == (B, N, D)
 
 
 def test_cross_attn_with_x_mask(
@@ -82,11 +77,7 @@ def test_cross_attn_output_driven_by_context(
     cross_attn: CrossAttention,
     device_dtype: tuple[torch.device, torch.dtype],
 ) -> None:
-    """K/V come from context: with x=0 (uniform attention), changing context changes output.
-
-    If K/V were accidentally sourced from x, both calls would return identical results
-    because the attention pattern would be the same uniform distribution over x=0.
-    """
+    """K/V come from context: with x=0, changing context changes output."""
     device, dtype = device_dtype
     x = torch.zeros(B, N, D, device=device, dtype=dtype)
     ctx1 = torch.randn(B, S, D, device=device, dtype=dtype)
@@ -105,15 +96,25 @@ def test_cross_attn_different_seq_lengths(
 ) -> None:
     """x and context may have different sequence lengths; output shape follows x."""
     device, dtype = device_dtype
-    config = AttentionConfig(dim=D, heads=H, dim_head=DH)
-    attn = CrossAttention(
-        config=config,
-        pos_encoding=NoPosEncoding(),
-        kernel=SDPAKernel(),
-    ).to(device=device, dtype=dtype)
+    config = CrossAttentionConfig(dim=D, heads=H, dim_head=DH)
+    attn = CrossAttention(config=config, pos_encoding=NoPosEncoding()).to(
+        device=device, dtype=dtype
+    )
     x = torch.randn(B, 5, D, device=device, dtype=dtype)
     ctx = torch.randn(B, 20, D, device=device, dtype=dtype)
     x_inp = make_padded_input(x, torch.ones(B, 5, dtype=torch.bool, device=device))
     ctx_inp = make_padded_input(ctx, torch.ones(B, 20, dtype=torch.bool, device=device))
-    out = attn(x_inp, ctx_inp)
-    assert out.shape == (B, 5, D)
+    assert attn(x_inp, ctx_inp).shape == (B, 5, D)
+
+
+def test_cross_attn_gqa(device_dtype: tuple[torch.device, torch.dtype]) -> None:
+    device, dtype = device_dtype
+    config = CrossAttentionConfig(dim=D, heads=H, dim_head=DH, kv_heads=2)
+    attn = CrossAttention(config=config, pos_encoding=NoPosEncoding()).to(
+        device=device, dtype=dtype
+    )
+    x = torch.randn(B, N, D, device=device, dtype=dtype)
+    ctx = torch.randn(B, S, D, device=device, dtype=dtype)
+    x_inp = make_padded_input(x, torch.ones(B, N, dtype=torch.bool, device=device))
+    ctx_inp = make_padded_input(ctx, torch.ones(B, S, dtype=torch.bool, device=device))
+    assert attn(x_inp, ctx_inp).shape == (B, N, D)

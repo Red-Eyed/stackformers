@@ -4,16 +4,14 @@ import pytest
 import torch
 
 from stackformers.presets.encoder import (
-    PackedTransformerEncoder,
     TransformerEncoder,
-    packed_encoder_config,
     plain_encoder_config,
     windowed_encoder_config,
 )
 from stackformers.sequence import PackedInput, PaddedInput, make_packed_input, make_padded_input
 
 B, N, D, H = 2, 16, 64, 4
-NT = 10  # total tokens for packed (two seqs: 6 + 4)
+NT = 10  # two packed seqs: 6 + 4
 
 
 @pytest.fixture
@@ -32,7 +30,7 @@ def packed_input(device_dtype: tuple[torch.device, torch.dtype]) -> PackedInput:
     return make_packed_input(x, cu, max_seqlen=6)
 
 
-def test_plain_encoder_output_shape(
+def test_plain_encoder_padded_output_shape(
     device_dtype: tuple[torch.device, torch.dtype],
     padded_input: PaddedInput,
 ) -> None:
@@ -42,7 +40,17 @@ def test_plain_encoder_output_shape(
     assert out.shape == (B, N, D)
 
 
-def test_windowed_encoder_output_shape(
+def test_plain_encoder_packed_output_shape(
+    device_dtype: tuple[torch.device, torch.dtype],
+    packed_input: PackedInput,
+) -> None:
+    device, dtype = device_dtype
+    cfg = plain_encoder_config(D, H, num_layers=2)
+    out = TransformerEncoder(cfg).to(device=device, dtype=dtype)(packed_input)
+    assert out.shape == (NT, D)
+
+
+def test_windowed_encoder_padded_output_shape(
     device_dtype: tuple[torch.device, torch.dtype],
     padded_input: PaddedInput,
 ) -> None:
@@ -52,24 +60,14 @@ def test_windowed_encoder_output_shape(
     assert out.shape == (B, N, D)
 
 
-def test_packed_encoder_output_shape(
+def test_windowed_encoder_packed_output_shape(
     device_dtype: tuple[torch.device, torch.dtype],
     packed_input: PackedInput,
 ) -> None:
     device, dtype = device_dtype
-    cfg = packed_encoder_config(D, H, num_layers=2)
-    out = PackedTransformerEncoder(cfg).to(device=device, dtype=dtype)(packed_input)
+    cfg = windowed_encoder_config(D, H, num_layers=2, window_size=4)
+    out = TransformerEncoder(cfg).to(device=device, dtype=dtype)(packed_input)
     assert out.shape == (NT, D)
-
-
-def test_packed_and_padded_encoder_state_dict_compatible() -> None:
-    cfg = plain_encoder_config(D, H, num_layers=2)
-    packed_cfg = packed_encoder_config(D, H, num_layers=2)
-    enc = TransformerEncoder(cfg)
-    penc = PackedTransformerEncoder(packed_cfg)
-    assert set(enc.state_dict().keys()) == set(penc.state_dict().keys())
-    for key in enc.state_dict():
-        assert enc.state_dict()[key].shape == penc.state_dict()[key].shape, key
 
 
 def test_plain_encoder_causal(
@@ -80,3 +78,20 @@ def test_plain_encoder_causal(
     cfg = plain_encoder_config(D, H, num_layers=2, causal=True)
     out = TransformerEncoder(cfg).to(device=device, dtype=dtype)(padded_input)
     assert out.shape == (B, N, D)
+
+
+def test_padded_and_packed_share_weights() -> None:
+    """Same model weights handle both padded (inference) and packed (training) inputs."""
+    cfg = plain_encoder_config(D, H, num_layers=2)
+    enc = TransformerEncoder(cfg)
+    padded = make_padded_input(
+        torch.randn(B, N, D),
+        torch.ones(B, N, dtype=torch.bool),
+    )
+    cu = torch.tensor([0, 6, 10], dtype=torch.int32)
+    packed = make_packed_input(torch.randn(NT, D), cu, max_seqlen=6)
+    with torch.no_grad():
+        padded_out = enc(padded)
+        packed_out = enc(packed)
+    assert padded_out.shape == (B, N, D)
+    assert packed_out.shape == (NT, D)
