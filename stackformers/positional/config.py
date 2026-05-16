@@ -51,7 +51,15 @@ class NoPosEncodingConfig(BaseModel):
     kind: Literal["none"] = "none"
 
 
+class LearnedPosEncodingConfig(BaseModel):
+    """Config for learned absolute position embeddings (Vaswani et al., 2017)."""
+
+    kind: Literal["learned"] = "learned"
+    dim_head: int = Field(gt=0)
+    max_seq_len: int = Field(gt=0)
+
+
 PosEncodingConfig = Annotated[
-    RoPE1DConfig | RoPE2DConfig | NoPosEncodingConfig,
+    RoPE1DConfig | RoPE2DConfig | NoPosEncodingConfig | LearnedPosEncodingConfig,
     Field(discriminator="kind"),
 ]
