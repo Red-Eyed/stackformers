@@ -4,14 +4,17 @@ import torch.nn as nn
 from pydantic import BaseModel, Field
 from torch import Tensor
 
-from stackformers.attention.bias_config import BiasBuilderConfig, NoBiasConfig
-from stackformers.attention.bias_factory import build_bias_builder
 from stackformers.attention.config import AttentionConfig
 from stackformers.attention.cross_attn import CrossAttention
 from stackformers.attention.kernels.config import SDPAKernelConfig, VarlenSDPAKernelConfig
 from stackformers.attention.kernels.factory import build_kernel
 from stackformers.attention.packed_cross_attn import PackedCrossAttention
-from stackformers.cross_attender import CrossAttenderLayer, CrossAttenderStack, PackedCrossAttenderLayer, PackedCrossAttenderStack
+from stackformers.cross_attender import (
+    CrossAttenderLayer,
+    CrossAttenderStack,
+    PackedCrossAttenderLayer,
+    PackedCrossAttenderStack,
+)
 from stackformers.feedforward.config import FeedForwardConfig, SwiGLUConfig
 from stackformers.feedforward.factory import build_ff
 from stackformers.norm.config import RMSNormConfig
@@ -25,7 +28,6 @@ class CrossAttenderConfig(BaseModel):
     attn: AttentionConfig  # causal is always False; kernel defaults to SDPA
     ff: FeedForwardConfig
     norm: NormConfig
-    bias: BiasBuilderConfig = NoBiasConfig()
     pos_encoding: PosEncodingConfig = NoPosEncodingConfig()
     num_layers: int = Field(gt=0)
 
@@ -62,7 +64,11 @@ def packed_cross_attender_config(
     dim_head = dim // heads
     return CrossAttenderConfig(
         attn=AttentionConfig(
-            dim=dim, heads=heads, dim_head=dim_head, dropout=dropout, kernel=VarlenSDPAKernelConfig()
+            dim=dim,
+            heads=heads,
+            dim_head=dim_head,
+            dropout=dropout,
+            kernel=VarlenSDPAKernelConfig(),
         ),
         ff=SwiGLUConfig(dim=dim, mult=ff_mult, dropout=dropout),
         norm=RMSNormConfig(dim=dim),
@@ -87,7 +93,6 @@ class CrossAttender(nn.Module):
                     cross_attn=CrossAttention(
                         config=cross_attn_cfg,
                         pos_encoding=pos,
-                        bias_builder=build_bias_builder(config.bias, cross_attn_cfg.heads),
                         kernel=build_kernel(cross_attn_cfg),
                     ),
                     ff=build_ff(config.ff),

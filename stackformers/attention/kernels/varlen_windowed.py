@@ -39,7 +39,6 @@ class VarlenWindowedSDPAKernel(nn.Module):
         v: Tensor,
         q_seq_info: SequenceInfo,
         k_seq_info: SequenceInfo | None,
-        attn_bias: Tensor | None,
     ) -> Tensor:
         assert isinstance(q_seq_info, PackedSequence), (
             "VarlenWindowedSDPAKernel requires PackedSequence"

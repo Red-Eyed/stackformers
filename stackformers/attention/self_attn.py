@@ -5,7 +5,7 @@ from einops import rearrange, repeat
 from torch import Tensor
 
 from stackformers.attention.config import AttentionConfig
-from stackformers.attention.protocols import AttnBiasBuilder, AttnKernel
+from stackformers.attention.protocols import AttnKernel
 from stackformers.positional.protocols import PosEncoding
 from stackformers.sequence import SequenceInput, to_seq_info
 
@@ -29,18 +29,16 @@ class BaseSelfAttention(nn.Module):
 
 
 class SelfAttention(BaseSelfAttention):
-    """Padded multi-head self-attention with injected kernel, pos-encoding, and bias builder."""
+    """Padded multi-head self-attention with injected kernel and pos-encoding."""
 
     def __init__(
         self,
         config: AttentionConfig,
         pos_encoding: PosEncoding,
-        bias_builder: AttnBiasBuilder,
         kernel: AttnKernel,
     ) -> None:
         super().__init__(config)
         self.pos_encoding = pos_encoding
-        self.bias_builder = bias_builder
         self.kernel = kernel
 
     def forward(self, input: SequenceInput) -> Tensor:
@@ -56,8 +54,7 @@ class SelfAttention(BaseSelfAttention):
             v = repeat(v, "b h n d -> b (h g) n d", g=groups)
 
         q, k = self.pos_encoding.forward(q, k, input, input)
-        attn_bias = self.bias_builder.forward(input, input)
         seq_info = to_seq_info(input)
-        out = self.kernel.forward(q, k, v, seq_info, seq_info, attn_bias)
+        out = self.kernel.forward(q, k, v, seq_info, seq_info)
 
         return self.to_out(rearrange(out, "b h n d -> b n (h d)"))

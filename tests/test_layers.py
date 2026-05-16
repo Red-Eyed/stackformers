@@ -3,7 +3,6 @@ from __future__ import annotations
 import pytest
 import torch
 
-from stackformers.attention.bias import NoBiasBuilder
 from stackformers.attention.config import AttentionConfig
 from stackformers.attention.kernels import SDPAKernel
 from stackformers.attention.self_attn import SelfAttention
@@ -25,7 +24,7 @@ def layer(device_dtype: tuple[torch.device, torch.dtype]) -> TransformerLayer:
     ff_cfg = SwiGLUConfig(dim=D)
     norm_cfg = RMSNormConfig(dim=D)
     return TransformerLayer(
-        self_attn=SelfAttention(attn_cfg, NoPosEncoding(), NoBiasBuilder(), SDPAKernel()),
+        self_attn=SelfAttention(attn_cfg, NoPosEncoding(), SDPAKernel()),
         ff=SwiGLU(ff_cfg),
         norm_attn=RMSNorm(norm_cfg),
         norm_ff=RMSNorm(norm_cfg),
@@ -61,7 +60,7 @@ def test_transformer_layer_gradients(device: torch.device) -> None:
     ff_cfg = SwiGLUConfig(dim=D)
     norm_cfg = RMSNormConfig(dim=D)
     layer = TransformerLayer(
-        self_attn=SelfAttention(attn_cfg, NoPosEncoding(), NoBiasBuilder(), SDPAKernel()),
+        self_attn=SelfAttention(attn_cfg, NoPosEncoding(), SDPAKernel()),
         ff=SwiGLU(ff_cfg),
         norm_attn=RMSNorm(norm_cfg),
         norm_ff=RMSNorm(norm_cfg),

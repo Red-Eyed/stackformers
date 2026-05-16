@@ -8,6 +8,8 @@ from torch import Tensor
 from stackformers.positional.config import RoPE2DConfig
 from stackformers.positional.rope1d import (
     _apply_rope_packed,
+)
+from stackformers.positional.rope1d import (
     _apply_rope_padded_unbatched as _apply_rope,
 )
 from stackformers.sequence import PackedInput, SequenceInput
@@ -52,11 +54,17 @@ class RotaryEmbedding2D(nn.Module):
                 q_pos = q_input.abs_positions  # nt 2
                 k_pos = k_input.abs_positions  # nt 2
                 freqs_q = torch.cat(
-                    [self._build_freqs(q_pos[:, 0], q.device), self._build_freqs(q_pos[:, 1], q.device)],
+                    [
+                        self._build_freqs(q_pos[:, 0], q.device),
+                        self._build_freqs(q_pos[:, 1], q.device),
+                    ],
                     dim=-1,
                 )
                 freqs_k = torch.cat(
-                    [self._build_freqs(k_pos[:, 0], k.device), self._build_freqs(k_pos[:, 1], k.device)],
+                    [
+                        self._build_freqs(k_pos[:, 0], k.device),
+                        self._build_freqs(k_pos[:, 1], k.device),
+                    ],
                     dim=-1,
                 )
                 return _apply_rope_packed(q, freqs_q), _apply_rope_packed(k, freqs_k)
@@ -65,11 +73,17 @@ class RotaryEmbedding2D(nn.Module):
                 q_pos = q_input.abs_positions[0]  # n 2
                 k_pos = k_input.abs_positions[0]  # s 2
                 freqs_q = torch.cat(
-                    [self._build_freqs(q_pos[:, 0], q.device), self._build_freqs(q_pos[:, 1], q.device)],
+                    [
+                        self._build_freqs(q_pos[:, 0], q.device),
+                        self._build_freqs(q_pos[:, 1], q.device),
+                    ],
                     dim=-1,
                 )
                 freqs_k = torch.cat(
-                    [self._build_freqs(k_pos[:, 0], k.device), self._build_freqs(k_pos[:, 1], k.device)],
+                    [
+                        self._build_freqs(k_pos[:, 0], k.device),
+                        self._build_freqs(k_pos[:, 1], k.device),
+                    ],
                     dim=-1,
                 )
                 return _apply_rope(q, freqs_q), _apply_rope(k, freqs_k)

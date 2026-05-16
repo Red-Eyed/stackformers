@@ -4,8 +4,6 @@ import torch.nn as nn
 from pydantic import BaseModel, Field
 from torch import Tensor
 
-from stackformers.attention.bias_config import BiasBuilderConfig, NoBiasConfig
-from stackformers.attention.bias_factory import build_bias_builder
 from stackformers.attention.config import AttentionConfig
 from stackformers.attention.cross_attn import CrossAttention
 from stackformers.attention.kernels.config import SDPAKernelConfig
@@ -28,8 +26,6 @@ class TransformerDecoderConfig(BaseModel):
     ff: FeedForwardConfig
     norm: NormConfig
     pos_encoding: PosEncodingConfig  # applies to self-attention only
-    self_attn_bias: BiasBuilderConfig = NoBiasConfig()
-    cross_attn_bias: BiasBuilderConfig = NoBiasConfig()
     num_layers: int = Field(gt=0)
 
 
@@ -80,15 +76,11 @@ class TransformerDecoder(nn.Module):
                     self_attn=SelfAttention(
                         config=self_attn_cfg,
                         pos_encoding=self_pos,
-                        bias_builder=build_bias_builder(config.self_attn_bias, self_attn_cfg.heads),
                         kernel=build_kernel(self_attn_cfg),
                     ),
                     cross_attn=CrossAttention(
                         config=config.cross_attn,
                         pos_encoding=NoPosEncoding(NoPosEncodingConfig()),
-                        bias_builder=build_bias_builder(
-                            config.cross_attn_bias, config.cross_attn.heads
-                        ),
                         kernel=build_kernel(config.cross_attn),
                     ),
                     ff=build_ff(config.ff),

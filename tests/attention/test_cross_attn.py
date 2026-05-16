@@ -3,7 +3,6 @@ from __future__ import annotations
 import pytest
 import torch
 
-from stackformers.attention.bias import NoBiasBuilder
 from stackformers.attention.config import AttentionConfig
 from stackformers.attention.cross_attn import CrossAttention
 from stackformers.attention.kernels import SDPAKernel
@@ -20,7 +19,6 @@ def cross_attn(device_dtype: tuple[torch.device, torch.dtype]) -> CrossAttention
     return CrossAttention(
         config=config,
         pos_encoding=NoPosEncoding(),
-        bias_builder=NoBiasBuilder(),
         kernel=SDPAKernel(),
     ).to(device=device, dtype=dtype)
 
@@ -111,7 +109,6 @@ def test_cross_attn_different_seq_lengths(
     attn = CrossAttention(
         config=config,
         pos_encoding=NoPosEncoding(),
-        bias_builder=NoBiasBuilder(),
         kernel=SDPAKernel(),
     ).to(device=device, dtype=dtype)
     x = torch.randn(B, 5, D, device=device, dtype=dtype)

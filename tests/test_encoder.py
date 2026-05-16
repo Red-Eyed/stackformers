@@ -3,7 +3,6 @@ from __future__ import annotations
 import pytest
 import torch
 
-from stackformers.attention.bias import NoBiasBuilder
 from stackformers.attention.config import AttentionConfig
 from stackformers.attention.kernels import SDPAKernel
 from stackformers.attention.self_attn import SelfAttention
@@ -34,7 +33,7 @@ def _build_encoder(
     norm_cfg = RMSNormConfig(dim=D)
     layers: list[TransformerLayer] = [
         TransformerLayer(
-            self_attn=SelfAttention(attn_cfg, pos, NoBiasBuilder(), SDPAKernel()),
+            self_attn=SelfAttention(attn_cfg, pos, SDPAKernel()),
             ff=SwiGLU(ff_cfg),
             norm_attn=RMSNorm(norm_cfg),
             norm_ff=RMSNorm(norm_cfg),

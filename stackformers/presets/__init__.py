@@ -1,5 +1,3 @@
-from stackformers.attention.bias_config import ALiBiConfig, BiasBuilderConfig, NoBiasConfig
-from stackformers.attention.bias_factory import build_bias_builder
 from stackformers.attention.kernels.config import (
     KernelConfig,
     SDPAKernelConfig,
@@ -42,10 +40,6 @@ __all__ = [
     "VarlenSDPAKernelConfig",
     "VarlenWindowedSDPAKernelConfig",
     "build_kernel",
-    "BiasBuilderConfig",
-    "NoBiasConfig",
-    "ALiBiConfig",
-    "build_bias_builder",
     # preset config factories
     "plain_encoder_config",
     "windowed_encoder_config",

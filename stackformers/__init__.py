@@ -4,9 +4,6 @@ from importlib.metadata import version
 
 __version__ = version("stackformers")
 
-from stackformers.attention.bias import ALiBiBuilder, NoBiasBuilder
-from stackformers.attention.bias_config import ALiBiConfig, BiasBuilderConfig, NoBiasConfig
-from stackformers.attention.bias_factory import build_bias_builder
 from stackformers.attention.config import AttentionConfig
 from stackformers.attention.cross_attn import CrossAttention
 from stackformers.attention.kernels import (
@@ -23,10 +20,15 @@ from stackformers.attention.kernels.config import (
     WindowedSDPAKernelConfig,
 )
 from stackformers.attention.kernels.factory import build_kernel
-from stackformers.attention.protocols import AttnBiasBuilder, AttnKernel, CrossAttn, SelfAttn
+from stackformers.attention.protocols import AttnKernel, CrossAttn, SelfAttn
 from stackformers.attention.self_attn import SelfAttention
 from stackformers.config import DecoderConfig, EncoderConfig, LayerConfig
-from stackformers.cross_attender import CrossAttenderLayer, CrossAttenderStack, PackedCrossAttenderLayer, PackedCrossAttenderStack
+from stackformers.cross_attender import (
+    CrossAttenderLayer,
+    CrossAttenderStack,
+    PackedCrossAttenderLayer,
+    PackedCrossAttenderStack,
+)
 from stackformers.decoder import Decoder, DecoderLayer
 from stackformers.encoder import Encoder
 from stackformers.feedforward.config import FeedForwardConfig
@@ -38,15 +40,29 @@ from stackformers.norm.config import LayerNormConfig, RMSNormConfig
 from stackformers.norm.factory import NormConfig, build_norm
 from stackformers.norm.protocols import Norm
 from stackformers.norm.rms import RMSNorm
-from stackformers.positional.config import NoPosEncodingConfig, PosEncodingConfig, RoPE1DConfig, RoPE2DConfig
+from stackformers.positional.config import (
+    NoPosEncodingConfig,
+    PosEncodingConfig,
+    RoPE1DConfig,
+    RoPE2DConfig,
+)
 from stackformers.positional.factory import build_pos_encoding
 from stackformers.positional.none import NoPosEncoding
 from stackformers.positional.protocols import PosEncoding
 from stackformers.positional.rope1d import RotaryEmbedding1D
 from stackformers.positional.rope2d import RotaryEmbedding2D
-from stackformers.presets.cross_attender import CrossAttender, CrossAttenderConfig, PackedCrossAttender, packed_cross_attender_config
+from stackformers.presets.cross_attender import (
+    CrossAttender,
+    CrossAttenderConfig,
+    PackedCrossAttender,
+    packed_cross_attender_config,
+)
 from stackformers.presets.decoder import TransformerDecoder, TransformerDecoderConfig
-from stackformers.presets.encoder import PackedTransformerEncoder, TransformerEncoder, TransformerEncoderConfig
+from stackformers.presets.encoder import (
+    PackedTransformerEncoder,
+    TransformerEncoder,
+    TransformerEncoderConfig,
+)
 from stackformers.sequence import (
     PackedInput,
     PackedSequence,
@@ -81,7 +97,6 @@ __all__ = [
     "position_ids_from_packed",
     # protocols
     "PosEncoding",
-    "AttnBiasBuilder",
     "AttnKernel",
     "SelfAttn",
     "CrossAttn",
@@ -109,8 +124,6 @@ __all__ = [
     "RotaryEmbedding1D",
     "RotaryEmbedding2D",
     # attention
-    "NoBiasBuilder",
-    "ALiBiBuilder",
     "SDPAKernel",
     "VarlenSDPAKernel",
     "VarlenWindowedSDPAKernel",
@@ -139,10 +152,6 @@ __all__ = [
     "VarlenSDPAKernelConfig",
     "VarlenWindowedSDPAKernelConfig",
     "build_kernel",
-    "BiasBuilderConfig",
-    "NoBiasConfig",
-    "ALiBiConfig",
-    "build_bias_builder",
     # presets
     "TransformerEncoderConfig",
     "TransformerEncoder",

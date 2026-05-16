@@ -14,7 +14,6 @@ class PackedCrossAttention(BaseCrossAttention):
 
     Shares all parameters with CrossAttention: state dicts are interchangeable
     for switching between training (packed) and inference/export (padded).
-    No bias builder — packed kernels do not support additive attention bias.
     """
 
     def __init__(
@@ -46,6 +45,6 @@ class PackedCrossAttention(BaseCrossAttention):
         q, k = self.pos_encoding.forward(q, k, x_input, ctx_input)
         x_seq = PackedSequence(cu_seqlens=x_input.cu_seqlens, max_seqlen=x_input.max_seqlen)
         ctx_seq = PackedSequence(cu_seqlens=ctx_input.cu_seqlens, max_seqlen=ctx_input.max_seqlen)
-        out = self.kernel.forward(q, k, v, x_seq, ctx_seq, None)
+        out = self.kernel.forward(q, k, v, x_seq, ctx_seq)
 
         return self.to_out(rearrange(out, "nt h d -> nt (h d)"))

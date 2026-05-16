@@ -15,7 +15,6 @@ class PackedSelfAttention(BaseSelfAttention):
 
     Shares all parameters with SelfAttention: state dicts are interchangeable
     for switching between training (packed) and inference/export (padded).
-    No bias builder — packed kernels do not support additive attention bias.
     """
 
     def __init__(
@@ -42,6 +41,6 @@ class PackedSelfAttention(BaseSelfAttention):
 
         q, k = self.pos_encoding.forward(q, k, input, input)
         seq_info = PackedSequence(cu_seqlens=input.cu_seqlens, max_seqlen=input.max_seqlen)
-        out = self.kernel.forward(q, k, v, seq_info, seq_info, None)
+        out = self.kernel.forward(q, k, v, seq_info, seq_info)
 
         return self.to_out(rearrange(out, "nt h d -> nt (h d)"))

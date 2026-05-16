@@ -17,7 +17,6 @@ def _windowed_mask(
     k: Tensor,
     v: Tensor,
     k_seq_info: SequenceInfo | None,
-    attn_bias: Tensor | None,
     window_size: int,
     causal: bool,
     dropout_p: float,
@@ -26,8 +25,6 @@ def _windowed_mask(
     n, s = q.shape[-2], k.shape[-2]
     combined: Tensor = build_window_mask(n, s, window_size, causal, q.device)
 
-    if attn_bias is not None:
-        combined = combined + attn_bias
     if isinstance(k_seq_info, PaddedSequence):
         combined = combined + _padding_mask(k_seq_info.mask, q.dtype)
 
@@ -96,31 +93,11 @@ def _windowed_validity_mask(
     return mask
 
 
-def _windowed_bias_local(
-    attn_bias: Tensor,
-    pad_left: int,
-    pad_right: int,
-    span: int,
-) -> Tensor:
-    """Extract per-query local window from attn_bias (h, n, s) → (h, n, span).
-
-    attn_bias[h, i, j] is the bias for query i → key j.  After padding the key axis, row i of the
-    bias should be windowed starting at padded position i (same alignment as k/v).  That's the
-    diagonal of the (n_query, n_key_window_start) unfolded tensor, extracted with .diagonal().
-    """
-    bias_padded = F.pad(attn_bias, (pad_left, pad_right), value=0.0)
-    bias_win = bias_padded.unfold(2, span, 1)  # (h, n_q, n_kw, span); n_q == n_kw == n
-    # diagonal(dim1=1, dim2=2): entry [h, i, i, :] for each i → (h, span, n)
-    # permute to (h, n, span)
-    return bias_win.diagonal(dim1=1, dim2=2).permute(0, 2, 1)
-
-
 def _windowed_unfold(
     q: Tensor,
     k: Tensor,
     v: Tensor,
     k_seq_info: SequenceInfo | None,
-    attn_bias: Tensor | None,
     window_size: int,
     causal: bool,
     dropout_p: float,
@@ -147,9 +124,6 @@ def _windowed_unfold(
     local_mask = _windowed_validity_mask(
         n, k_seq_info, pad_left, pad_right, span, q.dtype, q.device
     )
-
-    if attn_bias is not None:
-        local_mask = local_mask + _windowed_bias_local(attn_bias, pad_left, pad_right, span)
 
     # Flatten (b, h, n) into a single batch dimension so SDPA processes one query token at a time.
     q_flat = q.reshape(b * h * n, 1, dh)
@@ -190,13 +164,8 @@ class WindowedSDPAKernel(nn.Module):
         v: Tensor,
         q_seq_info: SequenceInfo,  # noqa: ARG002
         k_seq_info: SequenceInfo | None,
-        attn_bias: Tensor | None,
     ) -> Tensor:
         dropout_p = self.dropout if self.training else 0.0
         if self.mode == "unfold":
-            return _windowed_unfold(
-                q, k, v, k_seq_info, attn_bias, self.window_size, self.causal, dropout_p
-            )
-        return _windowed_mask(
-            q, k, v, k_seq_info, attn_bias, self.window_size, self.causal, dropout_p
-        )
+            return _windowed_unfold(q, k, v, k_seq_info, self.window_size, self.causal, dropout_p)
+        return _windowed_mask(q, k, v, k_seq_info, self.window_size, self.causal, dropout_p)

@@ -25,23 +25,7 @@ class AttnKernel(Protocol):
         v: Tensor,
         q_seq_info: SequenceInfo,
         k_seq_info: SequenceInfo | None,
-        attn_bias: Tensor | None,
     ) -> Tensor: ...
-
-
-@runtime_checkable
-class AttnBiasBuilder(Protocol):
-    """Build an additive attention bias matrix.
-
-    Returns None when no bias should be added.
-    Null implementation: NoBiasBuilder.
-    """
-
-    def forward(
-        self,
-        q_input: SequenceInput,
-        k_input: SequenceInput,
-    ) -> Tensor | None: ...
 
 
 @runtime_checkable

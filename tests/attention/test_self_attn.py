@@ -3,7 +3,6 @@ from __future__ import annotations
 import pytest
 import torch
 
-from stackformers.attention.bias import NoBiasBuilder
 from stackformers.attention.config import AttentionConfig
 from stackformers.attention.kernels import SDPAKernel
 from stackformers.attention.self_attn import SelfAttention
@@ -22,7 +21,6 @@ def self_attn(device_dtype: tuple[torch.device, torch.dtype]) -> SelfAttention:
     return SelfAttention(
         config=config,
         pos_encoding=NoPosEncoding(),
-        bias_builder=NoBiasBuilder(),
         kernel=SDPAKernel(),
     ).to(device=device, dtype=dtype)
 
@@ -34,7 +32,6 @@ def self_attn_rope(device_dtype: tuple[torch.device, torch.dtype]) -> SelfAttent
     return SelfAttention(
         config=config,
         pos_encoding=RotaryEmbedding1D(RoPE1DConfig(dim_head=DH)),
-        bias_builder=NoBiasBuilder(),
         kernel=SDPAKernel(),
     ).to(device=device, dtype=dtype)
 
@@ -64,7 +61,6 @@ def test_self_attn_causal_shape(
     attn = SelfAttention(
         config=config,
         pos_encoding=NoPosEncoding(),
-        bias_builder=NoBiasBuilder(),
         kernel=SDPAKernel(causal=True),
     ).to(device=device, dtype=dtype)
     out = attn(x_pad)
@@ -97,7 +93,6 @@ def test_self_attn_gqa(device_dtype: tuple[torch.device, torch.dtype]) -> None:
     attn = SelfAttention(
         config=config,
         pos_encoding=NoPosEncoding(),
-        bias_builder=NoBiasBuilder(),
         kernel=SDPAKernel(),
     ).to(device=device, dtype=dtype)
     x = torch.randn(B, N, D, device=device, dtype=dtype)
@@ -111,7 +106,6 @@ def test_self_attn_gradients(device: torch.device) -> None:
     attn = SelfAttention(
         config=config,
         pos_encoding=NoPosEncoding(),
-        bias_builder=NoBiasBuilder(),
         kernel=SDPAKernel(),
     ).to(device=device)
     x = torch.randn(B, N, D, device=device, requires_grad=True)

@@ -5,7 +5,7 @@ from einops import rearrange, repeat
 from torch import Tensor
 
 from stackformers.attention.config import AttentionConfig
-from stackformers.attention.protocols import AttnBiasBuilder, AttnKernel
+from stackformers.attention.protocols import AttnKernel
 from stackformers.positional.protocols import PosEncoding
 from stackformers.sequence import PaddedInput, SequenceInput, to_seq_info
 
@@ -35,12 +35,10 @@ class CrossAttention(BaseCrossAttention):
         self,
         config: AttentionConfig,
         pos_encoding: PosEncoding,
-        bias_builder: AttnBiasBuilder,
         kernel: AttnKernel,
     ) -> None:
         super().__init__(config)
         self.pos_encoding = pos_encoding
-        self.bias_builder = bias_builder
         self.kernel = kernel
 
     def forward(self, x_input: SequenceInput, ctx_input: SequenceInput) -> Tensor:
@@ -56,10 +54,9 @@ class CrossAttention(BaseCrossAttention):
             v = repeat(v, "b h s d -> b (h g) s d", g=groups)
 
         q, k = self.pos_encoding.forward(q, k, x_input, ctx_input)
-        attn_bias = self.bias_builder.forward(x_input, ctx_input)
         x_seq_info = to_seq_info(x_input)
         ctx_seq_info = to_seq_info(ctx_input)
-        out = self.kernel.forward(q, k, v, x_seq_info, ctx_seq_info, attn_bias)
+        out = self.kernel.forward(q, k, v, x_seq_info, ctx_seq_info)
         out = self.to_out(rearrange(out, "b h n d -> b n (h d)"))
 
         if isinstance(x_input, PaddedInput):

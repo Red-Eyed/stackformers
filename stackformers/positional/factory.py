@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from stackformers.positional.config import LearnedPosEncodingConfig, NoPosEncodingConfig, PosEncodingConfig, RoPE1DConfig, RoPE2DConfig
+from stackformers.positional.config import (
+    LearnedPosEncodingConfig,
+    NoPosEncodingConfig,
+    PosEncodingConfig,
+    RoPE1DConfig,
+    RoPE2DConfig,
+)
 from stackformers.positional.learned import LearnedPosEncoding
 from stackformers.positional.none import NoPosEncoding
 from stackformers.positional.protocols import PosEncoding
