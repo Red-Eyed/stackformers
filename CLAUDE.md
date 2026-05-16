@@ -7,58 +7,12 @@ Behavior comes from injected dependencies, not constructor flags.
 ## Key rules — never violate these
 
 - No optional fields on dataclasses to encode different modes — use sealed unions instead
-- No `if self.x is not None` inside `forward()` — use null objects (NoPosEncoding, NoBiasBuilder)
+- No `if self.x is not None` inside `forward()` — use null objects (e.g. `NoPosEncoding`)
 - No flags in `__init__` that change `forward()` behavior — new behavior = new class
 - `forward()` must be traceable by torch.compile and torch.export — no Python control flow on tensors
 - One concept per file — if you can't describe it in one sentence, split it
 - All tensor args annotated with jaxtyping shape strings using project dim vocabulary
-
-## Protocols
-
-Every collaborator accepted by `__init__` must be typed as a protocol, never as a concrete class.
-
-```python
-# wrong
-def __init__(self, norm: RMSNorm, ff: SwiGLU): ...
-
-# right
-def __init__(self, norm: Norm, ff: FeedForward): ...
-```
-
-### Two kinds of protocols
-
-**High-level** — called at the `nn.Module` call site via `()`.
-Declare `__call__`, not `forward`. This is what type checkers need to recognise them as callable.
-
-| Protocol | `__call__` signature | Implementations |
-|----------|---------------------|-----------------|
-| `Norm` | `(x: b n d) → b n d` | `RMSNorm` |
-| `FeedForward` | `(x: b n d) → b n d` | `SwiGLU` |
-| `SelfAttn` | `(x: b n d, seq_info) → b n d` | `SelfAttention` |
-| `CrossAttn` | `(x: b n d, context: b s d, x_seq_info?, ctx_seq_info?) → b n d` | `CrossAttention` |
-
-**Low-level** — called explicitly via `.forward()` inside another module's `forward`.
-Declare `forward`, not `__call__`.
-
-| Protocol | `forward` signature | Implementations |
-|----------|---------------------|-----------------|
-| `AttnKernel` | `(q, k, v, attn_mask, attn_bias, is_causal) → b h n dh` | `SDPAKernel`, `WindowedSDPAKernel`, … |
-| `AttnBiasBuilder` | `(n, s, device) → h n s \| None` | `ALiBiBuilder`, `NoBiasBuilder` |
-| `PosEncoding` | `(q: b h n dh, k: b h s dh) → (q, k)` | `RotaryEmbedding1D`, `NoPosEncoding` |
-| `PackedPosEncoding` | `(q: nt h dh, k, position_ids) → (q, k)` | `RotaryEmbedding1D`, `NoPosEncoding` |
-
-### Protocol placement
-
-Define each protocol in the module it most naturally belongs to — not in a central `protocols.py`.
-
-| Protocol file | Contains |
-|--------------|---------|
-| `attention/protocols.py` | `AttnKernel`, `AttnBiasBuilder`, `SelfAttn`, `CrossAttn` |
-| `positional/protocols.py` | `PosEncoding`, `PackedPosEncoding` |
-| `feedforward/protocols.py` | `FeedForward` |
-| `norm/protocols.py` | `Norm` |
-
-Implementations satisfy protocols structurally — they never import the protocol they implement.
+- Every collaborator accepted by `__init__` must be typed as a protocol, never as a concrete class
 
 ## Dim naming convention (use everywhere)
 | Symbol | Meaning |
@@ -72,55 +26,38 @@ Implementations satisfy protocols structurally — they never import the protoco
 | w      | window size |
 | nt     | total tokens in packed sequence |
 
-## SequenceInfo is a sealed union
-```python
-SequenceInfo = PaddedSequence | PackedSequence
-```
-New sequence types = new dataclass. Never add optional fields to existing variants.
-
 ## File organisation
 
 - All code lives directly under `stackformers/`. Breaking changes go in a new top-level package.
 - Configs live next to the class they configure: `attention/config.py`, `feedforward/config.py`.
 - Cross-cutting configs (`LayerConfig`, `EncoderConfig`, `DecoderConfig`) live at `config.py`.
 - Each module has a `factory.py` with a `build_*` function that dispatches on config type via `match`.
-- Kernel variants live in `attention/kernels/` — one file per kernel class.
 - Opinionated presets live in `presets/` — one file per preset class.
+- Protocols are defined in the module they belong to (`attention/protocols.py`, etc.), not a central file.
+- Implementations satisfy protocols structurally — they never import the protocol they implement.
 
 ## Config and factory conventions
 
-Every union config type uses a `kind: Literal[...]` discriminator field so configs round-trip through JSON unambiguously. The union itself is an `Annotated[... , Field(discriminator="kind")]` alias defined in the same `config.py`.
+Every union config type uses a `kind: Literal[...]` discriminator field so configs round-trip through JSON unambiguously. The union itself is an `Annotated[..., Field(discriminator="kind")]` alias defined in the same `config.py`.
 
 Each module owns its builder in a co-located `factory.py`. The function signature is `build_*(config: *Config, ...) -> Protocol`. Presets call these factories — they never instantiate concrete classes directly.
 
 ## Module-level READMEs
 
-Each subdirectory has a `README.md` that covers: the module's purpose in one or two sentences, key design decisions, and how to extend it with a new variant. READMEs must not reflect code — no file tables, no copied signatures. If the README would just restate what reading the source gives you, don't write it.
-
-## Presets
-
-`presets/` contains ready-to-use `nn.Module` subclasses that wire up building blocks with fixed choices (RMSNorm + SwiGLU + RoPE-1D + SDPA). Each preset is generic over its config type so subclasses can extend the config and keep full type safety. See `presets/README.md` for the full comparison.
-
-| Preset | Per-layer ops | Notes |
-|--------|--------------|-------|
-| `TransformerEncoder` | self-attn → ff | `causal=True` for GPT-style |
-| `TransformerDecoder` | causal self-attn → cross-attn → ff | target sequence attends to context; self-attn always causal |
-| `CrossAttender` | cross-attn → ff | x is a set of queries, no self-attention |
-
-Presets are intentionally not flexible — for custom wiring use the building blocks directly.
+Each subdirectory has a `README.md`. When you change a module's design — add a variant, remove a concept, change a dispatch strategy — update its `README.md` in the same commit. The README covers: purpose in one or two sentences, key design decisions, and how to extend with a new variant. It must not restate what reading the source already gives you (no file tables, no copied signatures).
 
 ## Testing rules
 - One test file per source file, mirroring directory structure
 - Use pytest fixtures for module construction, inputs, and sequence objects — no plain helper functions
 - Parametrise over `device_dtype` (all device×dtype combos) for compute tests; use `device` alone (float32) for gradient tests
 - Test shape contracts, not numeric values
-- Numerical assertions (norm preservation etc.) use `atol(dtype)` from `tests/conftest.py`
+- Numerical assertions use `atol(dtype)` from `tests/conftest.py`
 
 ## Dependencies
 - PyTorch native first: `F.scaled_dot_product_attention`, `torch.nn.attention.varlen.varlen_attn`
 - No optional third-party kernel dependencies — all kernels are pure PyTorch
 - Pydantic for configs; use `Field(gt=0)` / `Field(ge=0)` constraints, not `@field_validator`, for simple bounds
-- Prefer `nn.Module` activations (`nn.SiLU()`, `nn.GELU()`) over `torch.nn.functional` calls — module attributes appear in the module tree and can be swapped at runtime via `model.modules()` iteration
+- Prefer `nn.Module` activations (`nn.SiLU()`, `nn.GELU()`) over `torch.nn.functional` calls
 
 ## x-transformers reference
 Cloned at `./x-transformers/` — read for math and implementation details only.
@@ -128,7 +65,7 @@ Do not copy its architecture.
 
 ## Versioning
 
-Version is maintained in `pyproject.toml` under `[project].version` and exposed at runtime via `stackformers.__version__` (read from package metadata with `importlib.metadata`).
+Version is maintained in `pyproject.toml` under `[project].version` and exposed at runtime via `stackformers.__version__`.
 
 Use [Semantic Versioning](https://semver.org/):
 - **MAJOR** — breaking public API change
@@ -139,17 +76,9 @@ Bump the version in `pyproject.toml` on every commit that changes behaviour. Com
 
 ## Commands
 ```bash
-# Install (uv)
-uv sync --group dev
-
-# Lint / format
-just lint
-just fmt
-
-# Type-check
-just types        # runs pyrefly
-
-# Tests
-just test
+just fmt          # ruff format
+just lint         # ruff check
+just types        # pyrefly
+just test         # pytest
 just check        # full CI gate: fmt-check + lint + types + test
 ```
