@@ -167,6 +167,9 @@ def test_windowed_kernel_causal_masks_future(
     seq = make_padded(torch.ones(1, 8, dtype=torch.bool, device=device))
     out = kernel(q, k, v, seq, seq, None)
     assert out.shape == (1, 1, 8, 4)
+    # Token 0 is causal: window covers only itself. With k=zeros, softmax=1.0 on key 0.
+    # If future tokens leaked, out[0,0,0] would be a mixture of multiple v rows.
+    assert torch.allclose(out[0, 0, 0], v[0, 0, 0], atol=atol(dtype))
 
 
 # --- windowed kernel (unfold mode) ---
@@ -215,6 +218,8 @@ def test_windowed_unfold_kernel_causal_masks_future(
     seq = make_padded(torch.ones(1, 8, dtype=torch.bool, device=device))
     out = kernel(q, k, v, seq, seq, None)
     assert out.shape == (1, 1, 8, 4)
+    # Same invariant as mask mode: token 0's causal window contains only itself.
+    assert torch.allclose(out[0, 0, 0], v[0, 0, 0], atol=atol(dtype))
 
 
 def test_windowed_unfold_matches_mask(

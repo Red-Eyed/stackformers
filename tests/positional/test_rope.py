@@ -93,6 +93,28 @@ def test_rope1d_different_positions_produce_different_output(
     assert not torch.allclose(q_out[:, :, 0], q_out[:, :, 1])
 
 
+def test_rope1d_relative_distance_invariant(
+    rope1d: RotaryEmbedding1D,
+    device_dtype: tuple[torch.device, torch.dtype],
+) -> None:
+    device, dtype = device_dtype
+    q = torch.randn(1, H, 1, DH, device=device, dtype=dtype)
+    k = torch.randn(1, H, 1, DH, device=device, dtype=dtype)
+
+    def _inp(pos: int) -> PaddedInput:
+        x = torch.zeros(1, 1, 1, device=device, dtype=dtype)
+        mask = torch.ones(1, 1, dtype=torch.bool, device=device)
+        positions = torch.full((1, 1, 1), float(pos), device=device, dtype=dtype)
+        return PaddedInput(x=x, mask=mask, abs_positions=positions)
+
+    # Same relative distance (delta=3) at two different absolute offsets.
+    q1, k1 = rope1d(q, k, _inp(1), _inp(4))
+    q2, k2 = rope1d(q, k, _inp(8), _inp(11))
+    score1 = (q1 @ k1.transpose(-1, -2))[0, :, 0, 0]
+    score2 = (q2 @ k2.transpose(-1, -2))[0, :, 0, 0]
+    assert torch.allclose(score1, score2, atol=atol(dtype))
+
+
 def test_rope1d_preserves_norms(
     rope1d: RotaryEmbedding1D,
     qk: tuple[torch.Tensor, torch.Tensor],
