@@ -4,10 +4,10 @@ import math
 
 import torch
 import torch.nn as nn
+from jaxtyping import Float
 from torch import Tensor
 
 from stackformers.positional.config import RoPE1DConfig, YaRNConfig
-from stackformers.sequence import PackedInput, PaddedInput, SequenceInput
 
 
 def _rotate_half(x: Tensor) -> Tensor:
@@ -32,8 +32,8 @@ def _apply_rope_padded(t: Tensor, freqs: Tensor) -> Tensor:
 
 
 def _apply_rope_packed(t: Tensor, freqs: Tensor) -> Tensor:
-    """Apply RoPE to packed tensor (nt h dh) with freqs (nt dh)."""
-    cos = freqs.cos().unsqueeze(1)  # (nt, 1, dh) — broadcasts over h
+    """t: nt h dh, freqs: nt dh"""
+    cos = freqs.cos().unsqueeze(1)  # nt 1 dh — broadcasts over h
     sin = freqs.sin().unsqueeze(1)
     return t * cos + _rotate_half(t) * sin
 
@@ -59,7 +59,6 @@ def _yarn_inv_freq(
 class RotaryEmbedding1D(nn.Module):
     """1-D Rotary Position Embedding (Su et al., 2021).
 
-    Handles both padded (b h n dh) and packed (nt h dh) layouts via input type.
     Optionally accepts YaRNConfig for extended context via NTK-by-parts scaling.
     """
 
@@ -74,34 +73,39 @@ class RotaryEmbedding1D(nn.Module):
         self.register_buffer("inv_freq", inv_freq, persistent=False)
 
     @torch.no_grad()
-    def _freqs_from_padded_positions(self, positions: Tensor) -> Tensor:
-        """positions: b n c → freqs: b n dh (first coordinate only)"""
+    def _freqs_from_padded_positions(
+        self, positions: Float[Tensor, "b n c"]
+    ) -> Float[Tensor, "b n dh"]:
         pos = positions[..., 0].to(dtype=self.inv_freq.dtype)  # type: ignore[attr-defined]
         freqs = torch.einsum("b n, d -> b n d", pos, self.inv_freq)  # type: ignore[attr-defined]
         return torch.cat([freqs, freqs], dim=-1)
 
     @torch.no_grad()
-    def _freqs_from_packed_positions(self, positions: Tensor) -> Tensor:
-        """positions: nt c → freqs: nt dh (first coordinate only)"""
+    def _freqs_from_packed_positions(
+        self, positions: Float[Tensor, "nt c"]
+    ) -> Float[Tensor, "nt dh"]:
         pos = positions[..., 0].to(dtype=self.inv_freq.dtype)  # type: ignore[attr-defined]
         freqs = torch.einsum("n, d -> n d", pos, self.inv_freq)  # type: ignore[attr-defined]
         return torch.cat([freqs, freqs], dim=-1)
 
-    def forward(
+    def forward_padded(
         self,
-        q: Tensor,
-        k: Tensor,
-        q_input: SequenceInput,
-        k_input: SequenceInput,
-    ) -> tuple[Tensor, Tensor]:
-        match q_input:
-            case PaddedInput(abs_positions=q_pos):
-                k_pos = k_input.abs_positions  # b s
-                freqs_q = self._freqs_from_padded_positions(q_pos)
-                freqs_k = self._freqs_from_padded_positions(k_pos)
-                return _apply_rope_padded(q, freqs_q), _apply_rope_padded(k, freqs_k)
-            case PackedInput(abs_positions=q_pos):
-                k_pos = k_input.abs_positions  # nt
-                freqs_q = self._freqs_from_packed_positions(q_pos)
-                freqs_k = self._freqs_from_packed_positions(k_pos)
-                return _apply_rope_packed(q, freqs_q), _apply_rope_packed(k, freqs_k)
+        q: Float[Tensor, "b h n dh"],
+        k: Float[Tensor, "b h s dh"],
+        q_positions: Float[Tensor, "b n c"],
+        k_positions: Float[Tensor, "b s c"],
+    ) -> tuple[Float[Tensor, "b h n dh"], Float[Tensor, "b h s dh"]]:
+        freqs_q = self._freqs_from_padded_positions(q_positions)
+        freqs_k = self._freqs_from_padded_positions(k_positions)
+        return _apply_rope_padded(q, freqs_q), _apply_rope_padded(k, freqs_k)
+
+    def forward_packed(
+        self,
+        q: Float[Tensor, "nt h dh"],
+        k: Float[Tensor, "nt h dh"],
+        q_positions: Float[Tensor, "nt c"],
+        k_positions: Float[Tensor, "nt c"],
+    ) -> tuple[Float[Tensor, "nt h dh"], Float[Tensor, "nt h dh"]]:
+        freqs_q = self._freqs_from_packed_positions(q_positions)
+        freqs_k = self._freqs_from_packed_positions(k_positions)
+        return _apply_rope_packed(q, freqs_q), _apply_rope_packed(k, freqs_k)

@@ -12,7 +12,6 @@ from stackformers.positional.rope1d import (
 from stackformers.positional.rope1d import (
     _apply_rope_padded_unbatched as _apply_rope,
 )
-from stackformers.sequence import PackedInput, SequenceInput
 
 
 class RotaryEmbedding2D(nn.Module):
@@ -41,49 +40,45 @@ class RotaryEmbedding2D(nn.Module):
         freqs = torch.einsum("n, d -> n d", ids, self.inv_freq)  # type: ignore[attr-defined]
         return torch.cat([freqs, freqs], dim=-1)
 
-    def forward(
+    def forward_padded(
         self,
         q: Float[Tensor, "b h n dh"],
         k: Float[Tensor, "b h s dh"],
-        q_input: SequenceInput,
-        k_input: SequenceInput,
+        q_positions: Float[Tensor, "b n c"],
+        k_positions: Float[Tensor, "b s c"],
     ) -> tuple[Float[Tensor, "b h n dh"], Float[Tensor, "b h s dh"]]:
-        match q_input:
-            case PackedInput():
-                # Per-token 2D positions: abs_positions is (nt, 2)
-                q_pos = q_input.abs_positions  # nt 2
-                k_pos = k_input.abs_positions  # nt 2
-                freqs_q = torch.cat(
-                    [
-                        self._build_freqs(q_pos[:, 0], q.device),
-                        self._build_freqs(q_pos[:, 1], q.device),
-                    ],
-                    dim=-1,
-                )
-                freqs_k = torch.cat(
-                    [
-                        self._build_freqs(k_pos[:, 0], k.device),
-                        self._build_freqs(k_pos[:, 1], k.device),
-                    ],
-                    dim=-1,
-                )
-                return _apply_rope_packed(q, freqs_q), _apply_rope_packed(k, freqs_k)
-            case _:
-                # Padded: positions shared across batch (first item), abs_positions is (b, n, 2)
-                q_pos = q_input.abs_positions[0]  # n 2
-                k_pos = k_input.abs_positions[0]  # s 2
-                freqs_q = torch.cat(
-                    [
-                        self._build_freqs(q_pos[:, 0], q.device),
-                        self._build_freqs(q_pos[:, 1], q.device),
-                    ],
-                    dim=-1,
-                )
-                freqs_k = torch.cat(
-                    [
-                        self._build_freqs(k_pos[:, 0], k.device),
-                        self._build_freqs(k_pos[:, 1], k.device),
-                    ],
-                    dim=-1,
-                )
-                return _apply_rope(q, freqs_q), _apply_rope(k, freqs_k)
+        # [0]: grid positions are identical across the batch
+        q_pos = q_positions[0]  # n 2
+        k_pos = k_positions[0]  # s 2
+        freqs_q = torch.cat(
+            [self._build_freqs(q_pos[:, 0], q.device), self._build_freqs(q_pos[:, 1], q.device)],
+            dim=-1,
+        )
+        freqs_k = torch.cat(
+            [self._build_freqs(k_pos[:, 0], k.device), self._build_freqs(k_pos[:, 1], k.device)],
+            dim=-1,
+        )
+        return _apply_rope(q, freqs_q), _apply_rope(k, freqs_k)
+
+    def forward_packed(
+        self,
+        q: Float[Tensor, "nt h dh"],
+        k: Float[Tensor, "nt h dh"],
+        q_positions: Float[Tensor, "nt c"],
+        k_positions: Float[Tensor, "nt c"],
+    ) -> tuple[Float[Tensor, "nt h dh"], Float[Tensor, "nt h dh"]]:
+        freqs_q = torch.cat(
+            [
+                self._build_freqs(q_positions[:, 0], q.device),
+                self._build_freqs(q_positions[:, 1], q.device),
+            ],
+            dim=-1,
+        )
+        freqs_k = torch.cat(
+            [
+                self._build_freqs(k_positions[:, 0], k.device),
+                self._build_freqs(k_positions[:, 1], k.device),
+            ],
+            dim=-1,
+        )
+        return _apply_rope_packed(q, freqs_q), _apply_rope_packed(k, freqs_k)

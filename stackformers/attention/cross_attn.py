@@ -39,7 +39,9 @@ class CrossAttention(nn.Module):
         if groups > 1:
             k = repeat(k, "b h s d -> b (h g) s d", g=groups)
             v = repeat(v, "b h s d -> b (h g) s d", g=groups)
-        q, k = self.pos_encoding.forward(q, k, x_input, ctx_input)
+        q, k = self.pos_encoding.forward_padded(
+            q, k, x_input.abs_positions, ctx_input.abs_positions
+        )
         attn_mask = _padding_mask(ctx_input.mask, q.dtype)
         dropout_p = cfg.dropout if self.training else 0.0
         out = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, dropout_p=dropout_p)
@@ -56,7 +58,9 @@ class CrossAttention(nn.Module):
         if groups > 1:
             k = repeat(k, "nt h d -> nt (h g) d", g=groups)
             v = repeat(v, "nt h d -> nt (h g) d", g=groups)
-        q, k = self.pos_encoding.forward(q, k, x_input, ctx_input)
+        q, k = self.pos_encoding.forward_packed(
+            q, k, x_input.abs_positions, ctx_input.abs_positions
+        )
         x_seq = PackedSequence(cu_seqlens=x_input.cu_seqlens, max_seqlen=x_input.max_seqlen)
         ctx_seq = PackedSequence(cu_seqlens=ctx_input.cu_seqlens, max_seqlen=ctx_input.max_seqlen)
         dropout_p = cfg.dropout if self.training else 0.0

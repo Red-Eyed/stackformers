@@ -143,7 +143,7 @@ class SelfAttention(nn.Module):
         if groups > 1:
             k = repeat(k, "b h n d -> b (h g) n d", g=groups)
             v = repeat(v, "b h n d -> b (h g) n d", g=groups)
-        q, k = self.pos_encoding.forward(q, k, input, input)
+        q, k = self.pos_encoding.forward_padded(q, k, input.abs_positions, input.abs_positions)
         dropout_p = cfg.dropout if self.training else 0.0
         if cfg.window_size is None:
             attn_mask = _padding_mask(input.mask, q.dtype)
@@ -175,7 +175,7 @@ class SelfAttention(nn.Module):
         if groups > 1:
             k = repeat(k, "nt h d -> nt (h g) d", g=groups)
             v = repeat(v, "nt h d -> nt (h g) d", g=groups)
-        q, k = self.pos_encoding.forward(q, k, input, input)
+        q, k = self.pos_encoding.forward_packed(q, k, input.abs_positions, input.abs_positions)
         seq = PackedSequence(cu_seqlens=input.cu_seqlens, max_seqlen=input.max_seqlen)
         dropout_p = cfg.dropout if self.training else 0.0
         out = _packed_attn(q, k, v, seq, seq, cfg.causal, cfg.window_size, dropout_p)

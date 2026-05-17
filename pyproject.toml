@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "stackformers"
-version = "3.0.1"
+version = "3.1.0"
 description = "Typed, composable, SOLID transformer library for PyTorch"
 requires-python = ">=3.11"
 dependencies = [
