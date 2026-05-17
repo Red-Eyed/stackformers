@@ -82,3 +82,8 @@ just types        # pyrefly
 just test         # pytest
 just check        # full CI gate: fmt-check + lint + types + test
 ```
+
+## PyTorch
+- Before writing any torch code, run: `python -c "import torch; print(torch.__version__)"`
+- Always prefer built-in torch implementations over custom ones
+- Check `.venv/lib/python3.*/site-packages/torch/nn/modules/` for what's available

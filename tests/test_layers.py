@@ -9,7 +9,7 @@ from stackformers.feedforward.config import SwiGLUConfig
 from stackformers.feedforward.swiglu import SwiGLU
 from stackformers.layers import TransformerLayer
 from stackformers.norm.config import RMSNormConfig
-from stackformers.norm.rms import RMSNorm
+from stackformers.norm.factory import build_norm
 from stackformers.positional.none import NoPosEncoding
 from stackformers.sequence import PaddedInput, make_padded_input
 
@@ -25,8 +25,8 @@ def layer(device_dtype: tuple[torch.device, torch.dtype]) -> TransformerLayer:
     return TransformerLayer(
         self_attn=SelfAttention(attn_cfg, NoPosEncoding()),
         ff=SwiGLU(ff_cfg),
-        norm_attn=RMSNorm(norm_cfg),
-        norm_ff=RMSNorm(norm_cfg),
+        norm_attn=build_norm(norm_cfg),
+        norm_ff=build_norm(norm_cfg),
     ).to(device=device, dtype=dtype)
 
 
@@ -61,8 +61,8 @@ def test_transformer_layer_gradients(device: torch.device) -> None:
     layer = TransformerLayer(
         self_attn=SelfAttention(attn_cfg, NoPosEncoding()),
         ff=SwiGLU(ff_cfg),
-        norm_attn=RMSNorm(norm_cfg),
-        norm_ff=RMSNorm(norm_cfg),
+        norm_attn=build_norm(norm_cfg),
+        norm_ff=build_norm(norm_cfg),
     ).to(device=device)
     x = torch.randn(B, N, D, device=device, requires_grad=True)
     mask = torch.ones(B, N, dtype=torch.bool, device=device)

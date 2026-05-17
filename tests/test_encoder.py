@@ -10,7 +10,7 @@ from stackformers.feedforward.config import SwiGLUConfig
 from stackformers.feedforward.swiglu import SwiGLU
 from stackformers.layers import TransformerLayer
 from stackformers.norm.config import RMSNormConfig
-from stackformers.norm.rms import RMSNorm
+from stackformers.norm.factory import build_norm
 from stackformers.positional.config import RoPE1DConfig
 from stackformers.positional.none import NoPosEncoding
 from stackformers.positional.protocols import PosEncoding
@@ -34,12 +34,12 @@ def _build_encoder(
         TransformerLayer(
             self_attn=SelfAttention(attn_cfg, pos),
             ff=SwiGLU(ff_cfg),
-            norm_attn=RMSNorm(norm_cfg),
-            norm_ff=RMSNorm(norm_cfg),
+            norm_attn=build_norm(norm_cfg),
+            norm_ff=build_norm(norm_cfg),
         )
         for _ in range(NUM_LAYERS)
     ]
-    return Encoder(layers=layers, final_norm=RMSNorm(norm_cfg)).to(device=device, dtype=dtype)
+    return Encoder(layers=layers, final_norm=build_norm(norm_cfg)).to(device=device, dtype=dtype)
 
 
 @pytest.fixture

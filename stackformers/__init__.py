@@ -20,7 +20,6 @@ from stackformers.layers import TransformerLayer
 from stackformers.norm.config import LayerNormConfig, RMSNormConfig
 from stackformers.norm.factory import NormConfig, build_norm
 from stackformers.norm.protocols import Norm
-from stackformers.norm.rms import RMSNorm
 from stackformers.positional.config import (
     NoPosEncodingConfig,
     PosEncodingConfig,
@@ -103,8 +102,6 @@ __all__ = [
     "RoPE2DConfig",
     "NoPosEncodingConfig",
     "PosEncodingConfig",
-    # norm
-    "RMSNorm",
     # positional
     "NoPosEncoding",
     "RotaryEmbedding1D",
