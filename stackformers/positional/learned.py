@@ -23,6 +23,13 @@ class LearnedPosEncoding(nn.Module):
         self.emb = nn.Embedding(config.max_seq_len, config.dim_head)
         nn.init.normal_(self.emb.weight, std=0.02)
 
+    def _encode(
+        self, q: Tensor, k: Tensor, q_positions: Tensor, k_positions: Tensor
+    ) -> tuple[Tensor, Tensor]:
+        q_idx = q_positions[..., 0].long()
+        k_idx = k_positions[..., 0].long()
+        return q + self.emb(q_idx).unsqueeze(1), k + self.emb(k_idx).unsqueeze(1)
+
     def forward_padded(
         self,
         q: Float[Tensor, "b h n dh"],
@@ -30,9 +37,7 @@ class LearnedPosEncoding(nn.Module):
         q_positions: Float[Tensor, "b n c"],
         k_positions: Float[Tensor, "b s c"],
     ) -> tuple[Float[Tensor, "b h n dh"], Float[Tensor, "b h s dh"]]:
-        q_idx = q_positions[..., 0].long()  # b n
-        k_idx = k_positions[..., 0].long()  # b s
-        return q + self.emb(q_idx).unsqueeze(1), k + self.emb(k_idx).unsqueeze(1)
+        return self._encode(q, k, q_positions, k_positions)
 
     def forward_packed(
         self,
@@ -41,6 +46,4 @@ class LearnedPosEncoding(nn.Module):
         q_positions: Float[Tensor, "nt c"],
         k_positions: Float[Tensor, "nt c"],
     ) -> tuple[Float[Tensor, "nt h dh"], Float[Tensor, "nt h dh"]]:
-        q_idx = q_positions[..., 0].long()  # nt
-        k_idx = k_positions[..., 0].long()  # nt
-        return q + self.emb(q_idx).unsqueeze(1), k + self.emb(k_idx).unsqueeze(1)
+        return self._encode(q, k, q_positions, k_positions)

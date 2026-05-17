@@ -18,23 +18,20 @@ def _rotate_half(x: Tensor) -> Tensor:
 
 
 def _apply_rope_padded_unbatched(t: Tensor, freqs: Tensor) -> Tensor:
-    """t: b h n dh, freqs: n dh — kept for rope2d compatibility."""
+    """t: b h n dh, freqs: n dh — (n dh) broadcasts over (b h n dh) without unsqueeze."""
     cos = freqs.cos()
     sin = freqs.sin()
     return t * cos + _rotate_half(t) * sin
 
 
-def _apply_rope_padded(t: Tensor, freqs: Tensor) -> Tensor:
-    """t: b h n dh, freqs: b n dh"""
-    cos = freqs.cos().unsqueeze(1)  # b 1 n dh
-    sin = freqs.sin().unsqueeze(1)
-    return t * cos + _rotate_half(t) * sin
+def _apply_rope(t: Tensor, freqs: Tensor) -> Tensor:
+    """Works for padded (b h n dh)+(b n dh) and packed (nt h dh)+(nt dh).
 
-
-def _apply_rope_packed(t: Tensor, freqs: Tensor) -> Tensor:
-    """t: nt h dh, freqs: nt dh"""
-    cos = freqs.cos().unsqueeze(1)  # nt 1 dh — broadcasts over h
-    sin = freqs.sin().unsqueeze(1)
+    unsqueeze(1) inserts the head dim in both cases.
+    Cast to t.dtype so float32 freqs don't upcast a float16 input.
+    """
+    cos = freqs.cos().to(dtype=t.dtype).unsqueeze(1)
+    sin = freqs.sin().to(dtype=t.dtype).unsqueeze(1)
     return t * cos + _rotate_half(t) * sin
 
 
@@ -73,20 +70,27 @@ class RotaryEmbedding1D(nn.Module):
         self.register_buffer("inv_freq", inv_freq, persistent=False)
 
     @torch.no_grad()
-    def _freqs_from_padded_positions(
-        self, positions: Float[Tensor, "b n c"]
-    ) -> Float[Tensor, "b n dh"]:
-        pos = positions[..., 0].to(dtype=self.inv_freq.dtype)  # type: ignore[attr-defined]
-        freqs = torch.einsum("b n, d -> b n d", pos, self.inv_freq)  # type: ignore[attr-defined]
+    def _freqs_from_positions(self, positions: Tensor) -> Tensor:
+        """positions: (..., c) → freqs: (..., dh), uses first coordinate only.
+
+        float32 cast ensures half-precision inputs don't lose precision in the outer product.
+        """
+        inv: Tensor = self.inv_freq  # type: ignore[assignment]
+        pos = positions[..., 0].to(dtype=torch.float32)
+        freqs = pos.unsqueeze(-1) * inv.float()
         return torch.cat([freqs, freqs], dim=-1)
 
-    @torch.no_grad()
-    def _freqs_from_packed_positions(
-        self, positions: Float[Tensor, "nt c"]
-    ) -> Float[Tensor, "nt dh"]:
-        pos = positions[..., 0].to(dtype=self.inv_freq.dtype)  # type: ignore[attr-defined]
-        freqs = torch.einsum("n, d -> n d", pos, self.inv_freq)  # type: ignore[attr-defined]
-        return torch.cat([freqs, freqs], dim=-1)
+    def _encode(
+        self,
+        q: Tensor,
+        k: Tensor,
+        q_positions: Tensor,
+        k_positions: Tensor,
+    ) -> tuple[Tensor, Tensor]:
+        return (
+            _apply_rope(q, self._freqs_from_positions(q_positions)),
+            _apply_rope(k, self._freqs_from_positions(k_positions)),
+        )
 
     def forward_padded(
         self,
@@ -95,9 +99,7 @@ class RotaryEmbedding1D(nn.Module):
         q_positions: Float[Tensor, "b n c"],
         k_positions: Float[Tensor, "b s c"],
     ) -> tuple[Float[Tensor, "b h n dh"], Float[Tensor, "b h s dh"]]:
-        freqs_q = self._freqs_from_padded_positions(q_positions)
-        freqs_k = self._freqs_from_padded_positions(k_positions)
-        return _apply_rope_padded(q, freqs_q), _apply_rope_padded(k, freqs_k)
+        return self._encode(q, k, q_positions, k_positions)
 
     def forward_packed(
         self,
@@ -106,6 +108,4 @@ class RotaryEmbedding1D(nn.Module):
         q_positions: Float[Tensor, "nt c"],
         k_positions: Float[Tensor, "nt c"],
     ) -> tuple[Float[Tensor, "nt h dh"], Float[Tensor, "nt h dh"]]:
-        freqs_q = self._freqs_from_packed_positions(q_positions)
-        freqs_k = self._freqs_from_packed_positions(k_positions)
-        return _apply_rope_packed(q, freqs_q), _apply_rope_packed(k, freqs_k)
+        return self._encode(q, k, q_positions, k_positions)
