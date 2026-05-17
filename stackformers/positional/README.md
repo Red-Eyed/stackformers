@@ -4,7 +4,7 @@ Positional encodings applied to Q and K tensors inside attention — not to the 
 
 `RotaryEmbedding1D` is the standard choice. It supports YaRN context extension via `RoPE1DConfig(yarn=YaRNConfig(...))`. `RotaryEmbedding2D` handles grid inputs by splitting the head dimension into row and column components. `NoPosEncoding` is a null object for cross-attention paths that need no positional information.
 
-The `PosEncoding` protocol covers padded sequences; `PackedPosEncoding` extends it for packed sequences. `RotaryEmbedding1D` and `NoPosEncoding` satisfy both.
+The `PosEncoding` protocol exposes two methods — `forward_padded` and `forward_packed` — so callers (which already know their layout) pick the right path directly without internal dispatch. All implementations share the same computation via layout-agnostic helpers, since positional encoding is a per-token operation that does not depend on sequence boundaries.
 
 ## Adding a new encoding
 
