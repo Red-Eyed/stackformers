@@ -147,13 +147,16 @@ class SelfAttention(nn.Module):
         dropout_p = cfg.dropout if self.training else 0.0
         if cfg.window_size is None:
             attn_mask = _padding_mask(input.mask, q.dtype)
+            if cfg.causal:
+                n, s = q.shape[-2], k.shape[-2]
+                attn_mask = attn_mask + _window_mask(n, s, s, causal=True, device=q.device)
             out = F.scaled_dot_product_attention(
                 q,
                 k,
                 v,
                 attn_mask=attn_mask,
                 dropout_p=dropout_p,
-                is_causal=cfg.causal and attn_mask is None,
+                is_causal=False,
             )
         else:
             n, s = q.shape[-2], k.shape[-2]
