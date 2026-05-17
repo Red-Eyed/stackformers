@@ -49,4 +49,20 @@ class GEGLUConfig(_FFBase):
     kind: Literal["geglu"] = "geglu"
 
 
-FeedForwardConfig = Annotated[SwiGLUConfig | GEGLUConfig, Field(discriminator="kind")]
+class ReluSquaredConfig(_FFBase):
+    """Config for the ReLU² feed-forward network.
+
+    Non-gated: inner_dim = dim * mult (no 2/3 factor).
+    Paper: "Primer: Searching for Efficient Transformers" — https://arxiv.org/abs/2109.08668
+    """
+
+    kind: Literal["relu_squared"] = "relu_squared"
+
+    @property
+    def inner_dim(self) -> int:
+        return int(self.dim * self.mult)
+
+
+FeedForwardConfig = Annotated[
+    SwiGLUConfig | GEGLUConfig | ReluSquaredConfig, Field(discriminator="kind")
+]
