@@ -25,7 +25,7 @@ class GEGLU(nn.Module):
         self.w2 = nn.Linear(config.dim, inner_dim, bias=False)
         self.w3 = nn.Linear(inner_dim, config.dim, bias=False)
         self.dropout = nn.Dropout(config.dropout)
-        self.act = nn.GELU()
+        self.act = nn.GELU(approximate="tanh")
 
         nn.init.normal_(self.w3.weight, std=0.02)
 
