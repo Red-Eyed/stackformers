@@ -35,13 +35,52 @@ def _validate_attn_dims(dim: int, heads: int, dim_head: int, kv_heads: int | Non
 
 
 class SelfAttentionConfig(BaseModel):
-    dim: int = Field(gt=0)
-    heads: int = Field(default=8, gt=0)
-    dim_head: int = Field(default=64, gt=0)
-    kv_heads: int | None = None
-    causal: bool = False
-    dropout: float = Field(default=0.0, ge=0.0, le=1.0)
-    window_size: int | None = None  # None = global; positive int = sliding window
+    dim: int = Field(
+        gt=0,
+        description="Model (embedding) dimension — input and output width of the attention sublayer.",  # noqa: E501
+    )
+    heads: int = Field(default=8, gt=0, description="Number of query heads.")
+    dim_head: int = Field(
+        default=64,
+        gt=0,
+        description=(
+            "Dimension per head. Output projection width is heads * dim_head,"
+            " which need not equal dim (non-square projections are valid)."
+        ),
+    )
+    kv_heads: int | None = Field(
+        default=None,
+        description=(
+            "Number of key/value heads. None = equal to heads (standard MHA)."
+            " Set to 1 for MQA or any divisor of heads for GQA."
+        ),
+    )
+    causal: bool = Field(
+        default=False,
+        description=(
+            "Apply a causal mask so each position attends only to itself and earlier positions."
+        ),
+    )
+    dropout: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Attention weight dropout probability, applied during training only.",
+    )
+    window_size: int | None = Field(
+        default=None,
+        description=(
+            "Sliding-window width. None = global attention."
+            " A positive integer restricts each token to a local window of that width."
+        ),
+    )
+    qk_norm: bool = Field(
+        default=False,
+        description=(
+            "Apply RMSNorm to queries and keys (in head space) before the dot product."
+            " Stabilises logit scale at large depth or large dim_head."
+        ),
+    )
 
     @model_validator(mode="after")
     def _validate(self) -> "SelfAttentionConfig":
@@ -58,11 +97,39 @@ class SelfAttentionConfig(BaseModel):
 
 
 class CrossAttentionConfig(BaseModel):
-    dim: int = Field(gt=0)
-    heads: int = Field(default=8, gt=0)
-    dim_head: int = Field(default=64, gt=0)
-    kv_heads: int | None = None
-    dropout: float = Field(default=0.0, ge=0.0, le=1.0)
+    dim: int = Field(
+        gt=0,
+        description="Model (embedding) dimension — input and output width of the attention sublayer.",  # noqa: E501
+    )
+    heads: int = Field(default=8, gt=0, description="Number of query heads.")
+    dim_head: int = Field(
+        default=64,
+        gt=0,
+        description=(
+            "Dimension per head. Output projection width is heads * dim_head,"
+            " which need not equal dim (non-square projections are valid)."
+        ),
+    )
+    kv_heads: int | None = Field(
+        default=None,
+        description=(
+            "Number of key/value heads. None = equal to heads (standard MHA)."
+            " Set to 1 for MQA or any divisor of heads for GQA."
+        ),
+    )
+    dropout: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Attention weight dropout probability, applied during training only.",
+    )
+    qk_norm: bool = Field(
+        default=False,
+        description=(
+            "Apply RMSNorm to queries and keys (in head space) before the dot product."
+            " Stabilises logit scale at large depth or large dim_head."
+        ),
+    )
 
     @model_validator(mode="after")
     def _validate(self) -> "CrossAttentionConfig":

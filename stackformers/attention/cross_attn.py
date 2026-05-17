@@ -25,6 +25,8 @@ class CrossAttention(nn.Module):
         self.to_v = nn.Linear(config.dim, kv_h * dh, bias=False)
         self.to_out = nn.Linear(h * dh, config.dim, bias=False)
         self.pos_encoding = pos_encoding
+        self.q_norm: nn.Module = nn.RMSNorm(dh) if config.qk_norm else nn.Identity()
+        self.k_norm: nn.Module = nn.RMSNorm(dh) if config.qk_norm else nn.Identity()
         nn.init.normal_(self.to_out.weight, std=0.02)
 
     def _forward_padded(self, x_input: PaddedInput, ctx_input: PaddedInput) -> Tensor:
@@ -33,8 +35,8 @@ class CrossAttention(nn.Module):
         cfg = self.config
         h, kv_h, groups = cfg.heads, cfg.effective_kv_heads, cfg.groups
         x, context = x_input.x, ctx_input.x
-        q = rearrange(self.to_q(x), "b n (h d) -> b h n d", h=h)
-        k = rearrange(self.to_k(context), "b s (h d) -> b h s d", h=kv_h)
+        q = self.q_norm(rearrange(self.to_q(x), "b n (h d) -> b h n d", h=h))
+        k = self.k_norm(rearrange(self.to_k(context), "b s (h d) -> b h s d", h=kv_h))
         v = rearrange(self.to_v(context), "b s (h d) -> b h s d", h=kv_h)
         if groups > 1:
             k = repeat(k, "b h s d -> b (h g) s d", g=groups)
@@ -52,8 +54,8 @@ class CrossAttention(nn.Module):
         cfg = self.config
         h, kv_h, groups = cfg.heads, cfg.effective_kv_heads, cfg.groups
         x, context = x_input.x, ctx_input.x
-        q = rearrange(self.to_q(x), "nt (h d) -> nt h d", h=h)
-        k = rearrange(self.to_k(context), "nt (h d) -> nt h d", h=kv_h)
+        q = self.q_norm(rearrange(self.to_q(x), "nt (h d) -> nt h d", h=h))
+        k = self.k_norm(rearrange(self.to_k(context), "nt (h d) -> nt h d", h=kv_h))
         v = rearrange(self.to_v(context), "nt (h d) -> nt h d", h=kv_h)
         if groups > 1:
             k = repeat(k, "nt h d -> nt (h g) d", g=groups)

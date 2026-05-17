@@ -131,14 +131,16 @@ class SelfAttention(nn.Module):
         self.to_v = nn.Linear(config.dim, kv_h * dh, bias=False)
         self.to_out = nn.Linear(h * dh, config.dim, bias=False)
         self.pos_encoding = pos_encoding
+        self.q_norm: nn.Module = nn.RMSNorm(dh) if config.qk_norm else nn.Identity()
+        self.k_norm: nn.Module = nn.RMSNorm(dh) if config.qk_norm else nn.Identity()
         nn.init.normal_(self.to_out.weight, std=0.02)
 
     def _forward_padded(self, input: PaddedInput) -> Tensor:
         cfg = self.config
         h, kv_h, groups = cfg.heads, cfg.effective_kv_heads, cfg.groups
         x = input.x
-        q = rearrange(self.to_q(x), "b n (h d) -> b h n d", h=h)
-        k = rearrange(self.to_k(x), "b n (h d) -> b h n d", h=kv_h)
+        q = self.q_norm(rearrange(self.to_q(x), "b n (h d) -> b h n d", h=h))
+        k = self.k_norm(rearrange(self.to_k(x), "b n (h d) -> b h n d", h=kv_h))
         v = rearrange(self.to_v(x), "b n (h d) -> b h n d", h=kv_h)
         if groups > 1:
             k = repeat(k, "b h n d -> b (h g) n d", g=groups)
@@ -169,8 +171,8 @@ class SelfAttention(nn.Module):
         cfg = self.config
         h, kv_h, groups = cfg.heads, cfg.effective_kv_heads, cfg.groups
         x = input.x
-        q = rearrange(self.to_q(x), "nt (h d) -> nt h d", h=h)
-        k = rearrange(self.to_k(x), "nt (h d) -> nt h d", h=kv_h)
+        q = self.q_norm(rearrange(self.to_q(x), "nt (h d) -> nt h d", h=h))
+        k = self.k_norm(rearrange(self.to_k(x), "nt (h d) -> nt h d", h=kv_h))
         v = rearrange(self.to_v(x), "nt (h d) -> nt h d", h=kv_h)
         if groups > 1:
             k = repeat(k, "nt h d -> nt (h g) d", g=groups)
