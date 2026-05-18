@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import warnings
+
 import torch.nn as nn
 from einops import rearrange, repeat
 from torch import Tensor
@@ -65,10 +67,13 @@ class CrossAttention(nn.Module):
         )
         x_seq = PackedSequence(cu_seqlens=x_input.cu_seqlens, max_seqlen=x_input.max_seqlen)
         ctx_seq = PackedSequence(cu_seqlens=ctx_input.cu_seqlens, max_seqlen=ctx_input.max_seqlen)
-        dropout_p = cfg.dropout if self.training else 0.0
-        out = _packed_attn(
-            q, k, v, x_seq, ctx_seq, causal=False, window_size=None, dropout_p=dropout_p
-        )
+        if self.training and cfg.dropout > 0.0:
+            warnings.warn(
+                "dropout is not applied for PackedInput — varlen_attn does not support it.",
+                UserWarning,
+                stacklevel=2,
+            )
+        out = _packed_attn(q, k, v, x_seq, ctx_seq, causal=False, window_size=None)
         return self.to_out(rearrange(out, "nt h d -> nt (h d)"))
 
     def forward(self, x_input: SequenceInput, ctx_input: SequenceInput) -> Tensor:

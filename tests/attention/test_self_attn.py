@@ -42,6 +42,8 @@ def x_pad(device_dtype: tuple[torch.device, torch.dtype]) -> PaddedInput:
 @pytest.fixture
 def x_packed(device_dtype: tuple[torch.device, torch.dtype]) -> PackedInput:
     device, dtype = device_dtype
+    if not device.type == "cuda" or dtype not in (torch.float16, torch.bfloat16):
+        pytest.skip("packed attention requires CUDA with float16 or bfloat16")
     x = torch.randn(NT, D, device=device, dtype=dtype)
     cu = torch.tensor([0, 6, 10], dtype=torch.int32, device=device)
     return make_packed_input(x, cu, max_seqlen=6)

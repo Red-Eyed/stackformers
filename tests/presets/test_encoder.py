@@ -25,6 +25,8 @@ def padded_input(device_dtype: tuple[torch.device, torch.dtype]) -> PaddedInput:
 @pytest.fixture
 def packed_input(device_dtype: tuple[torch.device, torch.dtype]) -> PackedInput:
     device, dtype = device_dtype
+    if not device.type == "cuda" or dtype not in (torch.float16, torch.bfloat16):
+        pytest.skip("packed attention requires CUDA with float16 or bfloat16")
     x = torch.randn(NT, D, device=device, dtype=dtype)
     cu = torch.tensor([0, 6, 10], dtype=torch.int32, device=device)
     return make_packed_input(x, cu, max_seqlen=6)
@@ -80,16 +82,19 @@ def test_plain_encoder_causal(
     assert out.shape == (B, N, D)
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="packed attention requires CUDA")
 def test_padded_and_packed_share_weights() -> None:
     """Same model weights handle both padded (inference) and packed (training) inputs."""
     cfg = plain_encoder_config(D, H, num_layers=2)
-    enc = TransformerEncoder(cfg)
+    enc = TransformerEncoder(cfg).to(device="cuda", dtype=torch.float16)
     padded = make_padded_input(
-        torch.randn(B, N, D),
-        torch.ones(B, N, dtype=torch.bool),
+        torch.randn(B, N, D, device="cuda", dtype=torch.float16),
+        torch.ones(B, N, dtype=torch.bool, device="cuda"),
     )
-    cu = torch.tensor([0, 6, 10], dtype=torch.int32)
-    packed = make_packed_input(torch.randn(NT, D), cu, max_seqlen=6)
+    cu = torch.tensor([0, 6, 10], dtype=torch.int32, device="cuda")
+    packed = make_packed_input(
+        torch.randn(NT, D, device="cuda", dtype=torch.float16), cu, max_seqlen=6
+    )
     with torch.no_grad():
         padded_out = enc(padded)
         packed_out = enc(packed)

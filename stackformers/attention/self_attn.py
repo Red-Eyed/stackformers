@@ -7,18 +7,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange, repeat
 from torch import Tensor
+from torch.nn.attention.varlen import varlen_attn as _varlen_attn
 
 from stackformers.attention.config import SelfAttentionConfig
 from stackformers.positional.protocols import PosEncoding
 from stackformers.sequence import PackedInput, PackedSequence, PaddedInput, SequenceInput
-
-try:
-    from torch.nn.attention.varlen import varlen_attn as _varlen_attn
-
-    _HAS_VARLEN_ATTN = True
-except ImportError:
-    _HAS_VARLEN_ATTN = False
-
 
 # ── padded helpers ────────────────────────────────────────────────────────────
 
@@ -60,54 +53,24 @@ def _packed_attn(
     k_seq: PackedSequence,
     causal: bool,
     window_size: int | None,
-    dropout_p: float,
 ) -> Tensor:
+    if not q.is_cuda:
+        raise RuntimeError(f"packed attention requires CUDA tensors, got {q.device}")
+    if q.dtype not in (torch.float16, torch.bfloat16):
+        raise RuntimeError(f"packed attention requires float16 or bfloat16, got {q.dtype}")
     win = _varlen_window(causal, window_size)
-    if _HAS_VARLEN_ATTN and q.is_cuda and q.dtype in (torch.float16, torch.bfloat16):
-        result = _varlen_attn(
-            query=q,
-            key=k,
-            value=v,
-            cu_seq_q=q_seq.cu_seqlens.to(torch.int32),
-            cu_seq_k=k_seq.cu_seqlens.to(torch.int32),
-            max_q=q_seq.max_seqlen,
-            max_k=k_seq.max_seqlen,
-            window_size=win,
-        )
-        assert isinstance(result, Tensor)
-        return result
-
-    if not _HAS_VARLEN_ATTN:
-        reason = "varlen_attn unavailable (requires PyTorch ≥ 2.5)"
-    elif not q.is_cuda:
-        reason = f"tensor is on {q.device}, not CUDA"
-    else:
-        reason = f"dtype is {q.dtype}, not float16 or bfloat16"
-    warnings.warn(
-        f"packed attention falling back to per-sequence loop: {reason}.", UserWarning, stacklevel=3
+    result = _varlen_attn(
+        query=q,
+        key=k,
+        value=v,
+        cu_seq_q=q_seq.cu_seqlens.to(torch.int32),
+        cu_seq_k=k_seq.cu_seqlens.to(torch.int32),
+        max_q=q_seq.max_seqlen,
+        max_k=k_seq.max_seqlen,
+        window_size=win,
     )
-
-    outputs: list[Tensor] = []
-    for i in range(q_seq.cu_seqlens.shape[0] - 1):
-        qs, qe = int(q_seq.cu_seqlens[i].item()), int(q_seq.cu_seqlens[i + 1].item())
-        ks, ke = int(k_seq.cu_seqlens[i].item()), int(k_seq.cu_seqlens[i + 1].item())
-        qi = rearrange(q[qs:qe], "n h d -> 1 h n d")
-        ki = rearrange(k[ks:ke], "s h d -> 1 h s d")
-        vi = rearrange(v[ks:ke], "s h d -> 1 h s d")
-        attn_mask: Tensor | None = None
-        if window_size is not None:
-            n, s = qi.shape[-2], ki.shape[-2]
-            attn_mask = _window_mask(n, s, window_size, causal, q.device)
-        out_i = F.scaled_dot_product_attention(
-            qi,
-            ki,
-            vi,
-            attn_mask=attn_mask,
-            dropout_p=dropout_p,
-            is_causal=causal and attn_mask is None,
-        )
-        outputs.append(rearrange(out_i, "1 h n d -> n h d"))
-    return torch.cat(outputs, dim=0)
+    assert isinstance(result, Tensor)
+    return result
 
 
 # ── module ────────────────────────────────────────────────────────────────────
@@ -179,8 +142,13 @@ class SelfAttention(nn.Module):
             v = repeat(v, "nt h d -> nt (h g) d", g=groups)
         q, k = self.pos_encoding.forward_packed(q, k, input.abs_positions, input.abs_positions)
         seq = PackedSequence(cu_seqlens=input.cu_seqlens, max_seqlen=input.max_seqlen)
-        dropout_p = cfg.dropout if self.training else 0.0
-        out = _packed_attn(q, k, v, seq, seq, cfg.causal, cfg.window_size, dropout_p)
+        if self.training and cfg.dropout > 0.0:
+            warnings.warn(
+                "dropout is not applied for PackedInput — varlen_attn does not support it.",
+                UserWarning,
+                stacklevel=2,
+            )
+        out = _packed_attn(q, k, v, seq, seq, cfg.causal, cfg.window_size)
         return self.to_out(rearrange(out, "nt h d -> nt (h d)"))
 
     def forward(self, input: SequenceInput) -> Tensor:
