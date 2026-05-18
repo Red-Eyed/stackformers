@@ -89,6 +89,46 @@ def make_packed(cu_seqlens: Int[Tensor, "bp1"], max_seqlen: int) -> PackedSequen
     return PackedSequence(cu_seqlens=cu_seqlens, max_seqlen=max_seqlen)
 
 
+def padded_to_packed(inp: PaddedInput) -> PackedInput:
+    """Remove padding tokens from a padded batch, producing a flat packed tensor.
+
+    Output shape is data-dependent (nt = mask.sum()); not compatible with torch.export.
+    """
+    lengths = inp.mask.sum(dim=1)
+    cu = lengths_to_cu_seqlens(lengths)
+    max_seqlen = int(lengths.max().item())
+    return PackedInput(
+        x=inp.x[inp.mask],
+        cu_seqlens=cu,
+        max_seqlen=max_seqlen,
+        abs_positions=inp.abs_positions[inp.mask],
+    )
+
+
+def packed_to_padded(inp: PackedInput) -> PaddedInput:
+    """Re-pad a packed tensor to (b, max_seqlen, d), filling unused positions with zeros.
+
+    Uses scatter — compatible with torch.export and torch.compile.
+    """
+    cu = inp.cu_seqlens
+    b = cu.shape[0] - 1
+    n = inp.max_seqlen
+    # Build a (nt,) tensor of batch indices and a (nt,) tensor of within-sequence positions.
+    lengths = cu[1:] - cu[:-1]  # (b,)
+    batch_idx = torch.repeat_interleave(
+        torch.arange(b, device=cu.device, dtype=torch.long), lengths
+    )  # (nt,)
+    pos_idx = position_ids_from_packed(PackedSequence(cu_seqlens=cu, max_seqlen=n))  # (nt,)
+    d, c = inp.x.shape[-1], inp.abs_positions.shape[-1]
+    x_out = inp.x.new_zeros(b, n, d)
+    x_out[batch_idx, pos_idx] = inp.x
+    pos_out = inp.abs_positions.new_zeros(b, n, c)
+    pos_out[batch_idx, pos_idx] = inp.abs_positions
+    mask = torch.zeros(b, n, dtype=torch.bool, device=inp.x.device)
+    mask[batch_idx, pos_idx] = True
+    return PaddedInput(x=x_out, mask=mask, abs_positions=pos_out)
+
+
 def lengths_to_cu_seqlens(lengths: Int[Tensor, "b"]) -> Int[Tensor, "bp1"]:
     zero = torch.zeros(1, dtype=lengths.dtype, device=lengths.device)
     return torch.cat([zero, lengths.cumsum(0)])
