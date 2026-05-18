@@ -3,11 +3,12 @@ from __future__ import annotations
 import warnings
 
 import torch.nn as nn
+import torch.nn.functional as F
 from einops import rearrange, repeat
 from torch import Tensor
 
 from stackformers.attention.config import CrossAttentionConfig
-from stackformers.attention.self_attn import _packed_attn, _padding_mask
+from stackformers.attention.ops import packed_attn_or_fallback, padding_mask, varlen_supported
 from stackformers.positional.protocols import PosEncoding
 from stackformers.sequence import PackedInput, PackedSequence, PaddedInput, SequenceInput
 
@@ -15,7 +16,9 @@ from stackformers.sequence import PackedInput, PackedSequence, PaddedInput, Sequ
 class CrossAttention(nn.Module):
     """Multi-head cross-attention: queries from x, keys/values from context.
 
-    Always global (no windowing). Pass PaddedInput for inference, PackedInput for training.
+    Always global (no windowing). Pass PaddedInput for inference or export, PackedInput for
+    training. Falls back to padded SDPA when varlen_attn is unavailable (CPU, float32,
+    torch.export).
     """
 
     def __init__(self, config: CrossAttentionConfig, pos_encoding: PosEncoding) -> None:
@@ -32,8 +35,6 @@ class CrossAttention(nn.Module):
         nn.init.normal_(self.to_out.weight, std=0.02)
 
     def _forward_padded(self, x_input: PaddedInput, ctx_input: PaddedInput) -> Tensor:
-        import torch.nn.functional as F
-
         cfg = self.config
         h, kv_h, groups = cfg.heads, cfg.effective_kv_heads, cfg.groups
         x, context = x_input.x, ctx_input.x
@@ -46,7 +47,7 @@ class CrossAttention(nn.Module):
         q, k = self.pos_encoding.forward_padded(
             q, k, x_input.abs_positions, ctx_input.abs_positions
         )
-        attn_mask = _padding_mask(ctx_input.mask, q.dtype)
+        attn_mask = padding_mask(ctx_input.mask, q.dtype)
         dropout_p = cfg.dropout if self.training else 0.0
         out = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, dropout_p=dropout_p)
         out = self.to_out(rearrange(out, "b h n d -> b n (h d)"))
@@ -67,13 +68,16 @@ class CrossAttention(nn.Module):
         )
         x_seq = PackedSequence(cu_seqlens=x_input.cu_seqlens, max_seqlen=x_input.max_seqlen)
         ctx_seq = PackedSequence(cu_seqlens=ctx_input.cu_seqlens, max_seqlen=ctx_input.max_seqlen)
-        if self.training and cfg.dropout > 0.0:
+        if self.training and cfg.dropout > 0.0 and varlen_supported(q):
             warnings.warn(
                 "dropout is not applied for PackedInput — varlen_attn does not support it.",
                 UserWarning,
                 stacklevel=2,
             )
-        out = _packed_attn(q, k, v, x_seq, ctx_seq, causal=False, window_size=None)
+        dropout_p = cfg.dropout if self.training else 0.0
+        out = packed_attn_or_fallback(
+            q, k, v, x_seq, ctx_seq, causal=False, window_size=None, dropout_p=dropout_p
+        )
         return self.to_out(rearrange(out, "nt h d -> nt (h d)"))
 
     def forward(self, x_input: SequenceInput, ctx_input: SequenceInput) -> Tensor:

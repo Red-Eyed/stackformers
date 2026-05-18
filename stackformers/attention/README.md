@@ -1,6 +1,6 @@
 # attention
 
-Multi-head self-attention and cross-attention with inline SDPA math.
+Multi-head self-attention and cross-attention.
 
 ## Design
 
@@ -8,9 +8,9 @@ Multi-head self-attention and cross-attention with inline SDPA math.
 
 **Static vs runtime dispatch.** The attention *type* (global vs sliding-window) is determined at construction time via `window_size: int | None` in `SelfAttentionConfig`. The *backend* (padded vs packed) is determined at runtime: `SelfAttention.forward` and `CrossAttention.forward` dispatch on `SequenceInput` via `match`. This means one model handles both training (packed) and inference (padded) without swapping classes.
 
-**No kernel abstraction.** SDPA math (`F.scaled_dot_product_attention`, `varlen_attn`) is inline in `_forward_padded` and `_forward_packed`. A shared `_packed_attn` module-level function is used by both `SelfAttention` and `CrossAttention`.
+**Kernel ops in `ops.py`.** All low-level attention math lives in `attention/ops.py`: mask builders, `packed_attn` (thin `varlen_attn` wrapper), `padded_sdpa`, and `packed_attn_or_fallback`. The modules stay thin dispatchers.
 
-**Packed attention constraints.** `PackedInput` requires a CUDA device and `float16` or `bfloat16` dtype — `torch.nn.attention.varlen.varlen_attn` has no CPU or float32 path. Passing anything else raises `RuntimeError`. Dropout is not applied on the packed path (`varlen_attn` does not accept a dropout argument); a `UserWarning` is emitted at runtime when `dropout > 0` and the model is in training mode.
+**Packed attention with automatic fallback.** `PackedInput` normally routes to `varlen_attn`, which requires CUDA and `float16`/`bfloat16`. When those conditions are not met (CPU, float32, `torch.export`), `packed_attn_or_fallback` transparently scatters q/k/v to padded layout, runs `F.scaled_dot_product_attention`, and gathers the result back to packed — same weights, same output shape `(nt, h, d)`. A `UserWarning` is emitted so callers know they are on the slow path. Dropout works on the fallback path; it is silently skipped only when `varlen_attn` is used (which does not accept a dropout argument).
 
 **GQA / MQA.** Set `kv_heads < heads` in either config. Key and value heads are repeated via `einops.repeat` before the dot-product — no attention-specific changes needed.
 
