@@ -45,7 +45,6 @@ def padded_sdpa(
     mask: Tensor,
     causal: bool,
     window_size: int | None,
-    dropout_p: float,
 ) -> Tensor:
     """SDPA for padded inputs, applying padding + optional window masks."""
     attn_mask = padding_mask(mask, q.dtype)
@@ -53,15 +52,12 @@ def padded_sdpa(
         if causal:
             n, s = q.shape[-2], k.shape[-2]
             attn_mask = attn_mask + window_mask(n, s, s, causal=True, device=q.device)
-        return F.scaled_dot_product_attention(
-            q, k, v, attn_mask=attn_mask, dropout_p=dropout_p, is_causal=False
-        )
+        # is_causal=False: causal constraint already encoded in attn_mask above
+        return F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, is_causal=False)
     else:
         n, s = q.shape[-2], k.shape[-2]
         win_mask = window_mask(n, s, window_size, causal, q.device)
-        return F.scaled_dot_product_attention(
-            q, k, v, attn_mask=attn_mask + win_mask, dropout_p=dropout_p
-        )
+        return F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask + win_mask)
 
 
 def _cu_to_indices(cu: Tensor, b: int) -> tuple[Tensor, Tensor]:
@@ -124,7 +120,6 @@ def packed_attn_or_fallback(
     k_seq: PackedSequence,
     causal: bool,
     window_size: int | None,
-    dropout_p: float = 0.0,
 ) -> Tensor:
     """Run varlen attention; fall back to padded SDPA when unavailable.
 
@@ -138,5 +133,5 @@ def packed_attn_or_fallback(
     q_pad, q_mask = _packed_heads_to_padded(q, q_seq.cu_seqlens, b, q_seq.max_seqlen)
     k_pad, k_mask = _packed_heads_to_padded(k, k_seq.cu_seqlens, b, k_seq.max_seqlen)
     v_pad, _ = _packed_heads_to_padded(v, k_seq.cu_seqlens, b, k_seq.max_seqlen)
-    out_pad = padded_sdpa(q_pad, k_pad, v_pad, k_mask, causal, window_size, dropout_p)
+    out_pad = padded_sdpa(q_pad, k_pad, v_pad, k_mask, causal, window_size)
     return _padded_heads_to_packed(out_pad, q_mask)

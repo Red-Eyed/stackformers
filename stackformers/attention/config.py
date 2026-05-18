@@ -65,7 +65,7 @@ class SelfAttentionConfig(BaseModel):
         default=0.0,
         ge=0.0,
         le=1.0,
-        description="Attention weight dropout probability, applied during training only.",
+        description="Dropout probability applied to the output projection, during training only.",
     )
     window_size: int | None = Field(
         default=None,
@@ -121,7 +121,7 @@ class CrossAttentionConfig(BaseModel):
         default=0.0,
         ge=0.0,
         le=1.0,
-        description="Attention weight dropout probability, applied during training only.",
+        description="Dropout probability applied to the output projection, during training only.",
     )
     qk_norm: bool = Field(
         default=False,
