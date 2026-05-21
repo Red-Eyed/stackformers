@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import warnings
+
 import torch
 import torch.nn.functional as F
 from torch import Tensor
@@ -124,10 +126,18 @@ def packed_attn_or_fallback(
     """Run varlen attention; fall back to padded SDPA when unavailable.
 
     Inputs and output are all packed: q/k/v are (nt, h, d), result is (nt_q, h, d).
-    Fallback activates on CPU or non-float16/bfloat16 dtypes (e.g. CPU tests, torch.export).
+    Fallback activates on CPU, non-float16/bfloat16 dtypes, or GPUs that do not support
+    varlen_attn (e.g. compute capability < 8.0). A warning is emitted once on first fallback.
     """
     if varlen_supported(q):
-        return packed_attn(q, k, v, q_seq, k_seq, causal, window_size)
+        try:
+            return packed_attn(q, k, v, q_seq, k_seq, causal, window_size)
+        except RuntimeError as exc:
+            warnings.warn(
+                f"varlen_attn is not supported on this device ({exc}); "
+                "falling back to padded SDPA. Performance may be lower.",
+                stacklevel=2,
+            )
 
     b = int(q_seq.cu_seqlens.shape[0]) - 1
     q_pad, q_mask = _packed_heads_to_padded(q, q_seq.cu_seqlens, b, q_seq.max_seqlen)
