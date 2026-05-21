@@ -47,17 +47,19 @@ def padded_sdpa(
     mask: Tensor,
     causal: bool,
     window_size: int | None,
+    bias: Tensor | None,
 ) -> Tensor:
-    """SDPA for padded inputs, applying padding + optional window masks."""
+    """SDPA for padded inputs, applying padding mask + optional window mask + attention bias."""
+    n, s = q.shape[-2], k.shape[-2]
     attn_mask = padding_mask(mask, q.dtype)
+    if bias is not None:
+        attn_mask = attn_mask + bias
     if window_size is None:
         if causal:
-            n, s = q.shape[-2], k.shape[-2]
             attn_mask = attn_mask + window_mask(n, s, s, causal=True, device=q.device)
         # is_causal=False: causal constraint already encoded in attn_mask above
         return F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, is_causal=False)
     else:
-        n, s = q.shape[-2], k.shape[-2]
         win_mask = window_mask(n, s, window_size, causal, q.device)
         return F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask + win_mask)
 
@@ -122,14 +124,23 @@ def packed_attn_or_fallback(
     k_seq: PackedSequence,
     causal: bool,
     window_size: int | None,
+    bias: Tensor | None,
 ) -> Tensor:
     """Run varlen attention; fall back to padded SDPA when unavailable.
 
     Inputs and output are all packed: q/k/v are (nt, h, d), result is (nt_q, h, d).
-    Fallback activates on CPU, non-float16/bfloat16 dtypes, or GPUs that do not support
-    varlen_attn (e.g. compute capability < 8.0). A warning is emitted once on first fallback.
+    bias=None → no attention bias; varlen_attn is tried first.
+    bias=Tensor → attention bias present; varlen_attn is skipped (it has no bias slot) and a
+    warning is emitted. Fallback also activates on CPU, non-float16/bfloat16 dtypes, or GPUs
+    that do not support varlen_attn (e.g. compute capability < 8.0).
     """
-    if varlen_supported(q):
+    if bias is not None and varlen_supported(q):
+        warnings.warn(
+            "varlen_attn does not support attention bias; falling back to padded SDPA. "
+            "Performance may be lower.",
+            stacklevel=2,
+        )
+    elif varlen_supported(q):
         try:
             return packed_attn(q, k, v, q_seq, k_seq, causal, window_size)
         except RuntimeError as exc:
@@ -143,5 +154,5 @@ def packed_attn_or_fallback(
     q_pad, q_mask = _packed_heads_to_padded(q, q_seq.cu_seqlens, b, q_seq.max_seqlen)
     k_pad, k_mask = _packed_heads_to_padded(k, k_seq.cu_seqlens, b, k_seq.max_seqlen)
     v_pad, _ = _packed_heads_to_padded(v, k_seq.cu_seqlens, b, k_seq.max_seqlen)
-    out_pad = padded_sdpa(q_pad, k_pad, v_pad, k_mask, causal, window_size)
+    out_pad = padded_sdpa(q_pad, k_pad, v_pad, k_mask, causal, window_size, bias)
     return _padded_heads_to_packed(out_pad, q_mask)

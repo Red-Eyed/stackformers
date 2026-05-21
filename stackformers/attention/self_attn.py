@@ -4,10 +4,18 @@ import torch.nn as nn
 from einops import rearrange, repeat
 from torch import Tensor
 
+from stackformers.attention.bias import NoAttnBias
 from stackformers.attention.config import SelfAttentionConfig
 from stackformers.attention.ops import packed_attn_or_fallback, padded_sdpa
+from stackformers.attention.protocols import AttnBias
 from stackformers.positional.protocols import PosEncoding
-from stackformers.sequence import PackedInput, PackedSequence, PaddedInput, SequenceInput
+from stackformers.sequence import (
+    PackedInput,
+    PackedSequence,
+    PaddedInput,
+    SequenceInput,
+    packed_to_padded,
+)
 
 
 class SelfAttention(nn.Module):
@@ -17,10 +25,16 @@ class SelfAttention(nn.Module):
     window_size=w             → sliding-window attention with width w.
 
     Pass PaddedInput for inference or export, PackedInput for training — same weights.
-    Falls back to padded SDPA when varlen_attn is unavailable (CPU, float32, torch.export).
+    Falls back to padded SDPA when varlen_attn is unavailable (CPU, float32, torch.export)
+    or when an attention bias is provided.
     """
 
-    def __init__(self, config: SelfAttentionConfig, pos_encoding: PosEncoding) -> None:
+    def __init__(
+        self,
+        config: SelfAttentionConfig,
+        pos_encoding: PosEncoding,
+        attn_bias: AttnBias = NoAttnBias(),
+    ) -> None:
         super().__init__()
         self.config = config
         h, kv_h, dh = config.heads, config.effective_kv_heads, config.dim_head
@@ -30,6 +44,7 @@ class SelfAttention(nn.Module):
         self.to_out = nn.Linear(h * dh, config.dim, bias=False)
         self.dropout = nn.Dropout(config.dropout)
         self.pos_encoding = pos_encoding
+        self.attn_bias = attn_bias
         self.q_norm: nn.Module = nn.RMSNorm(dh) if config.qk_norm else nn.Identity()
         self.k_norm: nn.Module = nn.RMSNorm(dh) if config.qk_norm else nn.Identity()
         nn.init.normal_(self.to_out.weight, std=0.02)
@@ -45,7 +60,8 @@ class SelfAttention(nn.Module):
             k = repeat(k, "b h n d -> b (h g) n d", g=groups)
             v = repeat(v, "b h n d -> b (h g) n d", g=groups)
         q, k = self.pos_encoding.forward_padded(q, k, input.abs_positions, input.abs_positions)
-        out = padded_sdpa(q, k, v, input.mask, cfg.causal, cfg.window_size)
+        bias = self.attn_bias(input)
+        out = padded_sdpa(q, k, v, input.mask, cfg.causal, cfg.window_size, bias)
         return self.dropout(self.to_out(rearrange(out, "b h n d -> b n (h d)")))
 
     def _forward_packed(self, input: PackedInput) -> Tensor:
@@ -59,8 +75,9 @@ class SelfAttention(nn.Module):
             k = repeat(k, "nt h d -> nt (h g) d", g=groups)
             v = repeat(v, "nt h d -> nt (h g) d", g=groups)
         q, k = self.pos_encoding.forward_packed(q, k, input.abs_positions, input.abs_positions)
+        bias = self.attn_bias(packed_to_padded(input))
         seq = PackedSequence(cu_seqlens=input.cu_seqlens, max_seqlen=input.max_seqlen)
-        out = packed_attn_or_fallback(q, k, v, seq, seq, cfg.causal, cfg.window_size)
+        out = packed_attn_or_fallback(q, k, v, seq, seq, cfg.causal, cfg.window_size, bias)
         return self.dropout(self.to_out(rearrange(out, "nt h d -> nt (h d)")))
 
     def forward(self, input: SequenceInput) -> Tensor:

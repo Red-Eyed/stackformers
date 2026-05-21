@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import torch.nn as nn
-import torch.nn.functional as F
 from einops import rearrange, repeat
 from torch import Tensor
 
 from stackformers.attention.config import CrossAttentionConfig
-from stackformers.attention.ops import packed_attn_or_fallback, padding_mask
+from stackformers.attention.ops import packed_attn_or_fallback, padded_sdpa
 from stackformers.positional.protocols import PosEncoding
 from stackformers.sequence import PackedInput, PackedSequence, PaddedInput, SequenceInput
 
@@ -46,8 +45,7 @@ class CrossAttention(nn.Module):
         q, k = self.pos_encoding.forward_padded(
             q, k, x_input.abs_positions, ctx_input.abs_positions
         )
-        attn_mask = padding_mask(ctx_input.mask, q.dtype)
-        out = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
+        out = padded_sdpa(q, k, v, ctx_input.mask, causal=False, window_size=None, bias=None)
         out = self.dropout(self.to_out(rearrange(out, "b h n d -> b n (h d)")))
         return out * x_input.mask.unsqueeze(-1)
 
@@ -66,7 +64,9 @@ class CrossAttention(nn.Module):
         )
         x_seq = PackedSequence(cu_seqlens=x_input.cu_seqlens, max_seqlen=x_input.max_seqlen)
         ctx_seq = PackedSequence(cu_seqlens=ctx_input.cu_seqlens, max_seqlen=ctx_input.max_seqlen)
-        out = packed_attn_or_fallback(q, k, v, x_seq, ctx_seq, causal=False, window_size=None)
+        out = packed_attn_or_fallback(
+            q, k, v, x_seq, ctx_seq, causal=False, window_size=None, bias=None
+        )
         return self.dropout(self.to_out(rearrange(out, "nt h d -> nt (h d)")))
 
     def forward(self, x_input: SequenceInput, ctx_input: SequenceInput) -> Tensor:
