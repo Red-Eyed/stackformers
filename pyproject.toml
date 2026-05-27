@@ -6,7 +6,23 @@ build-backend = "hatchling.build"
 name = "stackformers"
 version = "3.8.0"
 description = "Typed, composable, SOLID transformer library for PyTorch"
+readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.11"
+authors = [
+    { name = "Vadym Stupakov", email = "vadim.stupakov@gmail.com" },
+]
+keywords = ["pytorch", "transformer", "deep-learning", "attention"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
 dependencies = [
     "torch>=2.2",
     "einops>=0.7",
@@ -15,6 +31,11 @@ dependencies = [
     "pydantic>=2.0",
     "numpy>=2.4.4",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Red-Eyed/stackformers"
+Repository = "https://github.com/Red-Eyed/stackformers"
+"Bug Tracker" = "https://github.com/Red-Eyed/stackformers/issues"
 
 [dependency-groups]
 dev = [

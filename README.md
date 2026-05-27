@@ -132,7 +132,7 @@ encoder = Encoder(layers=layers, final_norm=RMSNorm(RMSNormConfig(dim=512)))
 | Normalization | RMSNorm, LayerNorm |
 | Presets | Encoder, Decoder, CrossAttender |
 
-On CUDA with fp16/bf16 the packed path uses `torch.nn.attention.varlen.varlen_attn`. CPU and fp32 fall back to a per-sequence SDPA loop — correct everywhere, fast where it matters.
+On CUDA with fp16/bf16 the packed path uses `torch.nn.attention.varlen.varlen_attn`. CPU and fp32 fall back to a scatter-to-padded SDPA — correct everywhere, fast where it matters.
 
 ---
 
