@@ -64,11 +64,12 @@ def make_padded_input(x: Tensor, mask: Bool[Tensor, "b n"]) -> PaddedInput:
 
 
 def make_packed_input(x: Tensor, cu_seqlens: Int[Tensor, "bp1"], max_seqlen: int) -> PackedInput:
-    """Build PackedInput with per-token sequential 1-D positions (shape nt 1)."""
-    cu = cu_seqlens
-    lengths = (cu[1:] - cu[:-1]).tolist()
-    pos = torch.cat([torch.arange(int(n), device=cu.device, dtype=x.dtype) for n in lengths])
-    positions = pos.unsqueeze(-1)  # nt 1
+    """Build PackedInput with per-token sequential 1-D positions (shape nt 1).
+
+    Delegates to :func:`position_ids_from_packed`, which is ``torch.export``-compatible.
+    """
+    seq = PackedSequence(cu_seqlens=cu_seqlens, max_seqlen=max_seqlen)
+    positions = position_ids_from_packed(seq).to(x.dtype).unsqueeze(-1)  # nt 1
     return PackedInput(x=x, cu_seqlens=cu_seqlens, max_seqlen=max_seqlen, abs_positions=positions)
 
 
@@ -135,7 +136,23 @@ def lengths_to_cu_seqlens(lengths: Int[Tensor, "b"]) -> Int[Tensor, "bp1"]:
 
 
 def position_ids_from_packed(seq: PackedSequence) -> Int[Tensor, "nt"]:
-    """Build per-token position indices [0..len_i-1] for each document in the pack."""
+    """Build per-token position indices [0..len_i-1] for each document in the pack.
+
+    The result at flat index i is ``i - cu_seqlens[batch_of_i]``, i.e. the within-document
+    position of that token.
+
+    Compatible with ``torch.export`` and ``torch.compile``: no Python-side iteration over
+    data-dependent lengths.  The key identity is::
+
+        pos_idx = arange(nt) - cu[batch_idx]
+
+    where ``batch_idx`` is built via ``repeat_interleave``, which is a supported dynamic op.
+    """
     cu = seq.cu_seqlens
-    lengths = (cu[1:] - cu[:-1]).tolist()
-    return torch.cat([torch.arange(int(n), device=cu.device, dtype=torch.long) for n in lengths])
+    b = cu.shape[0] - 1
+    lengths = cu[1:] - cu[:-1]  # (b,) — kept as a tensor, never converted to Python list
+    batch_idx = torch.repeat_interleave(
+        torch.arange(b, device=cu.device, dtype=torch.long), lengths
+    )  # (nt,)
+    nt = batch_idx.shape[0]
+    return torch.arange(nt, device=cu.device, dtype=torch.long) - cu[batch_idx]

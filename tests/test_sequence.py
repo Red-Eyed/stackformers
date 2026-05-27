@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import pytest
 import torch
+import torch.export
+import torch.nn as nn
 
 from stackformers.sequence import (
     PackedInput,
@@ -17,6 +19,7 @@ from stackformers.sequence import (
     packed_batch_size,
     packed_to_padded,
     padded_to_packed,
+    position_ids_from_packed,
 )
 
 
@@ -93,3 +96,75 @@ def test_sequence_info_union() -> None:
     cu = torch.tensor([0, 4])
     packed: SequenceInfo = make_packed(cu, max_seqlen=4)
     assert isinstance(packed, PackedSequence)
+
+
+# --- position_ids_from_packed ---
+
+
+def test_position_ids_from_packed_values() -> None:
+    """Per-token position indices must restart at 0 for each document."""
+    cu = torch.tensor([0, 3, 5, 9], dtype=torch.long)
+    ids = position_ids_from_packed(PackedSequence(cu_seqlens=cu, max_seqlen=4))
+    assert ids.tolist() == [0, 1, 2, 0, 1, 0, 1, 2, 3]
+
+
+def test_position_ids_from_packed_single_doc() -> None:
+    """Single document: indices are simply 0..L-1."""
+    cu = torch.tensor([0, 5], dtype=torch.long)
+    ids = position_ids_from_packed(PackedSequence(cu_seqlens=cu, max_seqlen=5))
+    assert ids.tolist() == [0, 1, 2, 3, 4]
+
+
+def test_make_packed_input_positions() -> None:
+    """abs_positions produced by make_packed_input must equal per-document arange."""
+    cu = torch.tensor([0, 3, 5], dtype=torch.long)
+    x = torch.randn(5, 8)
+    inp = make_packed_input(x, cu, max_seqlen=3)
+    expected = torch.tensor([0, 1, 2, 0, 1], dtype=torch.float32)
+    assert torch.equal(inp.abs_positions.squeeze(-1), expected)
+
+
+# --- torch.export compatibility ---
+
+
+class _PosIdsWrapper(nn.Module):
+    """Thin nn.Module wrapper so torch.export can trace position_ids_from_packed.
+
+    max_seqlen is not used in the computation; pass any integer constant.
+    """
+
+    def forward(self, cu: torch.Tensor) -> torch.Tensor:
+        return position_ids_from_packed(PackedSequence(cu_seqlens=cu, max_seqlen=0))
+
+
+def _export_pos_ids(max_batch: int = 64) -> torch.export.ExportedProgram:
+    """Export _PosIdsWrapper with a dynamic bp1 (batch + 1) dimension.
+
+    The total token count nt = cu[-1] is data-dependent (an unbacked symbol) — it varies
+    with both the number of sequences (bp1) and the individual sequence lengths.
+    """
+    wrapper = _PosIdsWrapper()
+    cu = torch.tensor([0, 3, 5], dtype=torch.long)  # 2 sequences, nt=5
+    bp1_dim = torch.export.Dim("bp1", min=3, max=max_batch + 1)
+    return torch.export.export(wrapper, (cu,), dynamic_shapes=({0: bp1_dim},))
+
+
+def test_position_ids_export_succeeds() -> None:
+    """position_ids_from_packed must be traceable by torch.export (no .tolist())."""
+    assert _export_pos_ids() is not None
+
+
+def test_position_ids_export_new_batch_and_seqlens() -> None:
+    """Exported program runs correctly for a different batch size and different sequence lengths."""
+    mod = _export_pos_ids().module()
+    # 3 sequences, lengths 4/3/3 → nt=10 (both batch and nt differ from trace)
+    cu = torch.tensor([0, 4, 7, 10], dtype=torch.long)
+    assert mod(cu).tolist() == [0, 1, 2, 3, 0, 1, 2, 0, 1, 2]
+
+
+def test_position_ids_export_same_batch_different_seqlens() -> None:
+    """Exported program runs correctly when nt changes but batch size stays the same."""
+    mod = _export_pos_ids().module()
+    # Same batch=2 as the trace, but different lengths → different nt
+    cu = torch.tensor([0, 6, 11], dtype=torch.long)  # lengths 6/5, nt=11
+    assert mod(cu).tolist() == [0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4]

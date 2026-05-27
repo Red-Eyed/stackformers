@@ -65,14 +65,23 @@ def padded_sdpa(
 
 
 def _cu_to_indices(cu: Tensor, b: int) -> tuple[Tensor, Tensor]:
-    """Return (batch_idx, pos_idx), each shape (nt,), from cu_seqlens."""
-    lengths = cu[1:] - cu[:-1]
+    """Return ``(batch_idx, pos_idx)``, each shape ``(nt,)``, from ``cu_seqlens``.
+
+    Both tensors are built without Python-side iteration over data-dependent lengths, so
+    this function is compatible with ``torch.export`` and ``torch.compile``.
+
+    The identity used for ``pos_idx`` is::
+
+        pos_idx[i] = i_global - cu[batch_idx[i]]
+
+    i.e. the within-document offset of the i-th flat token.
+    """
+    lengths = cu[1:] - cu[:-1]  # (b,) — never converted to a Python list
     batch_idx = torch.repeat_interleave(
         torch.arange(b, device=cu.device, dtype=torch.long), lengths
-    )
-    pos_idx = torch.cat(
-        [torch.arange(int(n), device=cu.device, dtype=torch.long) for n in lengths.tolist()]
-    )
+    )  # (nt,)
+    nt = batch_idx.shape[0]
+    pos_idx = torch.arange(nt, device=cu.device, dtype=torch.long) - cu[batch_idx]
     return batch_idx, pos_idx
 
 
