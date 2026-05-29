@@ -58,7 +58,7 @@ def to_seq_info(inp: SequenceInput) -> SequenceInfo:
 def make_padded_input(x: Tensor, mask: Bool[Tensor, "b n"]) -> PaddedInput:
     """Build PaddedInput with sequential 1-D positions (shape b n 1)."""
     n = x.shape[1]
-    pos = torch.arange(n, device=x.device, dtype=x.dtype)
+    pos = torch.arange(n, device=x.device, dtype=torch.float32)
     positions = pos.unsqueeze(0).unsqueeze(-1).expand(x.shape[0], -1, -1)  # b n 1
     return PaddedInput(x=x, mask=mask, abs_positions=positions)
 
@@ -69,7 +69,7 @@ def make_packed_input(x: Tensor, cu_seqlens: Int[Tensor, "bp1"], max_seqlen: int
     Delegates to :func:`position_ids_from_packed`, which is ``torch.export``-compatible.
     """
     seq = PackedSequence(cu_seqlens=cu_seqlens, max_seqlen=max_seqlen)
-    positions = position_ids_from_packed(seq).to(x.dtype).unsqueeze(-1)  # nt 1
+    positions = position_ids_from_packed(seq).to(torch.float32).unsqueeze(-1)  # nt 1
     return PackedInput(x=x, cu_seqlens=cu_seqlens, max_seqlen=max_seqlen, abs_positions=positions)
 
 
