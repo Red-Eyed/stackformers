@@ -159,7 +159,9 @@ def packed_attn_or_fallback(
                 stacklevel=2,
             )
 
-    b = int(q_seq.cu_seqlens.shape[0]) - 1
+    # Keep b as SymInt-friendly: int(SymInt) forces specialization under torch.export.
+    # Downstream consumers (_packed_heads_to_padded) accept SymInt for shape args.
+    b = q_seq.cu_seqlens.shape[0] - 1
     q_pad, q_mask = _packed_heads_to_padded(q, q_seq.cu_seqlens, b, q_seq.max_seqlen)
     k_pad, k_mask = _packed_heads_to_padded(k, k_seq.cu_seqlens, b, k_seq.max_seqlen)
     v_pad, _ = _packed_heads_to_padded(v, k_seq.cu_seqlens, b, k_seq.max_seqlen)
