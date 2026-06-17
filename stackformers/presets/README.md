@@ -19,7 +19,9 @@ Each preset is split into two levels:
 
 **`CrossAttender`** — cross-attn → ff per layer. `x` is a fixed set of queries with no self-attention. Useful for Perceiver-style or slot-attention architectures.
 
-All presets accept `PaddedInput` or `PackedInput` interchangeably.
+**`PyramidVisionBackbone`** — multi-scale vision backbone (PVTv2-style hybrid). Stages of `spatial/` attention joined by `PatchMerging` downsamples; consumes a `SpatialInput` from your own patch-embed stem and returns one `(b, d, H, W)` feature map per stage. `pyramid_vision_config` defaults to 2-D window attention in the high-resolution early stages and spatially-reduced global attention later, tuned for 1024² images with an 8×8 patch stem. Unlike the other presets it is grid-based, so it takes `SpatialInput` rather than `PaddedInput`/`PackedInput`.
+
+The other presets accept `PaddedInput` or `PackedInput` interchangeably.
 
 ## Customising a collaborator (subclass the concrete preset)
 
