@@ -1,17 +1,11 @@
 from __future__ import annotations
 
-import warnings
-
 import torch
 import torch.nn.functional as F
 from torch import Tensor
-from torch.nn.attention.varlen import varlen_attn as _varlen_attn
 
+from stackformers.attention.varlen_backend import try_varlen_attn
 from stackformers.sequence import PackedSequence
-
-
-def varlen_supported(q: Tensor) -> bool:
-    return q.is_cuda and q.dtype in (torch.float16, torch.bfloat16)
 
 
 def padding_mask(mask: Tensor, dtype: torch.dtype) -> Tensor:
@@ -32,12 +26,6 @@ def window_mask(n: int, s: int, window_size: int, causal: bool, device: torch.de
     mask = torch.zeros(1, 1, n, s, dtype=torch.float, device=device)
     mask.masked_fill_(~allowed.unsqueeze(0).unsqueeze(0), float("-inf"))
     return mask
-
-
-def varlen_window(causal: bool, window_size: int | None) -> tuple[int, int]:
-    if window_size is None:
-        return (-1, 0) if causal else (-1, -1)
-    return (window_size, 0) if causal else (window_size // 2, window_size // 2)
 
 
 def padded_sdpa(
@@ -101,30 +89,6 @@ def _padded_heads_to_packed(x: Tensor, mask: Tensor) -> Tensor:
     return x.permute(0, 2, 1, 3)[mask]
 
 
-def packed_attn(
-    q: Tensor,
-    k: Tensor,
-    v: Tensor,
-    q_seq: PackedSequence,
-    k_seq: PackedSequence,
-    causal: bool,
-    window_size: int | None,
-) -> Tensor:
-    win = varlen_window(causal, window_size)
-    result = _varlen_attn(
-        query=q,
-        key=k,
-        value=v,
-        cu_seq_q=q_seq.cu_seqlens.to(torch.int32),
-        cu_seq_k=k_seq.cu_seqlens.to(torch.int32),
-        max_q=q_seq.max_seqlen,
-        max_k=k_seq.max_seqlen,
-        window_size=win,
-    )
-    assert isinstance(result, Tensor)
-    return result
-
-
 def packed_attn_or_fallback(
     q: Tensor,
     k: Tensor,
@@ -135,29 +99,16 @@ def packed_attn_or_fallback(
     window_size: int | None,
     bias: Tensor | None,
 ) -> Tensor:
-    """Run varlen attention; fall back to padded SDPA when unavailable.
+    """Run varlen attention; fall back to padded SDPA when it is unavailable.
 
     Inputs and output are all packed: q/k/v are (nt, h, d), result is (nt_q, h, d).
-    bias=None → no attention bias; varlen_attn is tried first.
-    bias=Tensor → attention bias present; varlen_attn is skipped (it has no bias slot) and a
-    warning is emitted. Fallback also activates on CPU, non-float16/bfloat16 dtypes, or GPUs
-    that do not support varlen_attn (e.g. compute capability < 8.0).
+    ``try_varlen_attn`` owns the experimental kernel and its warnings; ``None`` from it means
+    take the padded SDPA path — silently for the expected CPU/float32/export route, or after
+    a warning when the kernel was eligible but unavailable.
     """
-    if bias is not None and varlen_supported(q):
-        warnings.warn(
-            "varlen_attn does not support attention bias; falling back to padded SDPA. "
-            "Performance may be lower.",
-            stacklevel=2,
-        )
-    elif varlen_supported(q):
-        try:
-            return packed_attn(q, k, v, q_seq, k_seq, causal, window_size)
-        except RuntimeError as exc:
-            warnings.warn(
-                f"varlen_attn is not supported on this device ({exc}); "
-                "falling back to padded SDPA. Performance may be lower.",
-                stacklevel=2,
-            )
+    out = try_varlen_attn(q, k, v, q_seq, k_seq, causal, window_size, bias)
+    if out is not None:
+        return out
 
     # Keep b as SymInt-friendly: int(SymInt) forces specialization under torch.export.
     # Downstream consumers (_packed_heads_to_padded) accept SymInt for shape args.
