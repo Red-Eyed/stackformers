@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import warnings
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -94,6 +95,48 @@ class SelfAttentionConfig(BaseModel):
     @property
     def groups(self) -> int:
         return self.heads // self.effective_kv_heads
+
+
+class NoAttnBiasConfig(BaseModel):
+    """No attention bias — leaves varlen_attn available on the packed path."""
+
+    kind: Literal["none"] = "none"
+
+
+class DistanceBiasConfig(BaseModel):
+    """Config for RelativeDistanceBias.
+
+    Attention logits gain a learned function of the Euclidean distance between node
+    positions, making them invariant to global translation and rotation of the node set.
+    Use with NoPosEncodingConfig: a rotary encoding would reintroduce a preferred frame.
+    """
+
+    kind: Literal["distance"] = "distance"
+    heads: int = Field(gt=0, description="Number of query heads. Must match the attention config.")
+    r_max: float = Field(
+        gt=0.0,
+        description=(
+            "Largest pairwise node distance to resolve. Radial-basis shells are spread over"
+            " [0, r_max]; pairs further apart fall in the tail of the outermost shell and become"
+            " indistinguishable. Measure it from the data — a high percentile of the pairwise"
+            " distance distribution, not the maximum, which is an outlier."
+        ),
+    )
+    num_rbf: int = Field(
+        default=32,
+        gt=1,
+        description=(
+            "Number of Gaussian radial-basis shells. Distance resolution is r_max / (num_rbf - 1);"
+            " raising it sharpens the profile a head can learn but costs a (b, n, s, num_rbf)"
+            " intermediate, which dominates activation memory at large node counts."
+        ),
+    )
+
+
+AttnBiasConfig = Annotated[
+    NoAttnBiasConfig | DistanceBiasConfig,
+    Field(discriminator="kind"),
+]
 
 
 class CrossAttentionConfig(BaseModel):

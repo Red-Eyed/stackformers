@@ -6,6 +6,35 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/): MAJOR for breaking public API changes,
 MINOR for backwards-compatible features, PATCH for bug fixes and internal changes.
 
+## [4.1.0] — 2026-07-14
+
+### Added
+
+- **`RelativeDistanceBias`** (`attention/distance_bias.py`) — an additive attention bias read
+  off the Euclidean distance between node positions: pairwise distance → Gaussian radial
+  shells → a learned per-head profile. Only `‖pᵢ − pⱼ‖` enters the logit, so attention is
+  invariant to any global translation *or rotation* of the node set. For 2-D/N-D node sets
+  whose coordinate frame is arbitrary.
+- `DistanceBiasConfig`, `NoAttnBiasConfig`, and the `AttnBiasConfig` discriminated union;
+  `attention/factory.py` with `build_attn_bias`; a `node_encoder_config` preset pairing the
+  bias with `NoPosEncoding`.
+
+### Notes
+
+- **A rotary encoding cannot express this.** RoPE rotates by `ω·p`, which is linear in position
+  by construction — and that linearity is exactly what makes the query and key rotations cancel
+  into a relative offset. Distance is not linear in position, so it can only enter as a bias.
+  Concretely, RoPE-2D scores two neighbours *the same distance away* 2.7× differently depending
+  on whether the offset is axis-aligned or diagonal, and rotating a node set by 30° moves its
+  attention logits by 83%.
+- **Opt-in, and it has a ceiling.** `NoAttnBias` remains the default and returns `None`, which
+  keeps `varlen_attn` available, so the bias costs nothing when unused. When used it costs a
+  great deal: a bias has no varlen slot, so it forces padded SDPA and an O(n²) tensor, and the
+  `(b, n, s, num_rbf)` shell intermediate — retained for backward, and `num_rbf/h` times larger
+  than the bias itself — dominates activation memory. Measured OOM past roughly 2 000 nodes on
+  16 GiB with 4 layers. Where that does not fit, `RotaryEmbeddingND` plus rotation augmentation
+  is the cheaper trade.
+
 ## [4.0.1] — 2026-07-14
 
 ### Fixed
