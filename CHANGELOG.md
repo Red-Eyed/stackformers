@@ -6,6 +6,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/): MAJOR for breaking public API changes,
 MINOR for backwards-compatible features, PATCH for bug fixes and internal changes.
 
+## [4.0.1] — 2026-07-14
+
+### Fixed
+
+- **Causal and windowed attention crashed on CUDA in half precision.** `window_mask` built its
+  mask at `torch.float` while `padding_mask` used the query's dtype; adding them promoted the
+  sum to float32, and CUDA's SDPA rejects a mask whose dtype differs from the query
+  (`RuntimeError: invalid dtype for bias`). Every causal or sliding-window call in
+  `float16`/`bfloat16` was affected — that is, the configuration a model actually trains in.
+  `window_mask` now takes an explicit `dtype` and `padded_sdpa` passes `q.dtype`.
+
+  It went unnoticed because CPU's SDPA math backend tolerates the mismatch, and the suite had
+  only ever run on CPU — half precision exists solely in the CUDA half of the device matrix.
+  Running the untouched tree on a GPU fails 30 tests that pass locally.
+
 ## [4.0.0] — 2026-07-14
 
 ### Removed

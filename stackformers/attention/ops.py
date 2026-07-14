@@ -14,8 +14,16 @@ def padding_mask(mask: Tensor, dtype: torch.dtype) -> Tensor:
     return bias.view(mask.shape[0], 1, 1, mask.shape[1])
 
 
-def window_mask(n: int, s: int, window_size: int, causal: bool, device: torch.device) -> Tensor:
-    """Additive sliding-window mask (0 = attend, -inf = ignore): (1, 1, n, s)."""
+def window_mask(
+    n: int, s: int, window_size: int, causal: bool, device: torch.device, dtype: torch.dtype
+) -> Tensor:
+    """Additive sliding-window mask (0 = attend, -inf = ignore): (1, 1, n, s).
+
+    ``dtype`` must be the query's. CUDA's SDPA rejects a mask whose dtype differs from the
+    query ("invalid dtype for bias"), and a float32 mask added to a float16 padding mask
+    promotes the sum to float32 — which broke every causal and windowed call in half
+    precision on GPU, while passing on CPU, whose math backend tolerates the mismatch.
+    """
     q_pos = torch.arange(n, device=device).unsqueeze(1)
     k_pos = torch.arange(s, device=device).unsqueeze(0)
     if causal:
@@ -23,7 +31,7 @@ def window_mask(n: int, s: int, window_size: int, causal: bool, device: torch.de
     else:
         half = window_size // 2
         allowed = (k_pos >= q_pos - half) & (k_pos <= q_pos + half)
-    mask = torch.zeros(1, 1, n, s, dtype=torch.float, device=device)
+    mask = torch.zeros(1, 1, n, s, dtype=dtype, device=device)
     mask.masked_fill_(~allowed.unsqueeze(0).unsqueeze(0), float("-inf"))
     return mask
 
@@ -44,11 +52,11 @@ def padded_sdpa(
         attn_mask = attn_mask + bias
     if window_size is None:
         if causal:
-            attn_mask = attn_mask + window_mask(n, s, s, causal=True, device=q.device)
+            attn_mask = attn_mask + window_mask(n, s, s, True, q.device, q.dtype)
         # is_causal=False: causal constraint already encoded in attn_mask above
         return F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, is_causal=False)
     else:
-        win_mask = window_mask(n, s, window_size, causal, q.device)
+        win_mask = window_mask(n, s, window_size, causal, q.device, q.dtype)
         return F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask + win_mask)
 
 
