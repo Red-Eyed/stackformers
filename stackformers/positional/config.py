@@ -53,9 +53,10 @@ class RoPENDConfig(BaseModel):
     Takes no ``base``. RoPE's ``base`` ladder pins its fastest band at a wavelength of 2π
     *coordinate units* regardless of the base, so it only lands correctly when tokens sit one
     unit apart — true for text and patch grids, meaningless for continuous coordinates. The
-    band range is set by the data instead: r_min fixes the fast end, r_max the slow end. The
-    ladder then depends only on the ratio r_max / r_min, so the units the coordinates happen
-    to be expressed in stop mattering.
+    band range is set by the data instead: r_min fixes the fast end, r_max the slow end, and
+    each is a half turn over the scale it names (ω = π / scale). Nothing else is free. The
+    ladder's shape then depends only on the ratio r_max / r_min, so the units the coordinates
+    happen to be expressed in stop mattering.
     """
 
     kind: Literal["rope_nd"] = "rope_nd"
@@ -66,27 +67,20 @@ class RoPENDConfig(BaseModel):
     r_min: float = Field(
         gt=0.0,
         description=(
-            "Finest separation between two nodes that the model must tell apart. Sets the"
-            " shortest wavelength to 2*r_min — the Nyquist limit, below which distinct offsets"
-            " alias onto the same rotation. Measure it as a low percentile of the"
-            " nearest-neighbour distance, not the minimum, which is noise."
+            "Finest separation between two nodes that the model must tell apart. Gets a half"
+            " turn on the fastest band, so the shortest wavelength is 2*r_min — the Nyquist"
+            " limit, below which distinct offsets alias onto the same rotation. Measure it as a"
+            " low percentile of the nearest-neighbour distance, not the minimum, which is noise."
         ),
     )
     r_max: float = Field(
         gt=0.0,
         description=(
-            "Diameter of the domain — the largest offset that must stay distinguishable. Sets"
-            " the longest wavelength. Measure it as a high percentile of the pairwise distance"
+            "Diameter of the domain — the largest offset that must stay distinguishable."
+            " Attention sees signed offsets spanning [-r_max, +r_max], so the slowest band is"
+            " given a half turn over that full width of 2*r_max: it never wraps, which leaves it"
+            " monotone in the offset. Measure it as a high percentile of the pairwise distance"
             " distribution, not the maximum, which is an outlier."
-        ),
-    )
-    headroom: float = Field(
-        default=4.0,
-        gt=1.0,
-        description=(
-            "How far the longest wavelength reaches past r_max. Keeps the slowest band monotone"
-            " across the whole domain instead of wrapping, so it can act as a coarse absolute"
-            " coordinate. Llama's defaults sit at roughly 13x; 2-4x is ample here."
         ),
     )
 
@@ -98,6 +92,14 @@ class RoPENDConfig(BaseModel):
                 f"dim_head ({self.dim_head}) must be divisible by 2 * coords ({pairs}):"
                 f" dim_head is split into {self.coords} per-axis blocks, and each block is"
                 " rotated in pairs of channels."
+            )
+        if self.bands_per_axis < 2:
+            raise ValueError(
+                f"dim_head ({self.dim_head}) leaves {self.bands_per_axis} band per axis; at"
+                f" least 2 bands are needed, so dim_head must be at least {4 * self.coords}."
+                " A lone band lands on the fast end of the ladder and r_max is never reached,"
+                " leaving the encoding periodic with period 2 * r_min across the whole domain:"
+                " every offset an integer number of periods apart becomes indistinguishable."
             )
         if self.r_max <= self.r_min:
             raise ValueError(f"r_max ({self.r_max}) must exceed r_min ({self.r_min}).")

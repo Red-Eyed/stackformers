@@ -6,6 +6,40 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/): MAJOR for breaking public API changes,
 MINOR for backwards-compatible features, PATCH for bug fixes and internal changes.
 
+## [4.2.1] — 2026-07-14
+
+### Removed
+
+- **`RoPENDConfig.headroom`.** It was redundant with `r_max`: the ladder only ever depended on
+  the product `headroom · r_max`, so the two knobs shared one degree of freedom, and anyone
+  wanting more reach at the slow end could get it by raising `r_max` — the parameter that has a
+  measurement procedure attached. It was also the last *tuned* number in a module whose premise
+  is that the band range is measured, not tuned.
+
+  Its default has a derivation, so it need not be a parameter at all. Attention sees *signed*
+  offsets spanning `[−r_max, +r_max]`, a width of `2·r_max`; asking that the slowest band turn
+  through at most half a circle across that width gives `ω_lo = π / (2·r_max)` directly. That is
+  bit-identical to the old `headroom=4.0` default at every `r_max`, so callers on the default —
+  which is to say every caller, since the field shipped in 4.2.0 — see no change in behaviour.
+
+  Both ends of the ladder are now the same rule, `ω = π / scale`: a half turn over `r_min` at
+  the fast end (Nyquist), and a half turn over `2·r_max` at the slow end (no wrap).
+
+  Treated as a PATCH rather than a MAJOR bump because `headroom` existed for exactly one
+  release, is not known to be set anywhere, and its removal cannot change the behaviour of a
+  caller that did not set it. Note that pydantic's default `extra="ignore"` means a leftover
+  `RoPENDConfig(headroom=...)` is *dropped silently* rather than raising — a caller who had set
+  it to something other than 4.0 will now get different frequencies without being told.
+
+### Fixed
+
+- **`RoPENDConfig` now requires `dim_head >= 4 * coords`** (at least two bands per axis).
+  `dim_head == 2 * coords` divides cleanly and passed validation, but leaves a one-band ladder
+  with nowhere to descend: `torch.linspace(hi, lo, 1)` returns `[hi]`, so the lone band lands on
+  the fast end, `r_max` is discarded entirely, and the encoding becomes periodic with period
+  `2 · r_min` across the whole domain — offsets of `0`, `2·r_min`, `4·r_min` … all produce an
+  identical attention logit. It failed silently; it is now rejected at construction.
+
 ## [4.2.0] — 2026-07-14
 
 ### Added

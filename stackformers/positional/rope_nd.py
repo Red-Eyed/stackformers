@@ -18,18 +18,28 @@ def _frequency_ladder(config: RoPENDConfig) -> Tensor:
     at ω=1, i.e. a wavelength of exactly 2π coordinate units, whatever the base — so ``base``
     can only stretch the slow end, and the ladder lands correctly only when tokens happen to
     sit one unit apart. That holds for text and for patch grids; it is meaningless for
-    continuous coordinates, where the useful band range is fixed by the data instead:
+    continuous coordinates, where the band range is fixed by the data instead.
 
-        ω_hi = π / r_min                  → shortest wavelength = 2·r_min  (Nyquist on the
-                                            finest separation the model must resolve)
-        ω_lo = 2π / (headroom · r_max)    → longest wavelength spans the whole domain
+    Both ends are a half turn over the scale they name — ω = π / scale:
 
-    So the ladder is a function of the *dynamic range* r_max / r_min alone, and is invariant
-    to the units the coordinates are expressed in — metres, pixels, or normalised to [0, 1]
-    all give the same encoding. That is precisely the property ``base`` does not have.
+        ω_hi = π / r_min       half-period r_min. The finest separation the model must resolve
+                               is turned through π, the furthest two points can be driven apart
+                               on a circle. Any faster is past Nyquist, and distinct offsets
+                               start aliasing onto the same rotation.
+
+        ω_lo = π / (2·r_max)   half-period 2·r_max. Attention sees *signed* offsets, spanning
+                               [−r_max, +r_max] — a width of 2·r_max, not r_max — so the slowest
+                               band turns through at most π across the entire domain. It cannot
+                               wrap, which leaves it monotone in the offset: a coarse ramp the
+                               model can read directly as displacement.
+
+    Nothing here is tuned, and there is no knob left to set: two measured distances fix the
+    ladder. Its *shape* depends only on the dynamic range r_max / r_min, so the encoding is
+    invariant to the units the coordinates are expressed in — metres, pixels, or normalised to
+    [0, 1] all give the same result. That is precisely the property ``base`` does not have.
     """
     omega_hi = math.pi / config.r_min
-    omega_lo = 2.0 * math.pi / (config.headroom * config.r_max)
+    omega_lo = math.pi / (2.0 * config.r_max)
     steps = torch.linspace(math.log(omega_hi), math.log(omega_lo), config.bands_per_axis)
     return torch.exp(steps)  # fastest band first, matching the 1-D/2-D convention
 

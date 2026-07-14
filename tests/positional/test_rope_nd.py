@@ -11,7 +11,7 @@ from stackformers.positional.rope_nd import RotaryEmbeddingND
 from tests.conftest import atol
 
 B, N, H = 2, 16, 4
-R_MIN, R_MAX, HEADROOM = 0.5, 100.0, 4.0
+R_MIN, R_MAX = 0.5, 100.0
 
 DIMS = [(1, 64), (2, 64), (3, 96)]  # (coords, dim_head) — dim_head must divide by 2 * coords
 
@@ -19,9 +19,7 @@ DIMS = [(1, 64), (2, 64), (3, 96)]  # (coords, dim_head) — dim_head must divid
 @pytest.fixture(params=DIMS, ids=lambda p: f"c{p[0]}")
 def config(request: pytest.FixtureRequest) -> RoPENDConfig:
     coords, dim_head = request.param
-    return RoPENDConfig(
-        dim_head=dim_head, coords=coords, r_min=R_MIN, r_max=R_MAX, headroom=HEADROOM
-    )
+    return RoPENDConfig(dim_head=dim_head, coords=coords, r_min=R_MIN, r_max=R_MAX)
 
 
 @pytest.fixture
@@ -65,13 +63,30 @@ def test_output_shape(
 
 
 def test_ladder_spans_nyquist_to_domain(config: RoPENDConfig) -> None:
-    """The whole point of dropping `base`: the band range is pinned to the data, not a constant."""
+    """The whole point of dropping `base`: the band range is pinned to the data, not a constant.
+
+    Both ends are a half turn over the scale they name — r_min at the fast end, and the full
+    signed offset width 2*r_max at the slow end — so both are stated here as half-periods.
+    """
     inv_freq: torch.Tensor = RotaryEmbeddingND(config).inv_freq  # type: ignore[assignment]
-    shortest = 2 * math.pi / float(inv_freq.max())
-    longest = 2 * math.pi / float(inv_freq.min())
-    assert shortest == pytest.approx(2 * R_MIN, rel=1e-4)  # Nyquist on the finest separation
-    assert longest == pytest.approx(HEADROOM * R_MAX, rel=1e-4)  # spans the domain, with headroom
+    fastest_half_period = math.pi / float(inv_freq.max())
+    slowest_half_period = math.pi / float(inv_freq.min())
+    assert fastest_half_period == pytest.approx(R_MIN, rel=1e-4)  # Nyquist on the finest gap
+    assert slowest_half_period == pytest.approx(2 * R_MAX, rel=1e-4)  # the whole signed range
     assert inv_freq.shape == (config.bands_per_axis,)
+
+
+def test_slowest_band_never_wraps(config: RoPENDConfig) -> None:
+    """The slow end must stay monotone over every offset attention can see.
+
+    Attention sees signed offsets over [-r_max, +r_max], so the slowest band sweeps
+    omega_lo * 2 * r_max. Let that exceed pi and the band turns back on itself: two different
+    offsets in the domain collide on the same rotation, in the one band whose entire job is to
+    tell the coarse end apart.
+    """
+    inv_freq: torch.Tensor = RotaryEmbeddingND(config).inv_freq  # type: ignore[assignment]
+    sweep = float(inv_freq.min()) * 2 * R_MAX
+    assert sweep == pytest.approx(math.pi, rel=1e-4)
 
 
 def test_units_do_not_matter(config: RoPENDConfig, device: torch.device) -> None:
@@ -207,6 +222,17 @@ def test_gradients_flow(config: RoPENDConfig, device: torch.device) -> None:
 def test_rejects_indivisible_head_dim() -> None:
     with pytest.raises(ValidationError, match="divisible by 2 \\* coords"):
         RoPENDConfig(dim_head=64, coords=3, r_min=R_MIN, r_max=R_MAX)
+
+
+def test_rejects_single_band_per_axis() -> None:
+    """dim_head == 2 * coords divides cleanly, but leaves a ladder with nowhere to descend.
+
+    The lone band lands on omega_hi and r_max is never reached, so the encoding is periodic with
+    period 2 * r_min across the entire domain — offsets of 0, 2*r_min, 4*r_min ... all give the
+    same rotation. It fails silently, which is why it is rejected at construction.
+    """
+    with pytest.raises(ValidationError, match="at least 2 bands"):
+        RoPENDConfig(dim_head=6, coords=3, r_min=R_MIN, r_max=R_MAX)
 
 
 def test_rejects_inverted_range() -> None:
