@@ -6,6 +6,44 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/): MAJOR for breaking public API changes,
 MINOR for backwards-compatible features, PATCH for bug fixes and internal changes.
 
+## [4.2.0] — 2026-07-14
+
+### Added
+
+- **`RotaryEmbeddingND`** (`positional/rope_nd.py`) — rotary position encoding over `c` spatial
+  dimensions, splitting `dim_head` into `c` per-axis blocks. `c=1` and `c=2` reduce to the
+  existing 1-D and 2-D encodings; 3-D and beyond now work with the same class.
+- `RoPENDConfig`, parameterised by **`r_min` / `r_max` instead of `base`**.
+
+### Notes
+
+- **`base` is wrong for continuous coordinates**, and `RoPENDConfig` therefore does not have
+  it. RoPE's fastest band is pinned at `ω = 1` — a wavelength of exactly 2π *coordinate units* —
+  whatever the base; `base` can only stretch the slow end. So the ladder lands correctly only
+  when tokens happen to sit one unit apart. That is true of text and of a patch grid, and of
+  nothing else: `base=10000` on a 14×14 patch grid leaves 14 of its 16 bands frozen, and
+  coordinates normalised to `[0, 1]` leave every band longer than the whole domain.
+
+  The ladder is built from the data instead — `ω_hi = π / r_min` (Nyquist on the finest
+  separation the model must resolve) down to `ω_lo = 2π / (headroom · r_max)` (the longest
+  wavelength spans the domain). It then depends only on the *dynamic range* `r_max / r_min`, so
+  metres, pixels and millimetres give the identical encoding — the property `base` never had,
+  and the one that makes the setting measurable from the data rather than tuned.
+
+- `RoPE1DConfig` and `RoPE2DConfig` keep `base` and are unchanged. Use them for text and grids.
+
+- **Centre your coordinates.** Not for invariance — RoPE is translation-invariant exactly, since
+  the rotations cancel into `ω·(pᵢ − pⱼ)`. For float32: the angle is `ω·p`, and coordinates far
+  from the origin push it into the hundreds of radians and spend the mantissa before the cosine
+  is taken. A 1e5 offset costs three orders of magnitude of accuracy.
+
+- **It encodes direction, not just distance**, so it is not rotation invariant — by design, as
+  the relative offset is strictly more information than the distance. Where the global frame is
+  arbitrary, train with rotation augmentation. Exact rotation invariance in the architecture
+  costs either an O(n²) bias (`RelativeDistanceBias`, above) or a canonicalisation of the input
+  frame, which is inherently discontinuous: a near-isotropic point set flips frames under a 1%
+  perturbation, measured on 1–2% of samples.
+
 ## [4.1.0] — 2026-07-14
 
 ### Added

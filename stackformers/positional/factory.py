@@ -6,12 +6,14 @@ from stackformers.positional.config import (
     PosEncodingConfig,
     RoPE1DConfig,
     RoPE2DConfig,
+    RoPENDConfig,
 )
 from stackformers.positional.learned import LearnedPosEncoding
 from stackformers.positional.none import NoPosEncoding
 from stackformers.positional.protocols import PosEncoding
 from stackformers.positional.rope1d import RotaryEmbedding1D
 from stackformers.positional.rope2d import RotaryEmbedding2D
+from stackformers.positional.rope_nd import RotaryEmbeddingND
 
 
 def build_pos_encoding(config: PosEncodingConfig) -> PosEncoding:
@@ -20,6 +22,8 @@ def build_pos_encoding(config: PosEncodingConfig) -> PosEncoding:
             return RotaryEmbedding1D(config)
         case RoPE2DConfig():
             return RotaryEmbedding2D(config)
+        case RoPENDConfig():
+            return RotaryEmbeddingND(config)
         case NoPosEncodingConfig():
             return NoPosEncoding(config)
         case LearnedPosEncodingConfig():
