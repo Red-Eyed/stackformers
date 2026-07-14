@@ -6,6 +6,25 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/): MAJOR for breaking public API changes,
 MINOR for backwards-compatible features, PATCH for bug fixes and internal changes.
 
+## [4.0.0] — 2026-07-14
+
+### Removed
+
+- **Breaking: the 2-D vision modules.** The `spatial` package (`WindowAttention2D`,
+  `SpatialReductionAttention`, `ConvKVReduction`/`NoKVReduction`, `PatchMerging`,
+  `SpatialInput`, `SpatialTransformerLayer`) and the `PyramidVisionBackbone` preset with
+  `pyramid_vision_config` are gone. The library returns to sequence models only.
+- `RotaryEmbedding2D` and `RoPE2DConfig` are **kept** — they are independent of `spatial` and
+  encode any two-coordinate position (grid row/col, or point x/y).
+
+### Notes
+
+- A coordinate-frame bug in `ConvKVReduction` (pooled keys were positioned in the reduced
+  grid's index space while queries used full-grid coordinates, so a relative encoding saw an
+  offset that grew with absolute position) was found but not fixed, as the module is removed
+  here. Anyone reviving this code from history must fix it first: pooled tokens belong at their
+  block centre, `i·r + (r − 1)/2`, in the original grid's frame.
+
 ## [3.9.2] — 2026-07-14
 
 ### Fixed
