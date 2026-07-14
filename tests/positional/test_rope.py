@@ -125,19 +125,174 @@ def test_rope1d_preserves_norms(
     assert torch.allclose(k.norm(dim=-1), k_out.norm(dim=-1), atol=tol)
 
 
+# --- RoPE-2D ---
+#
+# A row-major GH x GW grid, never row == col. On the diagonal (row == col) the row and column
+# angles coincide, which makes a broken frequency layout indistinguishable from a correct one.
+
+GH, GW = 3, 5
+GN = GH * GW
+
+
+def _grid_positions(b: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+    """Row-major (row, col) positions over a GH x GW grid, as (b, GN, 2)."""
+    rows = torch.arange(GH, device=device, dtype=dtype).repeat_interleave(GW)
+    cols = torch.arange(GW, device=device, dtype=dtype).repeat(GH)
+    return torch.stack([rows, cols], dim=-1).unsqueeze(0).expand(b, -1, -1).clone()
+
+
+def _reference_rope2d(t: torch.Tensor, positions: torch.Tensor, base: int = 10_000) -> torch.Tensor:
+    """Axial 2-D RoPE written directly from the definition, independent of the implementation.
+
+    Rotates channel pair (i, i + dh/2) by row * w_i for the first dh/4 pairs and by col * w_i
+    for the rest. t: (b, h, n, dh), positions: (b, n, 2).
+    """
+    dh = t.shape[-1]
+    half, quarter = dh // 2, dh // 4
+    inv = 1.0 / (base ** (torch.arange(0, half, 2, dtype=torch.float32) / half))
+    inv = inv.to(device=t.device)
+
+    out = torch.zeros_like(t, dtype=torch.float32)
+    src = t.float()
+    for i in range(half):
+        axis = 0 if i < quarter else 1
+        freq = inv[i if i < quarter else i - quarter]
+        angle = positions[..., axis].float() * freq  # (b, n)
+        cos, sin = angle.cos().unsqueeze(1), angle.sin().unsqueeze(1)  # (b, 1, n)
+        x, y = src[..., i], src[..., i + half]
+        out[..., i] = x * cos - y * sin
+        out[..., i + half] = x * sin + y * cos
+    return out.to(t.dtype)
+
+
+@pytest.fixture
+def grid_qk(device_dtype: tuple[torch.device, torch.dtype]) -> tuple[torch.Tensor, torch.Tensor]:
+    device, dtype = device_dtype
+    return (
+        torch.randn(B, H, GN, DH, device=device, dtype=dtype),
+        torch.randn(B, H, GN, DH, device=device, dtype=dtype),
+    )
+
+
+@pytest.fixture
+def grid_pos(device_dtype: tuple[torch.device, torch.dtype]) -> torch.Tensor:
+    device, dtype = device_dtype
+    return _grid_positions(B, device, dtype)
+
+
 def test_rope2d_output_shape(
+    rope2d: RotaryEmbedding2D,
+    grid_qk: tuple[torch.Tensor, torch.Tensor],
+    grid_pos: torch.Tensor,
+) -> None:
+    q, k = grid_qk
+    q_out, k_out = rope2d.forward_padded(q, k, grid_pos, grid_pos)
+    assert q_out.shape == q.shape
+    assert k_out.shape == k.shape
+
+
+def test_rope2d_matches_reference_rotation(
+    rope2d: RotaryEmbedding2D,
+    grid_qk: tuple[torch.Tensor, torch.Tensor],
+    grid_pos: torch.Tensor,
+    device_dtype: tuple[torch.device, torch.dtype],
+) -> None:
+    """Pins the exact rotation against a definition-first oracle, not just its properties."""
+    _, dtype = device_dtype
+    q, k = grid_qk
+    q_out, k_out = rope2d.forward_padded(q, k, grid_pos, grid_pos)
+    assert torch.allclose(q_out, _reference_rope2d(q, grid_pos), atol=atol(dtype))
+    assert torch.allclose(k_out, _reference_rope2d(k, grid_pos), atol=atol(dtype))
+
+
+def test_rope2d_is_orthogonal(
+    rope2d: RotaryEmbedding2D,
+    grid_qk: tuple[torch.Tensor, torch.Tensor],
+    grid_pos: torch.Tensor,
+    device_dtype: tuple[torch.device, torch.dtype],
+) -> None:
+    """A rotation preserves norms and inner products; a squeeze or reflection does not."""
+    _, dtype = device_dtype
+    q, k = grid_qk
+    q_out, k_out = rope2d.forward_padded(q, k, grid_pos, grid_pos)
+    tol = atol(dtype)
+    assert torch.allclose(q.norm(dim=-1), q_out.norm(dim=-1), atol=tol)
+    assert torch.allclose(k.norm(dim=-1), k_out.norm(dim=-1), atol=tol)
+    # Same position for q and k, so the shared rotation must cancel in the inner product.
+    before = (q.float() * k.float()).sum(dim=-1)
+    after = (q_out.float() * k_out.float()).sum(dim=-1)
+    assert torch.allclose(before, after, atol=tol * DH)
+
+
+@pytest.mark.parametrize("offset", [(0, 1), (1, 0), (2, 3), (-1, 2)], ids=str)
+def test_rope2d_score_depends_only_on_relative_offset(
+    device: torch.device,
+    offset: tuple[int, int],
+) -> None:
+    """The defining property: sliding a query/key pair across the grid must not move the score."""
+    rope = RotaryEmbedding2D(RoPE2DConfig(dim_head=DH)).to(device=device)
+    q = torch.randn(1, H, 1, DH, device=device)
+    k = torch.randn(1, H, 1, DH, device=device)
+    d_row, d_col = offset
+
+    def score(row: int, col: int) -> torch.Tensor:
+        q_pos = torch.tensor([[[float(row), float(col)]]], device=device)
+        k_pos = torch.tensor([[[float(row + d_row), float(col + d_col)]]], device=device)
+        q_out, k_out = rope.forward_padded(q, k, q_pos, k_pos)
+        return (q_out @ k_out.transpose(-1, -2))[0, :, 0, 0]
+
+    anchor = score(0, 0)
+    for row, col in [(2, 3), (5, 9), (11, 4), (7, 7)]:
+        assert torch.allclose(anchor, score(row, col), atol=atol(torch.float32) * 10)
+
+
+def test_rope2d_distinct_offsets_give_distinct_scores(device: torch.device) -> None:
+    """Guards the degenerate fix where every offset collapses to the same score."""
+    rope = RotaryEmbedding2D(RoPE2DConfig(dim_head=DH)).to(device=device)
+    q = torch.randn(1, H, 1, DH, device=device)
+    k = torch.randn(1, H, 1, DH, device=device)
+
+    def score(k_row: float, k_col: float) -> torch.Tensor:
+        q_pos = torch.zeros(1, 1, 2, device=device)
+        k_pos = torch.tensor([[[k_row, k_col]]], device=device)
+        q_out, k_out = rope.forward_padded(q, k, q_pos, k_pos)
+        return (q_out @ k_out.transpose(-1, -2))[0, :, 0, 0]
+
+    # A row-offset and the matching col-offset must not be conflated: the axes are separate.
+    assert not torch.allclose(score(2.0, 0.0), score(0.0, 2.0))
+    assert not torch.allclose(score(0.0, 0.0), score(1.0, 1.0))
+
+
+@pytest.mark.parametrize("axis", [0, 1], ids=["row", "col"])
+def test_rope2d_each_axis_changes_the_encoding(
+    rope2d: RotaryEmbedding2D,
+    device_dtype: tuple[torch.device, torch.dtype],
+    axis: int,
+) -> None:
+    """Moving along either axis alone must change the output — neither axis may be ignored."""
+    device, dtype = device_dtype
+    q = torch.randn(1, H, 1, DH, device=device, dtype=dtype)
+    base_pos = torch.full((1, 1, 2), 2.0, device=device, dtype=dtype)
+    moved_pos = base_pos.clone()
+    moved_pos[..., axis] += 3.0
+    base_out, _ = rope2d.forward_padded(q, q, base_pos, base_pos)
+    moved_out, _ = rope2d.forward_padded(q, q, moved_pos, moved_pos)
+    assert not torch.allclose(base_out, moved_out, atol=atol(dtype))
+
+
+def test_rope2d_packed_matches_padded(
     rope2d: RotaryEmbedding2D,
     device_dtype: tuple[torch.device, torch.dtype],
 ) -> None:
+    """Both layouts are the same per-token operation and must agree token for token."""
     device, dtype = device_dtype
-    q = torch.randn(B, H, N, DH, device=device, dtype=dtype)
-    k = torch.randn(B, H, N, DH, device=device, dtype=dtype)
-    row_ids = torch.arange(N, dtype=dtype, device=device)
-    col_ids = torch.arange(N, dtype=dtype, device=device)
-    pos = torch.stack([row_ids, col_ids], dim=-1).unsqueeze(0).expand(B, -1, -1)  # b n 2
-    q_out, k_out = rope2d.forward_padded(q, k, pos, pos)
-    assert q_out.shape == q.shape
-    assert k_out.shape == k.shape
+    q = torch.randn(1, H, GN, DH, device=device, dtype=dtype)
+    pos = _grid_positions(1, device, dtype)
+    padded, _ = rope2d.forward_padded(q, q, pos, pos)
+
+    packed_q = q[0].transpose(0, 1).contiguous()  # (nt, h, dh)
+    packed_out, _ = rope2d.forward_packed(packed_q, packed_q, pos[0], pos[0])
+    assert torch.allclose(packed_out, padded[0].transpose(0, 1), atol=atol(dtype))
 
 
 # --- YaRN scaling ---

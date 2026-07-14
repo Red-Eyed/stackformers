@@ -25,12 +25,22 @@ class RotaryEmbedding2D(nn.Module):
 
     @torch.no_grad()
     def _freqs_from_positions(self, positions: Tensor) -> Tensor:
-        """positions: (..., 2) → freqs: (..., dh)"""
+        """positions: (..., 2) → freqs: (..., dh), laid out as [row | col | row | col].
+
+        _rotate_half pairs channel i with channel i + dh/2, so both members of a pair must
+        carry the same angle for the map to be a rotation. Duplicating the *concatenated*
+        half-vector satisfies that; concatenating the *duplicated* row and col blocks
+        ([row | row | col | col]) would pair a row angle against a col angle and yield a
+        squeeze instead — non-orthogonal, and not a function of relative position.
+
+        float32 cast ensures half-precision inputs don't lose precision in the outer product.
+        """
         inv: Tensor = self.inv_freq  # type: ignore[assignment]
-        row = positions[..., 0].to(dtype=inv.dtype).unsqueeze(-1) * inv  # (..., dh//4)
-        col = positions[..., 1].to(dtype=inv.dtype).unsqueeze(-1) * inv
-        half = lambda f: torch.cat([f, f], dim=-1)  # noqa: E731
-        return torch.cat([half(row), half(col)], dim=-1)  # (..., dh)
+        pos = positions.to(dtype=torch.float32)
+        row = pos[..., 0].unsqueeze(-1) * inv.float()  # (..., dh//4)
+        col = pos[..., 1].unsqueeze(-1) * inv.float()  # (..., dh//4)
+        half = torch.cat([row, col], dim=-1)  # (..., dh//2)
+        return torch.cat([half, half], dim=-1)  # (..., dh)
 
     def _encode(
         self, q: Tensor, k: Tensor, q_positions: Tensor, k_positions: Tensor
