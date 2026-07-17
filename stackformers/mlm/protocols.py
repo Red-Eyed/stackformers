@@ -10,10 +10,7 @@ from stackformers.sequence import SequenceInput
 
 @runtime_checkable
 class EncoderLike(Protocol):
-    """Any encoder mapping a sequence to per-token embeddings of the same layout.
-
-    Implementations: Encoder, or any TransformerEncoderBase subclass.
-    """
+    """Any encoder mapping a sequence to per-token embeddings of the same layout."""
 
     def __call__(self, input: SequenceInput) -> Tensor: ...
 
@@ -25,7 +22,6 @@ class MaskingStrategy(Protocol):
     Returns True at positions to mask, shaped like the leading (non-feature) dims of
     input.x — (b, n) for PaddedInput, (nt,) for PackedInput. Implementations dispatch
     on the SequenceInput variant internally, so callers never need to know the layout.
-    Implementation: RandomMasking.
     """
 
     def __call__(self, input: SequenceInput) -> Bool[Tensor, "*batch"]: ...
@@ -37,7 +33,6 @@ class ReconstructionHead(Protocol):
 
     Both arguments are already gathered down to just the masked positions (m = number
     of masked tokens across the batch or pack). Returns a scalar loss.
-    Implementation: RegressionHead.
     """
 
     def __call__(

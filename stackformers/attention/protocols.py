@@ -15,7 +15,6 @@ class AttnBias(Protocol):
     Receives the padded sequence input so implementations can use abs_positions.
     Returns a broadcastable bias (1|b, 1|h, n, s), or None if the bias is a no-op
     (which allows the packed path to use varlen_attn instead of SDPA).
-    Null implementation: NoAttnBias.
     """
 
     def __call__(
@@ -26,19 +25,13 @@ class AttnBias(Protocol):
 
 @runtime_checkable
 class SelfAttn(Protocol):
-    """Self-attention over a sequence: maps input → x.
-
-    Implementation: SelfAttention.
-    """
+    """Self-attention over a sequence: maps input → x."""
 
     def __call__(self, input: SequenceInput) -> Tensor: ...
 
 
 @runtime_checkable
 class CrossAttn(Protocol):
-    """Cross-attention from x to context: maps (x_input, ctx_input) → x.
-
-    Implementation: CrossAttention.
-    """
+    """Cross-attention from x to context: maps (x_input, ctx_input) → x."""
 
     def __call__(self, x_input: SequenceInput, ctx_input: SequenceInput) -> Tensor: ...

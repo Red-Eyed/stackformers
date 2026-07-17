@@ -12,7 +12,6 @@ class PosEncoding(Protocol):
 
     Separate methods per layout so implementations contain no dispatch logic
     and callers (which already know their layout) pick the right path directly.
-    Null implementation: NoPosEncoding.
     """
 
     def forward_padded(

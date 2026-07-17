@@ -8,9 +8,6 @@ from torch import Tensor
 
 @runtime_checkable
 class FeedForward(Protocol):
-    """Apply a feed-forward transformation to (b, n, d) token embeddings.
-
-    Implementation: SwiGLU.
-    """
+    """Apply a feed-forward transformation to (b, n, d) token embeddings."""
 
     def __call__(self, x: Float[Tensor, "b n d"]) -> Float[Tensor, "b n d"]: ...

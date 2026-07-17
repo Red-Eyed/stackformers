@@ -8,9 +8,6 @@ from torch import Tensor
 
 @runtime_checkable
 class Norm(Protocol):
-    """Apply layer normalisation to (b, n, d) tensors.
-
-    Implementation: RMSNorm.
-    """
+    """Apply layer normalisation to (b, n, d) tensors."""
 
     def __call__(self, x: Float[Tensor, "b n d"]) -> Float[Tensor, "b n d"]: ...
