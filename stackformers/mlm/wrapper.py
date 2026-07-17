@@ -8,7 +8,7 @@ from jaxtyping import Float
 from torch import Tensor
 
 from stackformers.mlm.config import MLMWrapperConfig
-from stackformers.mlm.head import RegressionHead
+from stackformers.mlm.head_cosine import CosineHead
 from stackformers.mlm.masking import RandomMasking
 from stackformers.mlm.protocols import EncoderLike, MaskingStrategy, ReconstructionHead
 from stackformers.sequence import SequenceInput
@@ -61,7 +61,7 @@ class MLMWrapper(nn.Module):
         self.masking_strategy = (
             masking_strategy if masking_strategy is not None else RandomMasking(config.mask_ratio)
         )
-        self.head = head if head is not None else RegressionHead(config.dim)
+        self.head = head if head is not None else CosineHead(config.dim)
 
     def _masked_loss(self, input: SequenceInput, encoder: EncoderLike) -> Tensor:
         # Detached once, up front, and reused for both corrupted_x and target below —

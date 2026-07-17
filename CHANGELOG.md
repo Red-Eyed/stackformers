@@ -6,6 +6,25 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/): MAJOR for breaking public API changes,
 MINOR for backwards-compatible features, PATCH for bug fixes and internal changes.
 
+## [4.4.0] — 2026-07-17
+
+### Added
+
+- **`CosineHead`** (`stackformers/mlm/head_cosine.py`) — a `ReconstructionHead` that scores
+  a linear projection of the encoder's masked-position output against the target via
+  `1 - cosine_similarity`, instead of `RegressionHead`'s MSE.
+
+### Changed
+
+- **`MLMWrapper`'s default `head` is now `CosineHead`, not `RegressionHead`.**
+  `mlm_loss`'s target is `input.x`, and nothing constrains its scale: once the tokenizer
+  trains purely under the main task (`mlm_loss` has zero gradient into it, per 4.3.1),
+  its output distribution is free to drift arbitrarily over training. MSE is sensitive
+  to that drift — matching magnitude is part of what it scores — while cosine
+  similarity scores direction only, so it stays meaningful regardless of where the
+  target's scale currently sits. `RegressionHead` is unaffected and still available;
+  pass `MLMWrapper(..., head=RegressionHead(dim))` to keep the previous behaviour.
+
 ## [4.3.1] — 2026-07-17
 
 ### Fixed

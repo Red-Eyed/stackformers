@@ -11,6 +11,8 @@ from stackformers.feedforward.config import SwiGLUConfig
 from stackformers.feedforward.swiglu import SwiGLU
 from stackformers.layers import TransformerLayer
 from stackformers.mlm.config import MLMWrapperConfig
+from stackformers.mlm.head import RegressionHead
+from stackformers.mlm.head_cosine import CosineHead
 from stackformers.mlm.wrapper import MLMOutput, MLMWrapper
 from stackformers.norm.config import RMSNormConfig
 from stackformers.norm.factory import build_norm
@@ -176,6 +178,23 @@ def test_wrapper_accepts_custom_masking_strategy(device: torch.device) -> None:
     config = MLMWrapperConfig(dim=D, mask_ratio=0.5)
     encoder = _build_encoder(device, torch.float32)
     wrapper = MLMWrapper(config, masking_strategy=AllMasking()).to(device)
+    x = torch.randn(B, N, D, device=device)
+    mask = torch.ones(B, N, dtype=torch.bool, device=device)
+    res = wrapper(make_padded_input(x, mask), encoder)
+    assert res.mlm_loss.shape == ()
+
+
+def test_wrapper_defaults_to_cosine_head(device: torch.device) -> None:
+    config = MLMWrapperConfig(dim=D, mask_ratio=0.5)
+    wrapper = MLMWrapper(config).to(device)
+    assert isinstance(wrapper.head, CosineHead)
+
+
+def test_wrapper_accepts_regression_head_as_alternative(device: torch.device) -> None:
+    config = MLMWrapperConfig(dim=D, mask_ratio=0.5)
+    encoder = _build_encoder(device, torch.float32)
+    wrapper = MLMWrapper(config, head=RegressionHead(D)).to(device)
+    assert isinstance(wrapper.head, RegressionHead)
     x = torch.randn(B, N, D, device=device)
     mask = torch.ones(B, N, dtype=torch.bool, device=device)
     res = wrapper(make_padded_input(x, mask), encoder)

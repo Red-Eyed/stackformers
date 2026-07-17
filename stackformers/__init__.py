@@ -19,6 +19,7 @@ from stackformers.feedforward.swiglu import SwiGLU
 from stackformers.layers import TransformerLayer
 from stackformers.mlm.config import MLMWrapperConfig
 from stackformers.mlm.head import RegressionHead
+from stackformers.mlm.head_cosine import CosineHead
 from stackformers.mlm.masking import RandomMasking
 from stackformers.mlm.protocols import EncoderLike, MaskingStrategy, ReconstructionHead
 from stackformers.mlm.wrapper import MLMOutput, MLMWrapper
@@ -145,6 +146,7 @@ __all__ = [
     "MLMWrapperConfig",
     "RandomMasking",
     "RegressionHead",
+    "CosineHead",
     "MLMWrapper",
     "MLMOutput",
 ]
