@@ -6,6 +6,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/): MAJOR for breaking public API changes,
 MINOR for backwards-compatible features, PATCH for bug fixes and internal changes.
 
+## [4.3.1] — 2026-07-17
+
+### Fixed
+
+- **`MLMWrapper`'s masked pass leaked gradient to whatever produced `input.x`, despite
+  the target being detached.** `corrupted_x` was built from the live (undetached)
+  `input.x` at unmasked positions; self-attention mixes those into the masked
+  positions' predictions, so `mlm_loss` still reached back through every unmasked
+  position — confirmed empirically at 432/512 nonzero gradient entries under a
+  realistic 15% mask ratio. The existing test only covered 100% masking, which zeroes
+  that path as a side effect of `torch.where`'s backward and never exercised the
+  realistic partial-masking case.
+
+  Fixed by detaching `input.x` once, up front
+  (`input = input._replace(x=input.x.detach())`), so both `corrupted_x` and `target`
+  are built from the same severed copy. `mlm_loss` now trains only `mask_token`,
+  `encoder`, and `head` — never whatever produced `input.x` — regardless of mask
+  ratio. Added a regression test at the realistic mask ratio
+  (`test_wrapper_severs_gradient_to_upstream_input_under_partial_masking`) alongside
+  the existing full-masking one.
+
 ## [4.3.0] — 2026-07-17
 
 ### Added

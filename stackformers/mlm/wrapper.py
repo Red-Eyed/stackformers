@@ -38,9 +38,13 @@ class MLMWrapper(nn.Module):
     invoke this unconditionally in both modes without an if-training branch of their
     own — the same role self.training already plays in nn.Dropout or nn.BatchNorm.
 
-    The reconstruction target is always the encoder's own clean input embedding,
-    detached — so this loss trains the encoder and head, never whatever produced
-    input.x. That removes the representation-collapse shortcut a trainable tokenizer
+    The masked pass detaches input.x once, up front — both the unmasked context fed to
+    the encoder and the reconstruction target come from that same detached copy — so
+    mlm_loss trains the encoder, mask_token, and head, never whatever produced input.x.
+    Detaching only the target is not sufficient: self-attention still mixes the
+    unmasked (undetached) positions into the masked positions' predictions, so a live
+    path back to input.x would otherwise survive at every unmasked position. Severing
+    it entirely removes the representation-collapse shortcut a trainable tokenizer
     would otherwise have available (drive every token toward a constant vector to make
     reconstruction trivial).
     """
@@ -60,8 +64,13 @@ class MLMWrapper(nn.Module):
         self.head = head if head is not None else RegressionHead(config.dim)
 
     def _masked_loss(self, input: SequenceInput, encoder: EncoderLike) -> Tensor:
+        # Detached once, up front, and reused for both corrupted_x and target below —
+        # unmasked positions must not carry a live path back to whatever produced
+        # input.x either, or self-attention mixes them into the masked positions'
+        # predictions and mlm_loss reaches upstream anyway despite target being detached.
+        input = input._replace(x=input.x.detach())
+        target = input.x
         should_mask = self.masking_strategy(input)
-        target = input.x.detach()
         # should_mask's shape always matches input.x's leading dims, so this select and
         # the boolean indexing below both work for PaddedInput and PackedInput alike.
         corrupted_x = torch.where(should_mask.unsqueeze(-1), self.mask_token, input.x)

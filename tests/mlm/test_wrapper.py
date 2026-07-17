@@ -129,16 +129,17 @@ def test_wrapper_does_not_own_encoder(device: torch.device) -> None:
     assert encoder_param_ids.isdisjoint(wrapper_param_ids)
 
 
-def test_wrapper_detaches_target_from_upstream_input(device: torch.device) -> None:
+def test_wrapper_severs_gradient_to_upstream_input_under_full_masking(
+    device: torch.device,
+) -> None:
     """Collapse guard (design doc §5): a trainable tokenizer upstream of x must get no
     gradient from this loss, or the optimizer can collapse every token to one constant
     vector to make reconstruction trivial.
 
-    Force every position masked, so torch.where's backward zeroes x's contribution
-    through the corrupted-x branch entirely (its condition is True everywhere, so the
-    "x" branch of the select is never taken). The only remaining path from loss back to
-    x would be through the target — and that's detached — so x's accumulated gradient
-    must be exactly zero.
+    With every position masked, x is detached before corrupted_x is built from it, so
+    corrupted_x is pure mask_token — independent of x entirely. x never appears in the
+    masked pass's graph at all, so x.grad must be exactly None after backward, not just
+    zero-valued.
     """
     config = MLMWrapperConfig(dim=D, mask_ratio=0.5)
     encoder = _build_encoder(device, torch.float32)
@@ -147,8 +148,28 @@ def test_wrapper_detaches_target_from_upstream_input(device: torch.device) -> No
     mask = torch.ones(B, N, dtype=torch.bool, device=device)
     res = wrapper(make_padded_input(x, mask), encoder)
     res.mlm_loss.backward()
-    assert x.grad is not None
-    assert torch.all(x.grad == 0)
+    assert x.grad is None
+
+
+def test_wrapper_severs_gradient_to_upstream_input_under_partial_masking(
+    device: torch.device,
+) -> None:
+    """Regression test: detaching only the target is not enough to close the collapse
+    shortcut. With the default (partial) mask ratio, corrupted_x still holds the live x
+    at unmasked positions, and self-attention mixes those into the masked positions'
+    predictions — so mlm_loss could still reach x through that path unless x is
+    detached before it is used for anything, not only before it is used as the target.
+    This is the realistic training case; test_..._full_masking above is the degenerate
+    edge case that a target-only detach could still pass.
+    """
+    config = MLMWrapperConfig(dim=D, mask_ratio=0.15)
+    encoder = _build_encoder(device, torch.float32)
+    wrapper = MLMWrapper(config).to(device)
+    x = torch.randn(B, N, D, device=device, requires_grad=True)
+    mask = torch.ones(B, N, dtype=torch.bool, device=device)
+    res = wrapper(make_padded_input(x, mask), encoder)
+    res.mlm_loss.backward()
+    assert x.grad is None
 
 
 def test_wrapper_accepts_custom_masking_strategy(device: torch.device) -> None:
