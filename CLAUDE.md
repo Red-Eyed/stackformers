@@ -25,6 +25,7 @@ Behavior comes from injected dependencies, not constructor flags.
 | dh     | dim per head |
 | w      | window size |
 | nt     | total tokens in packed sequence |
+| m      | number of masked tokens (gathered across batch/pack) |
 
 ## File organisation
 

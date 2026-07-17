@@ -6,6 +6,37 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/): MAJOR for breaking public API changes,
 MINOR for backwards-compatible features, PATCH for bug fixes and internal changes.
 
+## [4.3.0] — 2026-07-17
+
+### Added
+
+- **`MLMWrapper`** (`stackformers/mlm/`) — a masked-token-reconstruction auxiliary loss over any
+  encoder satisfying `EncoderLike`, domain-agnostic about what a token represents. Takes the
+  encoder at call time (`forward(input, encoder)`) rather than owning it, so nothing is
+  registered as a submodule and `mlm_wrapper.parameters()` never includes the encoder's weights.
+- `MLMWrapperConfig`, `MaskingStrategy`/`RandomMasking`, `ReconstructionHead`/`RegressionHead`,
+  and `MLMOutput` (`out`, `mlm_loss`).
+
+### Notes
+
+- **`out` is always the encoder's clean, unmasked output; only `mlm_loss` ever reflects
+  masking.** In training, `forward` runs the encoder twice — once clean (returned as `out`) and
+  once on a separately-masked copy (used only to compute `mlm_loss`) — so the main pipeline sees
+  byte-identical output whether or not this loss is being trained alongside it. In eval, only the
+  clean pass runs and `mlm_loss` is a constant zero, gated on `self.training` the same way
+  `nn.Dropout` and `nn.BatchNorm` already are — so callers can invoke it unconditionally in both
+  modes with no `if training` branch of their own.
+
+- **The reconstruction target is always `input.x.detach()`.** This severs the gradient path from
+  the loss back to whatever produced `input.x`, removing the collapse shortcut a trainable
+  tokenizer would otherwise have (drive every token toward one constant vector to make
+  reconstruction trivial).
+
+- **`RandomMasking` needs no packed-sequence boundary awareness** — each token's masking decision
+  is independent of every other's, so document identity (`cu_seqlens`) never enters it. That only
+  becomes necessary for a contiguous-span (blockwise) strategy, which could otherwise straddle
+  two packed documents.
+
 ## [4.2.1] — 2026-07-14
 
 ### Removed

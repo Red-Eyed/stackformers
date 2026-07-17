@@ -17,6 +17,11 @@ from stackformers.feedforward.factory import build_ff
 from stackformers.feedforward.protocols import FeedForward
 from stackformers.feedforward.swiglu import SwiGLU
 from stackformers.layers import TransformerLayer
+from stackformers.mlm.config import MLMWrapperConfig
+from stackformers.mlm.head import RegressionHead
+from stackformers.mlm.masking import RandomMasking
+from stackformers.mlm.protocols import EncoderLike, MaskingStrategy, ReconstructionHead
+from stackformers.mlm.wrapper import MLMOutput, MLMWrapper
 from stackformers.norm.config import LayerNormConfig, RMSNormConfig
 from stackformers.norm.factory import NormConfig, build_norm
 from stackformers.norm.protocols import Norm
@@ -85,6 +90,9 @@ __all__ = [
     "CrossAttn",
     "FeedForward",
     "Norm",
+    "EncoderLike",
+    "MaskingStrategy",
+    "ReconstructionHead",
     # configs — attention
     "SelfAttentionConfig",
     "CrossAttentionConfig",
@@ -133,4 +141,10 @@ __all__ = [
     "CrossAttenderConfig",
     "CrossAttender",
     "plain_cross_attender_config",
+    # mlm
+    "MLMWrapperConfig",
+    "RandomMasking",
+    "RegressionHead",
+    "MLMWrapper",
+    "MLMOutput",
 ]
