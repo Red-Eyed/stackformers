@@ -1,6 +1,9 @@
+"""Configurable decoder presets and their component builders."""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from typing import Generic, TypeVar
 
 import torch.nn as nn
@@ -12,11 +15,18 @@ from stackformers.attention.config import CrossAttentionConfig, SelfAttentionCon
 from stackformers.attention.cross_attn import CrossAttention
 from stackformers.attention.protocols import AttnBias
 from stackformers.attention.self_attn import SelfAttention
-from stackformers.decoder import Decoder, DecoderLayer
+from stackformers.decoder import (
+    Decoder,
+    DecoderLayer,
+    DecoderLayerBase,
+    PostNormDecoderLayer,
+    ReorderedNormDecoderLayer,
+    SandwichNormDecoderLayer,
+)
 from stackformers.feedforward.config import FeedForwardConfig, SwiGLUConfig
 from stackformers.feedforward.factory import build_ff
 from stackformers.feedforward.protocols import FeedForward
-from stackformers.norm.config import RMSNormConfig
+from stackformers.norm.config import NormPlacement, RMSNormConfig
 from stackformers.norm.factory import NormConfig, build_norm
 from stackformers.norm.protocols import Norm
 from stackformers.positional.config import NoPosEncodingConfig, PosEncodingConfig, RoPE1DConfig
@@ -44,7 +54,7 @@ class TransformerDecoderBase(nn.Module, Generic[C], ABC):
         )
 
     @abstractmethod
-    def build_layers(self, config: C) -> list[DecoderLayer]: ...
+    def build_layers(self, config: C) -> Sequence[DecoderLayerBase]: ...
 
     @abstractmethod
     def build_norm(self, config: C) -> Norm: ...
@@ -60,6 +70,7 @@ class TransformerDecoderConfig(BaseModel):
     norm: NormConfig
     pos_encoding: PosEncodingConfig  # applies to self-attention only
     num_layers: int = Field(gt=0)
+    norm_placement: NormPlacement = "pre"
 
 
 def plain_decoder_config(
@@ -69,6 +80,7 @@ def plain_decoder_config(
     *,
     ff_mult: float = 4.0,
     dropout: float = 0.0,
+    norm_placement: NormPlacement = "pre",
 ) -> TransformerDecoderConfig:
     """Causal self-attn + cross-attn decoder with RoPE-1D, RMSNorm, SwiGLU FF."""
     dim_head = dim // heads
@@ -81,6 +93,7 @@ def plain_decoder_config(
         norm=RMSNormConfig(dim=dim),
         pos_encoding=RoPE1DConfig(dim_head=dim_head),
         num_layers=num_layers,
+        norm_placement=norm_placement,
     )
 
 
@@ -91,27 +104,68 @@ class TransformerDecoder(TransformerDecoderBase[TransformerDecoderConfig]):
     to customise individual collaborators while keeping the rest of the defaults.
     """
 
-    def build_layers(self, config: TransformerDecoderConfig) -> list[DecoderLayer]:
+    def build_layers(self, config: TransformerDecoderConfig) -> list[DecoderLayerBase]:
         self_pos = self.build_self_pos_encoding(config)
         self_bias = self.build_self_attn_bias(config)
-        return [
-            DecoderLayer(
-                self_attn=SelfAttention(
-                    config=config.self_attn,
-                    pos_encoding=self_pos,
-                    attn_bias=self_bias,
-                ),
-                cross_attn=CrossAttention(
-                    config=config.cross_attn,
-                    pos_encoding=NoPosEncoding(NoPosEncodingConfig()),
-                ),
-                ff=self.build_ff(config),
-                norm_self=build_norm(config.norm),
-                norm_cross=build_norm(config.norm),
-                norm_ff=build_norm(config.norm),
-            )
-            for _ in range(config.num_layers)
-        ]
+        return [self._build_layer(config, self_pos, self_bias) for _ in range(config.num_layers)]
+
+    def _build_layer(
+        self,
+        config: TransformerDecoderConfig,
+        self_pos: PosEncoding,
+        self_bias: AttnBias,
+    ) -> DecoderLayerBase:
+        """Construct the decoder layer selected by the normalization topology."""
+        self_attn = SelfAttention(
+            config=config.self_attn,
+            pos_encoding=self_pos,
+            attn_bias=self_bias,
+        )
+        cross_attn = CrossAttention(
+            config=config.cross_attn,
+            pos_encoding=NoPosEncoding(NoPosEncodingConfig()),
+        )
+        ff = self.build_ff(config)
+        match config.norm_placement:
+            case "pre":
+                return DecoderLayer(
+                    self_attn,
+                    cross_attn,
+                    ff,
+                    build_norm(config.norm),
+                    build_norm(config.norm),
+                    build_norm(config.norm),
+                )
+            case "post":
+                return PostNormDecoderLayer(
+                    self_attn,
+                    cross_attn,
+                    ff,
+                    build_norm(config.norm),
+                    build_norm(config.norm),
+                    build_norm(config.norm),
+                )
+            case "sandwich":
+                return SandwichNormDecoderLayer(
+                    self_attn,
+                    cross_attn,
+                    ff,
+                    build_norm(config.norm),
+                    build_norm(config.norm),
+                    build_norm(config.norm),
+                    build_norm(config.norm),
+                    build_norm(config.norm),
+                    build_norm(config.norm),
+                )
+            case "reordered":
+                return ReorderedNormDecoderLayer(
+                    self_attn,
+                    cross_attn,
+                    ff,
+                    build_norm(config.norm),
+                    build_norm(config.norm),
+                    build_norm(config.norm),
+                )
 
     def build_self_pos_encoding(self, config: TransformerDecoderConfig) -> PosEncoding:
         return build_pos_encoding(config.pos_encoding)

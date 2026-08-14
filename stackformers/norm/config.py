@@ -1,8 +1,12 @@
+"""Normalization implementation and placement configuration types."""
+
 from __future__ import annotations
 
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
+
+NormPlacement = Literal["pre", "post", "sandwich", "reordered"]
 
 
 class RMSNormConfig(BaseModel):

@@ -1,6 +1,9 @@
+"""Configurable cross-attender presets and their component builders."""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from typing import Generic, TypeVar
 
 import torch.nn as nn
@@ -9,11 +12,18 @@ from torch import Tensor
 
 from stackformers.attention.config import CrossAttentionConfig
 from stackformers.attention.cross_attn import CrossAttention
-from stackformers.cross_attender import CrossAttenderLayer, CrossAttenderStack
+from stackformers.cross_attender import (
+    CrossAttenderLayer,
+    CrossAttenderLayerBase,
+    CrossAttenderStack,
+    PostNormCrossAttenderLayer,
+    ReorderedNormCrossAttenderLayer,
+    SandwichNormCrossAttenderLayer,
+)
 from stackformers.feedforward.config import FeedForwardConfig, SwiGLUConfig
 from stackformers.feedforward.factory import build_ff
 from stackformers.feedforward.protocols import FeedForward
-from stackformers.norm.config import RMSNormConfig
+from stackformers.norm.config import NormPlacement, RMSNormConfig
 from stackformers.norm.factory import NormConfig, build_norm
 from stackformers.norm.protocols import Norm
 from stackformers.positional.config import NoPosEncodingConfig, PosEncodingConfig
@@ -40,7 +50,7 @@ class CrossAttenderBase(nn.Module, Generic[C], ABC):
         )
 
     @abstractmethod
-    def build_layers(self, config: C) -> list[CrossAttenderLayer]: ...
+    def build_layers(self, config: C) -> Sequence[CrossAttenderLayerBase]: ...
 
     @abstractmethod
     def build_norm(self, config: C) -> Norm: ...
@@ -55,6 +65,7 @@ class CrossAttenderConfig(BaseModel):
     norm: NormConfig
     pos_encoding: PosEncodingConfig = NoPosEncodingConfig()
     num_layers: int = Field(gt=0)
+    norm_placement: NormPlacement = "pre"
 
 
 def plain_cross_attender_config(
@@ -64,6 +75,7 @@ def plain_cross_attender_config(
     *,
     ff_mult: float = 4.0,
     dropout: float = 0.0,
+    norm_placement: NormPlacement = "pre",
 ) -> CrossAttenderConfig:
     """Global SDPA cross-attender with RMSNorm and SwiGLU FF, no positional encoding.
 
@@ -75,6 +87,7 @@ def plain_cross_attender_config(
         ff=SwiGLUConfig(dim=dim, mult=ff_mult, dropout=dropout),
         norm=RMSNormConfig(dim=dim),
         num_layers=num_layers,
+        norm_placement=norm_placement,
     )
 
 
@@ -86,17 +99,49 @@ class CrossAttender(CrossAttenderBase[CrossAttenderConfig]):
     collaborators while keeping the rest of the defaults.
     """
 
-    def build_layers(self, config: CrossAttenderConfig) -> list[CrossAttenderLayer]:
+    def build_layers(self, config: CrossAttenderConfig) -> list[CrossAttenderLayerBase]:
         pos = self.build_pos_encoding(config)
-        return [
-            CrossAttenderLayer(
-                cross_attn=CrossAttention(config=config.attn, pos_encoding=pos),
-                ff=self.build_ff(config),
-                norm_cross=build_norm(config.norm),
-                norm_ff=build_norm(config.norm),
-            )
-            for _ in range(config.num_layers)
-        ]
+        return [self._build_layer(config, pos) for _ in range(config.num_layers)]
+
+    def _build_layer(
+        self,
+        config: CrossAttenderConfig,
+        pos: PosEncoding,
+    ) -> CrossAttenderLayerBase:
+        """Construct the cross-attender layer selected by the norm topology."""
+        cross_attn = CrossAttention(config=config.attn, pos_encoding=pos)
+        ff = self.build_ff(config)
+        match config.norm_placement:
+            case "pre":
+                return CrossAttenderLayer(
+                    cross_attn,
+                    ff,
+                    build_norm(config.norm),
+                    build_norm(config.norm),
+                )
+            case "post":
+                return PostNormCrossAttenderLayer(
+                    cross_attn,
+                    ff,
+                    build_norm(config.norm),
+                    build_norm(config.norm),
+                )
+            case "sandwich":
+                return SandwichNormCrossAttenderLayer(
+                    cross_attn,
+                    ff,
+                    build_norm(config.norm),
+                    build_norm(config.norm),
+                    build_norm(config.norm),
+                    build_norm(config.norm),
+                )
+            case "reordered":
+                return ReorderedNormCrossAttenderLayer(
+                    cross_attn,
+                    ff,
+                    build_norm(config.norm),
+                    build_norm(config.norm),
+                )
 
     def build_pos_encoding(self, config: CrossAttenderConfig) -> PosEncoding:
         return build_pos_encoding(config.pos_encoding)

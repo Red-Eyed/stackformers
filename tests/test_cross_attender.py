@@ -1,15 +1,90 @@
+"""Tests for cross-attender stacks and normalization topologies."""
+
 from __future__ import annotations
 
 import pytest
 import torch
 
 from stackformers.attention.config import CrossAttentionConfig
+from stackformers.cross_attender import (
+    CrossAttenderLayer,
+    CrossAttenderLayerBase,
+    PostNormCrossAttenderLayer,
+    ReorderedNormCrossAttenderLayer,
+    SandwichNormCrossAttenderLayer,
+)
 from stackformers.feedforward.config import SwiGLUConfig
-from stackformers.norm.config import RMSNormConfig
+from stackformers.norm.config import NormPlacement, RMSNormConfig
 from stackformers.presets.cross_attender import CrossAttender, CrossAttenderConfig
 from stackformers.sequence import make_padded_input
+from tests.norm_topology_helpers import (
+    AffineNorm,
+    ScaleCrossAttention,
+    ScaleFeedForward,
+    expected_cross_attention,
+    expected_norm,
+    make_topology_input,
+)
 
 B, N, S, D, H, DH = 2, 8, 12, 64, 4, 16
+
+
+def _cross_attender_layer(norm_placement: NormPlacement) -> CrossAttenderLayerBase:
+    """Build a deterministic cross-attender layer for an exact topology check."""
+    cross_attn = ScaleCrossAttention(3.0)
+    ff = ScaleFeedForward(4.0)
+    match norm_placement:
+        case "pre":
+            return CrossAttenderLayer(
+                cross_attn,
+                ff,
+                AffineNorm(5.0, 1.0),
+                AffineNorm(5.0, 1.0),
+            )
+        case "post":
+            return PostNormCrossAttenderLayer(
+                cross_attn,
+                ff,
+                AffineNorm(5.0, 1.0),
+                AffineNorm(5.0, 1.0),
+            )
+        case "sandwich":
+            return SandwichNormCrossAttenderLayer(
+                cross_attn,
+                ff,
+                AffineNorm(5.0, 1.0),
+                AffineNorm(5.0, 1.0),
+                AffineNorm(5.0, 1.0),
+                AffineNorm(5.0, 1.0),
+            )
+        case "reordered":
+            return ReorderedNormCrossAttenderLayer(
+                cross_attn,
+                ff,
+                AffineNorm(5.0, 1.0),
+                AffineNorm(5.0, 1.0),
+            )
+
+
+def _expected_cross_attender_output(
+    norm_placement: NormPlacement,
+    x: torch.Tensor,
+    context: torch.Tensor,
+) -> torch.Tensor:
+    """Evaluate the selected cross-attender equation independently of its implementation."""
+    match norm_placement:
+        case "pre":
+            after_cross = x + expected_cross_attention(expected_norm(x), context)
+            return after_cross + 4.0 * expected_norm(after_cross)
+        case "post":
+            after_cross = expected_norm(x + expected_cross_attention(x, context))
+            return expected_norm(after_cross + 4.0 * after_cross)
+        case "sandwich":
+            after_cross = x + expected_norm(expected_cross_attention(expected_norm(x), context))
+            return after_cross + expected_norm(4.0 * expected_norm(after_cross))
+        case "reordered":
+            after_cross = x + expected_norm(expected_cross_attention(x, context))
+            return after_cross + expected_norm(4.0 * after_cross)
 
 
 @pytest.fixture
@@ -116,3 +191,75 @@ def test_cross_attender_gqa(device_dtype: tuple[torch.device, torch.dtype]) -> N
     x_inp = make_padded_input(x, torch.ones(B, N, dtype=torch.bool, device=device))
     ctx_inp = make_padded_input(context, torch.ones(B, S, dtype=torch.bool, device=device))
     assert model(x_inp, ctx_inp).shape == (B, N, D)
+
+
+@pytest.mark.parametrize("norm_placement", ["pre", "post", "sandwich", "reordered"])
+def test_cross_attender_norm_placement_equation(norm_placement: NormPlacement) -> None:
+    """Each cross-attender class implements its exact two-branch normalization equation."""
+    x_input = make_topology_input()
+    ctx_input = make_topology_input(12)
+    layer = _cross_attender_layer(norm_placement)
+
+    expected = _expected_cross_attender_output(norm_placement, x_input.x, ctx_input.x)
+
+    assert torch.equal(layer(x_input, ctx_input).x, expected)
+
+
+def test_sandwich_cross_attender_uses_four_independent_norms() -> None:
+    """No affine scale is tied across sandwich branch boundaries."""
+    layer = _cross_attender_layer("sandwich")
+
+    assert isinstance(layer, SandwichNormCrossAttenderLayer)
+    norms = [
+        layer.norm_cross_pre,
+        layer.norm_cross_post,
+        layer.norm_ff_pre,
+        layer.norm_ff_post,
+    ]
+    assert len({id(norm) for norm in norms}) == 4
+
+
+def test_cross_attender_layer_retains_legacy_state_dict_keys() -> None:
+    """The pre-norm cross-attender constructor and checkpoint names remain unchanged."""
+    layer = _cross_attender_layer("pre")
+
+    assert list(layer.state_dict()) == [
+        "cross_attn.query_scale",
+        "cross_attn.context_scale",
+        "ff.scale",
+        "norm_cross.scale",
+        "norm_cross.offset",
+        "norm_ff.scale",
+        "norm_ff.offset",
+    ]
+
+
+@pytest.mark.parametrize("norm_placement", ["pre", "post", "sandwich", "reordered"])
+def test_cross_attender_norm_placement_gradients(norm_placement: NormPlacement) -> None:
+    """Every topology propagates gradients through query and context inputs."""
+    x_input = make_topology_input(requires_grad=True)
+    ctx_input = make_topology_input(12, requires_grad=True)
+    layer = _cross_attender_layer(norm_placement)
+
+    layer(x_input, ctx_input).x.sum().backward()
+
+    assert x_input.x.grad is not None
+    assert ctx_input.x.grad is not None
+    assert all(parameter.grad is not None for parameter in layer.parameters())
+
+
+@pytest.mark.parametrize("norm_placement", ["pre", "post", "sandwich", "reordered"])
+def test_cross_attender_norm_placement_is_torch_export_compatible(
+    norm_placement: NormPlacement,
+) -> None:
+    """Every cross-attender topology remains traceable with both sequence inputs."""
+    x_input = make_topology_input()
+    ctx_input = make_topology_input(12)
+    layer = _cross_attender_layer(norm_placement)
+
+    exported = torch.export.export(layer, (x_input, ctx_input))
+
+    assert torch.equal(
+        exported.module()(x_input, ctx_input).x,
+        layer(x_input, ctx_input).x,
+    )

@@ -1,3 +1,5 @@
-from stackformers.norm.config import LayerNormConfig, RMSNormConfig
+"""Normalization configuration exports."""
 
-__all__ = ["LayerNormConfig", "RMSNormConfig"]
+from stackformers.norm.config import LayerNormConfig, NormPlacement, RMSNormConfig
+
+__all__ = ["LayerNormConfig", "NormPlacement", "RMSNormConfig"]

@@ -1,6 +1,9 @@
+"""Configurable encoder presets and their component builders."""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from typing import Generic, TypeVar
 
 import torch.nn as nn
@@ -20,8 +23,14 @@ from stackformers.encoder import Encoder
 from stackformers.feedforward.config import FeedForwardConfig, SwiGLUConfig
 from stackformers.feedforward.factory import build_ff
 from stackformers.feedforward.protocols import FeedForward
-from stackformers.layers import TransformerLayer
-from stackformers.norm.config import RMSNormConfig
+from stackformers.layers import (
+    PostNormTransformerLayer,
+    ReorderedNormTransformerLayer,
+    SandwichNormTransformerLayer,
+    TransformerLayer,
+    TransformerLayerBase,
+)
+from stackformers.norm.config import NormPlacement, RMSNormConfig
 from stackformers.norm.factory import NormConfig, build_norm
 from stackformers.norm.protocols import Norm
 from stackformers.positional.config import (
@@ -52,7 +61,7 @@ class TransformerEncoderBase(nn.Module, Generic[C], ABC):
         )
 
     @abstractmethod
-    def build_layers(self, config: C) -> list[TransformerLayer]: ...
+    def build_layers(self, config: C) -> Sequence[TransformerLayerBase]: ...
 
     @abstractmethod
     def build_norm(self, config: C) -> Norm: ...
@@ -68,6 +77,7 @@ class TransformerEncoderConfig(BaseModel):
     pos_encoding: PosEncodingConfig
     num_layers: int = Field(gt=0)
     attn_bias: AttnBiasConfig = NoAttnBiasConfig()
+    norm_placement: NormPlacement = "pre"
 
     @model_validator(mode="after")
     def _check_bias_heads(self) -> TransformerEncoderConfig:
@@ -91,6 +101,7 @@ def plain_encoder_config(
     causal: bool = False,
     ff_mult: float = 4.0,
     dropout: float = 0.0,
+    norm_placement: NormPlacement = "pre",
 ) -> TransformerEncoderConfig:
     """Global SDPA encoder with RoPE-1D, RMSNorm, and SwiGLU FF.
 
@@ -105,6 +116,7 @@ def plain_encoder_config(
         norm=RMSNormConfig(dim=dim),
         pos_encoding=RoPE1DConfig(dim_head=dim_head),
         num_layers=num_layers,
+        norm_placement=norm_placement,
     )
 
 
@@ -117,6 +129,7 @@ def windowed_encoder_config(
     causal: bool = False,
     ff_mult: float = 4.0,
     dropout: float = 0.0,
+    norm_placement: NormPlacement = "pre",
 ) -> TransformerEncoderConfig:
     """Sliding-window encoder — O(n·w) attention for long sequences.
 
@@ -136,6 +149,7 @@ def windowed_encoder_config(
         norm=RMSNormConfig(dim=dim),
         pos_encoding=RoPE1DConfig(dim_head=dim_head),
         num_layers=num_layers,
+        norm_placement=norm_placement,
     )
 
 
@@ -148,6 +162,7 @@ def node_encoder_config(
     num_rbf: int = 32,
     ff_mult: float = 4.0,
     dropout: float = 0.0,
+    norm_placement: NormPlacement = "pre",
 ) -> TransformerEncoderConfig:
     """Encoder for geometric node sets, where attention is driven by relative distance.
 
@@ -170,6 +185,7 @@ def node_encoder_config(
         pos_encoding=NoPosEncodingConfig(),
         attn_bias=DistanceBiasConfig(heads=heads, r_max=r_max, num_rbf=num_rbf),
         num_layers=num_layers,
+        norm_placement=norm_placement,
     )
 
 
@@ -181,18 +197,51 @@ class TransformerEncoder(TransformerEncoderBase[TransformerEncoderConfig]):
     individual collaborators while keeping the rest of the defaults.
     """
 
-    def build_layers(self, config: TransformerEncoderConfig) -> list[TransformerLayer]:
+    def build_layers(self, config: TransformerEncoderConfig) -> list[TransformerLayerBase]:
         pos = self.build_pos_encoding(config)
         bias = self.build_attn_bias(config)
-        return [
-            TransformerLayer(
-                self_attn=SelfAttention(config=config.attn, pos_encoding=pos, attn_bias=bias),
-                ff=self.build_ff(config),
-                norm_attn=build_norm(config.norm),
-                norm_ff=build_norm(config.norm),
-            )
-            for _ in range(config.num_layers)
-        ]
+        return [self._build_layer(config, pos, bias) for _ in range(config.num_layers)]
+
+    def _build_layer(
+        self,
+        config: TransformerEncoderConfig,
+        pos: PosEncoding,
+        bias: AttnBias,
+    ) -> TransformerLayerBase:
+        """Construct the layer class selected by the normalization topology."""
+        self_attn = SelfAttention(config=config.attn, pos_encoding=pos, attn_bias=bias)
+        ff = self.build_ff(config)
+        match config.norm_placement:
+            case "pre":
+                return TransformerLayer(
+                    self_attn,
+                    ff,
+                    build_norm(config.norm),
+                    build_norm(config.norm),
+                )
+            case "post":
+                return PostNormTransformerLayer(
+                    self_attn,
+                    ff,
+                    build_norm(config.norm),
+                    build_norm(config.norm),
+                )
+            case "sandwich":
+                return SandwichNormTransformerLayer(
+                    self_attn,
+                    ff,
+                    build_norm(config.norm),
+                    build_norm(config.norm),
+                    build_norm(config.norm),
+                    build_norm(config.norm),
+                )
+            case "reordered":
+                return ReorderedNormTransformerLayer(
+                    self_attn,
+                    ff,
+                    build_norm(config.norm),
+                    build_norm(config.norm),
+                )
 
     def build_pos_encoding(self, config: TransformerEncoderConfig) -> PosEncoding:
         return build_pos_encoding(config.pos_encoding)

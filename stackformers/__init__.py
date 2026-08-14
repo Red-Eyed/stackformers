@@ -9,21 +9,41 @@ from stackformers.attention.cross_attn import CrossAttention
 from stackformers.attention.protocols import CrossAttn, SelfAttn
 from stackformers.attention.self_attn import SelfAttention
 from stackformers.config import DecoderConfig, EncoderConfig, LayerConfig
-from stackformers.cross_attender import CrossAttenderLayer, CrossAttenderStack
-from stackformers.decoder import Decoder, DecoderLayer
+from stackformers.cross_attender import (
+    CrossAttenderLayer,
+    CrossAttenderLayerBase,
+    CrossAttenderStack,
+    PostNormCrossAttenderLayer,
+    ReorderedNormCrossAttenderLayer,
+    SandwichNormCrossAttenderLayer,
+)
+from stackformers.decoder import (
+    Decoder,
+    DecoderLayer,
+    DecoderLayerBase,
+    PostNormDecoderLayer,
+    ReorderedNormDecoderLayer,
+    SandwichNormDecoderLayer,
+)
 from stackformers.encoder import Encoder
 from stackformers.feedforward.config import FeedForwardConfig
 from stackformers.feedforward.factory import build_ff
 from stackformers.feedforward.protocols import FeedForward
 from stackformers.feedforward.swiglu import SwiGLU
-from stackformers.layers import TransformerLayer
+from stackformers.layers import (
+    PostNormTransformerLayer,
+    ReorderedNormTransformerLayer,
+    SandwichNormTransformerLayer,
+    TransformerLayer,
+    TransformerLayerBase,
+)
 from stackformers.mlm.config import MLMWrapperConfig
 from stackformers.mlm.head import RegressionHead
 from stackformers.mlm.head_cosine import CosineHead
 from stackformers.mlm.masking import RandomMasking
 from stackformers.mlm.protocols import EncoderLike, MaskingStrategy, ReconstructionHead
 from stackformers.mlm.wrapper import MLMOutput, MLMWrapper
-from stackformers.norm.config import LayerNormConfig, RMSNormConfig
+from stackformers.norm.config import LayerNormConfig, NormPlacement, RMSNormConfig
 from stackformers.norm.factory import NormConfig, build_norm
 from stackformers.norm.protocols import Norm
 from stackformers.positional.config import (
@@ -102,6 +122,7 @@ __all__ = [
     "LayerConfig",
     "EncoderConfig",
     "DecoderConfig",
+    "NormPlacement",
     # configs — norm
     "RMSNormConfig",
     "LayerNormConfig",
@@ -125,11 +146,23 @@ __all__ = [
     "build_ff",
     "build_pos_encoding",
     # transformer blocks
+    "TransformerLayerBase",
     "TransformerLayer",
+    "PostNormTransformerLayer",
+    "SandwichNormTransformerLayer",
+    "ReorderedNormTransformerLayer",
     "Encoder",
+    "DecoderLayerBase",
     "DecoderLayer",
+    "PostNormDecoderLayer",
+    "SandwichNormDecoderLayer",
+    "ReorderedNormDecoderLayer",
     "Decoder",
+    "CrossAttenderLayerBase",
     "CrossAttenderLayer",
+    "PostNormCrossAttenderLayer",
+    "SandwichNormCrossAttenderLayer",
+    "ReorderedNormCrossAttenderLayer",
     "CrossAttenderStack",
     # presets
     "TransformerEncoderConfig",

@@ -1,10 +1,22 @@
+"""Tests for encoder presets and their public configuration contract."""
+
 from __future__ import annotations
 
 import pytest
 import torch
+from pydantic import ValidationError
 
+from stackformers.layers import (
+    NormPlacement,
+    PostNormTransformerLayer,
+    ReorderedNormTransformerLayer,
+    SandwichNormTransformerLayer,
+    TransformerLayer,
+    TransformerLayerBase,
+)
 from stackformers.presets.encoder import (
     TransformerEncoder,
+    TransformerEncoderConfig,
     plain_encoder_config,
     windowed_encoder_config,
 )
@@ -80,6 +92,46 @@ def test_plain_encoder_causal(
     cfg = plain_encoder_config(D, H, num_layers=2, causal=True)
     out = TransformerEncoder(cfg).to(device=device, dtype=dtype)(padded_input)
     assert out.shape == (B, N, D)
+
+
+def test_legacy_encoder_config_defaults_to_pre_norm() -> None:
+    """A serialized config from before norm placement existed keeps pre-norm behavior."""
+    legacy_payload = plain_encoder_config(D, H, num_layers=2).model_dump()
+    legacy_payload.pop("norm_placement")
+
+    restored = TransformerEncoderConfig.model_validate(legacy_payload)
+
+    assert restored.norm_placement == "pre"
+
+
+@pytest.mark.parametrize(
+    ("norm_placement", "layer_type"),
+    [
+        ("pre", TransformerLayer),
+        ("post", PostNormTransformerLayer),
+        ("sandwich", SandwichNormTransformerLayer),
+        ("reordered", ReorderedNormTransformerLayer),
+    ],
+)
+def test_encoder_builds_selected_norm_topology(
+    norm_placement: NormPlacement,
+    layer_type: type[TransformerLayerBase],
+) -> None:
+    """Every supported config value selects its focused layer implementation."""
+    config = plain_encoder_config(D, H, num_layers=2, norm_placement=norm_placement)
+
+    encoder = TransformerEncoder(config)
+
+    assert all(isinstance(layer, layer_type) for layer in encoder._encoder.layers)
+
+
+def test_encoder_config_rejects_unknown_norm_placement() -> None:
+    """The Literal-backed Pydantic field rejects unsupported future spellings."""
+    payload = plain_encoder_config(D, H, num_layers=2).model_dump()
+    payload["norm_placement"] = "future"
+
+    with pytest.raises(ValidationError):
+        TransformerEncoderConfig.model_validate(payload)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="packed attention requires CUDA")

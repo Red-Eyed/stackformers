@@ -6,6 +6,28 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/): MAJOR for breaking public API changes,
 MINOR for backwards-compatible features, PATCH for bug fixes and internal changes.
 
+## [4.6.0] — 2026-08-14
+
+### Added
+
+- **Configurable normalization placement** for encoder, decoder, and cross-attender presets through
+  `NormPlacement = Literal["pre", "post", "sandwich", "reordered"]`. Each topology has a focused
+  layer class while the existing `TransformerLayer`, `DecoderLayer`, and `CrossAttenderLayer`
+  remain the pre-norm implementations. `"reordered"` implements the OLMo 2 residual layout
+  (`x + norm(branch(x))`), while sandwich uses distinct norms before and after every residual
+  branch—four per encoder/cross-attender layer and six per decoder layer.
+
+### Compatibility
+
+- **The default remains `"pre"`.** Omitting `norm_placement` preserves the previous operation
+  order, exact outputs and gradients, positional `TransformerLayer` constructor, parameter names,
+  and state-dict shapes across encoder, decoder, and cross-attender layers. Config payloads without
+  the new field deserialize as pre-norm. The three legacy layer classes retain their original
+  constructors and module attributes.
+- Serialized preset-config `model_dump()` output now includes
+  `"norm_placement": "pre"` unless callers request default-value exclusion. Sandwich is the only
+  mode that adds parameters because its post-branch norms must be independent.
+
 ## [4.5.0] — 2026-08-14
 
 ### Added

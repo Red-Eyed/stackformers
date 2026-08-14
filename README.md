@@ -93,6 +93,24 @@ model = TransformerEncoder(cfg)
 cfg2 = TransformerEncoderConfig.model_validate(cfg.model_dump())
 ```
 
+`norm_placement` is available on `TransformerEncoderConfig`, `TransformerDecoderConfig`, and
+`CrossAttenderConfig`, as well as their plain-config helpers. It accepts four layouts and defaults
+to `"pre"`, so existing constructors, serialized configs, checkpoints, outputs, and gradients retain
+the previous behavior when the field is omitted. For a residual branch `F` with norm `N`:
+
+| Value | Branch equation | Reference |
+| --- | --- | --- |
+| `"pre"` | `x + F(N(x))` | [Xiong et al., 2020](https://proceedings.mlr.press/v119/xiong20b.html) |
+| `"post"` | `N(x + F(x))` | [Vaswani et al., 2017](https://arxiv.org/abs/1706.03762) |
+| `"sandwich"` | `x + N_post(F(N_pre(x)))` | [Ding et al., 2021](https://arxiv.org/abs/2105.13290) |
+| `"reordered"` | `x + N(F(x))` | [Liu et al., 2022](https://arxiv.org/abs/2111.09883); [OLMo Team et al., 2025](https://arxiv.org/abs/2501.00656) |
+
+Sandwich placement creates independent pre- and post-branch norms. Reordered placement follows
+the OLMo 2 residual layout; enable QK-Norm separately in the attention config when reproducing the
+broader OLMo 2 stabilization recipe. Preset construction maps each value to a focused encoder,
+decoder, or cross-attender layer class. Decoder and cross-attender placement applies to the
+target/query residual stream; the context sequence is not normalized or mutated by these layers.
+
 ### Custom wiring
 
 Wire layers yourself when presets aren't enough:
