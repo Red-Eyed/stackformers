@@ -128,7 +128,7 @@ encoder = Encoder(layers=layers, final_norm=RMSNorm(RMSNormConfig(dim=512)))
 | Self-attention | Global, sliding-window (local); padded and packed backends; GQA / MQA |
 | Cross-attention | Global; padded and packed backends |
 | Positional encoding | RoPE-1D, RoPE-2D, none (null object) |
-| Feedforward | SwiGLU, GEGLU |
+| Feedforward | SwiGLU, GEGLU, GELU, ReLU² |
 | Normalization | RMSNorm, LayerNorm |
 | Presets | Encoder, Decoder, CrossAttender |
 

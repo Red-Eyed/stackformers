@@ -1,3 +1,5 @@
+"""Validated configuration types for feed-forward implementations."""
+
 from __future__ import annotations
 
 import warnings
@@ -7,7 +9,7 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class _FFBase(BaseModel):
-    """Shared geometry and alignment check for gated feed-forward variants."""
+    """Provide shared geometry and alignment checks for feed-forward variants."""
 
     dim: int = Field(gt=0)
     mult: float = Field(default=4.0, gt=0.0)
@@ -24,8 +26,7 @@ class _FFBase(BaseModel):
                 "Unaligned dimensions reduce GPU throughput on tensor-core hardware. "
                 f"Nearest aligned values: {(d // self._ALIGN) * self._ALIGN} or "
                 f"{(d // self._ALIGN + 1) * self._ALIGN}. "
-                "Adjust dim or mult so that int(dim * mult * 2/3) is a multiple of "
-                f"{self._ALIGN}.",
+                f"Adjust dim or mult so that inner_dim is a multiple of {self._ALIGN}.",
                 UserWarning,
                 stacklevel=2,
             )
@@ -33,6 +34,7 @@ class _FFBase(BaseModel):
 
     @property
     def inner_dim(self) -> int:
+        """Return the parameter-matched hidden width for gated variants."""
         # Two gate matrices → scale inner dim down to match param count with GELU-4x FFN.
         return int(self.dim * self.mult * 2 / 3)
 
@@ -49,6 +51,17 @@ class GEGLUConfig(_FFBase):
     kind: Literal["geglu"] = "geglu"
 
 
+class GELUConfig(_FFBase):
+    """Config for the standard GELU feed-forward network."""
+
+    kind: Literal["gelu"] = "gelu"
+
+    @property
+    def inner_dim(self) -> int:
+        """Return the hidden width for the non-gated network."""
+        return int(self.dim * self.mult)
+
+
 class ReluSquaredConfig(_FFBase):
     """Config for the ReLU² feed-forward network.
 
@@ -60,9 +73,11 @@ class ReluSquaredConfig(_FFBase):
 
     @property
     def inner_dim(self) -> int:
+        """Return the hidden width for the non-gated network."""
         return int(self.dim * self.mult)
 
 
 FeedForwardConfig = Annotated[
-    SwiGLUConfig | GEGLUConfig | ReluSquaredConfig, Field(discriminator="kind")
+    SwiGLUConfig | GEGLUConfig | GELUConfig | ReluSquaredConfig,
+    Field(discriminator="kind"),
 ]

@@ -2,7 +2,9 @@
 
 Token-wise feed-forward sublayers behind the `FeedForward` protocol: `(x: b n d) → b n d`.
 
-`SwiGLU` is the only implementation. Its inner dimension is `int(dim * mult * 2/3)`, scaled down so parameter count matches a standard 4× GELU FFN.
+Gated variants (`SwiGLU` and `GEGLU`) use `int(dim * mult * 2/3)` hidden units so
+their three projections have roughly the same parameter count as the two-projection `GELUFFN`
+and `ReluSquaredFF`, which use `int(dim * mult)`.
 
 ## Adding a new feed-forward
 

@@ -6,6 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/): MAJOR for breaking public API changes,
 MINOR for backwards-compatible features, PATCH for bug fixes and internal changes.
 
+## [4.5.0] — 2026-08-14
+
+### Added
+
+- **`GELUFFN`** — a standard bias-free, two-projection Transformer feed-forward network using
+  `nn.GELU(approximate="tanh")`. Select it with `GELUConfig(kind="gelu")`; its hidden width is
+  `int(dim * mult)`, matching other non-gated FFNs.
+
 ## [4.4.0] — 2026-07-17
 
 ### Added
