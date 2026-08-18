@@ -73,6 +73,12 @@ from stackformers.presets.encoder import (
     plain_encoder_config,
     windowed_encoder_config,
 )
+from stackformers.presets.variable_width_encoder import (
+    VariableWidthEncoderLayerConfig,
+    VariableWidthTransformerEncoder,
+    VariableWidthTransformerEncoderConfig,
+    variable_width_encoder_config,
+)
 from stackformers.sequence import (
     PackedInput,
     PackedSequence,
@@ -169,6 +175,10 @@ __all__ = [
     "TransformerEncoder",
     "plain_encoder_config",
     "windowed_encoder_config",
+    "VariableWidthEncoderLayerConfig",
+    "VariableWidthTransformerEncoderConfig",
+    "VariableWidthTransformerEncoder",
+    "variable_width_encoder_config",
     "TransformerDecoderConfig",
     "TransformerDecoder",
     "plain_decoder_config",

@@ -1,5 +1,38 @@
 # Transformer model development log
 
+## 2026-08-18 — Variable-width encoder preset
+
+### Observation
+
+The uniform encoder preset repeats one model dimension and attention-head geometry for every
+block. Experiments that allocate residual-stream capacity non-uniformly therefore require manual
+stack construction, including dimension-safe projections at every width boundary.
+
+### Decision
+
+Add a separate `VariableWidthTransformerEncoder` preset rather than changing the existing encoder
+contract. Its convenience factory accepts parallel `d_models` and `dim_heads` schedules, derives
+each block's head count, and expands the schedule into explicit per-layer attention, feed-forward,
+norm, positional-encoding, and attention-bias configs. A bias-free learned projection belongs to
+the incoming block whenever its width differs from the preceding block; equal-width blocks use an
+identity. The preset changes channel capacity only: it does not pool tokens, expose multiscale
+features, add skip connections, or claim a spatial hierarchy.
+
+### Verified
+
+- Configuration rejects empty, unequal, non-positive, and indivisible dimension schedules before
+  attention construction, and explicit layer configs reject mismatched residual dimensions.
+- Padded and packed sequence layouts preserve their token dimensions while producing the final
+  configured feature width; gradients cross learned width projections.
+- Every normalization topology remains selectable, configs retain their discriminated component
+  types through serialization, and padded inference remains compatible with `torch.export`.
+
+### Unproven
+
+No training ablation has established a beneficial width schedule or shown that learned linear
+transitions outperform parameter-free residual resizing. The preset's accuracy, convergence,
+memory, and latency effects remain workload-dependent.
+
 ## 2026-08-14 — Configurable normalization placement
 
 ### Observation

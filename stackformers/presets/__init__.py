@@ -17,6 +17,12 @@ from stackformers.presets.encoder import (
     plain_encoder_config,
     windowed_encoder_config,
 )
+from stackformers.presets.variable_width_encoder import (
+    VariableWidthEncoderLayerConfig,
+    VariableWidthTransformerEncoder,
+    VariableWidthTransformerEncoderConfig,
+    variable_width_encoder_config,
+)
 
 __all__ = [
     # builders
@@ -29,6 +35,7 @@ __all__ = [
     "windowed_encoder_config",
     "plain_decoder_config",
     "plain_cross_attender_config",
+    "variable_width_encoder_config",
     # presets
     "TransformerEncoderConfig",
     "TransformerEncoder",
@@ -36,4 +43,7 @@ __all__ = [
     "TransformerDecoder",
     "CrossAttenderConfig",
     "CrossAttender",
+    "VariableWidthEncoderLayerConfig",
+    "VariableWidthTransformerEncoderConfig",
+    "VariableWidthTransformerEncoder",
 ]

@@ -6,6 +6,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/): MAJOR for breaking public API changes,
 MINOR for backwards-compatible features, PATCH for bug fixes and internal changes.
 
+## [4.7.0b1] — 2026-08-18
+
+### Added
+
+- **Variable-width Transformer encoder preset** through `VariableWidthTransformerEncoder` and
+  `variable_width_encoder_config`. Callers provide one model width and head dimension per block;
+  the preset derives head counts and inserts a bias-free learned projection only where adjacent
+  model widths differ. Expanded layer configs retain explicit attention, feed-forward, norm,
+  positional-encoding, and attention-bias collaborators and support JSON round trips.
+
+### Compatibility
+
+- Existing uniform-width encoder classes, configs, serialized payloads, checkpoints, and defaults
+  are unchanged. Variable-width models use their own preset and state-dict structure.
+
 ## [4.6.0] — 2026-08-14
 
 ### Added

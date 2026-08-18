@@ -60,6 +60,28 @@ from stackformers import windowed_encoder_config
 windowed_encoder_config(dim=512, heads=8, num_layers=6, window_size=128)
 ```
 
+Variable-width encoder — one model and head dimension per Transformer block:
+
+```python
+from stackformers import VariableWidthTransformerEncoder, variable_width_encoder_config
+
+config = variable_width_encoder_config(
+    d_models=[512, 512, 768, 768, 1024],
+    dim_heads=[64, 64, 64, 64, 128],
+)
+model = VariableWidthTransformerEncoder(config)
+```
+
+The preset derives each block's head count as `d_model // dim_head`. It inserts a bias-free
+learned projection before a block when its residual width differs from the preceding block;
+equal-width neighbors use an identity. The expanded config keeps every layer's attention,
+feed-forward, norm, positional-encoding, and attention-bias choices explicit and serializable.
+The input width must match the first `d_models` entry, and the output uses the last entry.
+
+Reference: [Wu et al., “Variable-Width Transformers” (2026)](https://arxiv.org/abs/2606.18246).
+The paper uses parameter-free residual resizing; this preset instead makes each width transition
+a learned linear projection, so it is a related experimental variant rather than an exact replica.
+
 Encoder–decoder:
 
 ```python
