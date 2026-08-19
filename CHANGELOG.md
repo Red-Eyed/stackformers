@@ -6,6 +6,31 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/): MAJOR for breaking public API changes,
 MINOR for backwards-compatible features, PATCH for bug fixes and internal changes.
 
+## [4.7.0b4] — 2026-08-19
+
+### Backwards Incompatible Changes
+
+#### Variable-width encoder configuration
+
+`VariableWidthTransformerEncoderConfig` again stores `layers: list[VariableWidthEncoderLayerConfig]`
+instead of the `d_models`/`dim_heads` representation introduced in `4.7.0b3`. Each layer record
+keeps its attention, feed-forward, norm, positional-encoding, and attention-bias choices explicit
+and validates their dimensions together. Migrate direct `4.7.0b3` constructors to complete layer
+records. The convenience config factory now requires explicit keyword arguments; replace
+`variable_width_encoder_config(d_models, dim_heads)` with
+`variable_width_encoder_config(d_models=d_models, dim_heads=dim_heads)`.
+
+### New Features
+
+- Export all concrete feed-forward configs and implementations, learned/ND positional encodings,
+  attention-bias configs, `VariableWidthEncoderLayerConfig`, and `node_encoder_config` from the
+  package root. Variable-width layers can select any public component config without subclassing.
+
+### Developers
+
+- Add static and dynamic PyTorch/ONNX export coverage with ONNX Runtime parity for every public
+  feed-forward variant and the existing Transformer configuration paths.
+
 ## [4.7.0b3] — 2026-08-19
 
 ### Backwards Incompatible Changes

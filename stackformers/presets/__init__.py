@@ -1,3 +1,5 @@
+"""Public preset configurations, models, builders, and convenience factories."""
+
 from stackformers.feedforward.factory import build_ff
 from stackformers.norm.factory import NormConfig, build_norm
 from stackformers.positional.factory import build_pos_encoding
@@ -14,10 +16,12 @@ from stackformers.presets.decoder import (
 from stackformers.presets.encoder import (
     TransformerEncoder,
     TransformerEncoderConfig,
+    node_encoder_config,
     plain_encoder_config,
     windowed_encoder_config,
 )
 from stackformers.presets.variable_width_encoder import (
+    VariableWidthEncoderLayerConfig,
     VariableWidthTransformerEncoder,
     VariableWidthTransformerEncoderConfig,
     variable_width_encoder_config,
@@ -32,6 +36,7 @@ __all__ = [
     # preset config factories
     "plain_encoder_config",
     "windowed_encoder_config",
+    "node_encoder_config",
     "plain_decoder_config",
     "plain_cross_attender_config",
     "variable_width_encoder_config",
@@ -43,5 +48,6 @@ __all__ = [
     "CrossAttenderConfig",
     "CrossAttender",
     "VariableWidthTransformerEncoderConfig",
+    "VariableWidthEncoderLayerConfig",
     "VariableWidthTransformerEncoder",
 ]

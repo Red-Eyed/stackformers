@@ -1,5 +1,40 @@
 # Transformer model development log
 
+## 2026-08-19 — Restore complete variable-width layer configs
+
+### Observation
+
+The structure-of-arrays revision stored only model/head widths and reconstructed attention,
+SwiGLU, RMSNorm, RoPE, and attention bias inside the model. That shortened the serialized config
+by removing the component choices, but violated Stackformers' central contract: model components
+must remain explicit, interchangeable configuration values. Adding more parallel arrays would
+restore configurability at the cost of length coupling and index-based validation across every
+component schedule.
+
+### Decision
+
+Restore `VariableWidthEncoderLayerConfig` as one complete record per block. Each record owns its
+attention, feed-forward, norm, positional-encoding, and attention-bias configs and validates their
+shared dimensions locally. Keep `variable_width_encoder_config(d_models=..., dim_heads=...)` as the
+concise opinionated factory for the default RoPE/RMSNorm/SwiGLU preset; direct construction remains
+the public path for replacing any component. Export the layer config and all concrete component
+config types from the package root.
+
+### Verified
+
+- Every feed-forward config variant builds inside the variable-width encoder and passes static and
+  dynamic PyTorch/ONNX export with ONNX Runtime parity.
+- Direct configuration selects non-default attention options, GEGLU, LayerNorm, RoPE-2D, and
+  relative-distance bias without model subclassing or internal mutation.
+- Layer-local validation rejects mismatched feed-forward, norm, positional, and bias geometry.
+- Public API contract tests cover the concrete feed-forward and positional config/model types,
+  `VariableWidthEncoderLayerConfig`, and `node_encoder_config`.
+
+### Unproven
+
+The configuration correction makes no claim about the training quality or performance of any
+component combination. It verifies construction, execution, serialization, and export behavior.
+
 ## 2026-08-19 — Structure-of-arrays variable-width config
 
 ### Observation

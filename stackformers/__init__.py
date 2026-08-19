@@ -4,10 +4,21 @@ from importlib.metadata import version
 
 __version__ = version("stackformers")
 
-from stackformers.attention.config import CrossAttentionConfig, SelfAttentionConfig
-from stackformers.attention.cross_attn import CrossAttention
-from stackformers.attention.protocols import CrossAttn, SelfAttn
-from stackformers.attention.self_attn import SelfAttention
+from stackformers.attention import (
+    AttnBias,
+    AttnBiasConfig,
+    CrossAttention,
+    CrossAttentionConfig,
+    CrossAttn,
+    DistanceBiasConfig,
+    NoAttnBias,
+    NoAttnBiasConfig,
+    RelativeDistanceBias,
+    SelfAttention,
+    SelfAttentionConfig,
+    SelfAttn,
+    build_attn_bias,
+)
 from stackformers.config import DecoderConfig, EncoderConfig, LayerConfig
 from stackformers.cross_attender import (
     CrossAttenderLayer,
@@ -26,11 +37,21 @@ from stackformers.decoder import (
     SandwichNormDecoderLayer,
 )
 from stackformers.encoder import Encoder
-from stackformers.feedforward.config import FeedForwardConfig
-from stackformers.feedforward.factory import build_ff
-from stackformers.feedforward.hardswish_glu import HardSwishGLU
-from stackformers.feedforward.protocols import FeedForward
-from stackformers.feedforward.swiglu import SwiGLU
+from stackformers.feedforward import (
+    GEGLU,
+    GELUFFN,
+    FeedForward,
+    FeedForwardConfig,
+    GEGLUConfig,
+    GELUConfig,
+    HardSwishGLU,
+    HardSwishGLUConfig,
+    ReluSquaredConfig,
+    ReluSquaredFF,
+    SwiGLU,
+    SwiGLUConfig,
+    build_ff,
+)
 from stackformers.layers import (
     PostNormTransformerLayer,
     ReorderedNormTransformerLayer,
@@ -47,17 +68,22 @@ from stackformers.mlm.wrapper import MLMOutput, MLMWrapper
 from stackformers.norm.config import LayerNormConfig, NormPlacement, RMSNormConfig
 from stackformers.norm.factory import NormConfig, build_norm
 from stackformers.norm.protocols import Norm
-from stackformers.positional.config import (
+from stackformers.positional import (
+    LearnedPosEncoding,
+    LearnedPosEncodingConfig,
+    NoPosEncoding,
     NoPosEncodingConfig,
+    PosEncoding,
     PosEncodingConfig,
     RoPE1DConfig,
     RoPE2DConfig,
+    RoPENDConfig,
+    RotaryEmbedding1D,
+    RotaryEmbedding2D,
+    RotaryEmbeddingND,
+    YaRNConfig,
+    build_pos_encoding,
 )
-from stackformers.positional.factory import build_pos_encoding
-from stackformers.positional.none import NoPosEncoding
-from stackformers.positional.protocols import PosEncoding
-from stackformers.positional.rope1d import RotaryEmbedding1D
-from stackformers.positional.rope2d import RotaryEmbedding2D
 from stackformers.presets.cross_attender import (
     CrossAttender,
     CrossAttenderConfig,
@@ -71,10 +97,12 @@ from stackformers.presets.decoder import (
 from stackformers.presets.encoder import (
     TransformerEncoder,
     TransformerEncoderConfig,
+    node_encoder_config,
     plain_encoder_config,
     windowed_encoder_config,
 )
 from stackformers.presets.variable_width_encoder import (
+    VariableWidthEncoderLayerConfig,
     VariableWidthTransformerEncoder,
     VariableWidthTransformerEncoderConfig,
     variable_width_encoder_config,
@@ -115,6 +143,7 @@ __all__ = [
     "PosEncoding",
     "SelfAttn",
     "CrossAttn",
+    "AttnBias",
     "FeedForward",
     "Norm",
     "EncoderLike",
@@ -123,8 +152,16 @@ __all__ = [
     # configs — attention
     "SelfAttentionConfig",
     "CrossAttentionConfig",
+    "AttnBiasConfig",
+    "NoAttnBiasConfig",
+    "DistanceBiasConfig",
     # configs — ff / layer / encoder / decoder
     "FeedForwardConfig",
+    "SwiGLUConfig",
+    "HardSwishGLUConfig",
+    "GEGLUConfig",
+    "GELUConfig",
+    "ReluSquaredConfig",
     "LayerConfig",
     "EncoderConfig",
     "DecoderConfig",
@@ -136,22 +173,33 @@ __all__ = [
     # configs — positional
     "RoPE1DConfig",
     "RoPE2DConfig",
+    "RoPENDConfig",
+    "LearnedPosEncodingConfig",
+    "YaRNConfig",
     "NoPosEncodingConfig",
     "PosEncodingConfig",
     # positional
     "NoPosEncoding",
     "RotaryEmbedding1D",
     "RotaryEmbedding2D",
+    "RotaryEmbeddingND",
+    "LearnedPosEncoding",
     # attention
     "SelfAttention",
     "CrossAttention",
+    "NoAttnBias",
+    "RelativeDistanceBias",
     # feedforward
     "HardSwishGLU",
     "SwiGLU",
+    "GEGLU",
+    "GELUFFN",
+    "ReluSquaredFF",
     # builders
     "build_norm",
     "build_ff",
     "build_pos_encoding",
+    "build_attn_bias",
     # transformer blocks
     "TransformerLayerBase",
     "TransformerLayer",
@@ -176,6 +224,8 @@ __all__ = [
     "TransformerEncoder",
     "plain_encoder_config",
     "windowed_encoder_config",
+    "node_encoder_config",
+    "VariableWidthEncoderLayerConfig",
     "VariableWidthTransformerEncoderConfig",
     "VariableWidthTransformerEncoder",
     "variable_width_encoder_config",

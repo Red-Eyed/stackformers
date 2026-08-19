@@ -6,10 +6,15 @@ import torch.nn as nn
 from pydantic import BaseModel, Field, model_validator
 from torch import Tensor
 
-from stackformers.attention.config import NoAttnBiasConfig, SelfAttentionConfig
+from stackformers.attention.config import (
+    AttnBiasConfig,
+    DistanceBiasConfig,
+    NoAttnBiasConfig,
+    SelfAttentionConfig,
+)
 from stackformers.attention.factory import build_attn_bias
 from stackformers.attention.self_attn import SelfAttention
-from stackformers.feedforward.config import SwiGLUConfig
+from stackformers.feedforward.config import FeedForwardConfig, SwiGLUConfig
 from stackformers.feedforward.factory import build_ff
 from stackformers.layers import (
     PostNormTransformerLayer,
@@ -18,50 +23,84 @@ from stackformers.layers import (
     TransformerLayer,
     TransformerLayerBase,
 )
-from stackformers.norm.config import NormPlacement, RMSNormConfig
+from stackformers.norm.config import NormConfig, NormPlacement, RMSNormConfig
 from stackformers.norm.factory import build_norm
-from stackformers.positional.config import RoPE1DConfig
+from stackformers.positional.config import NoPosEncodingConfig, PosEncodingConfig, RoPE1DConfig
 from stackformers.positional.factory import build_pos_encoding
 from stackformers.sequence import SequenceInput
 
 
-class VariableWidthTransformerEncoderConfig(BaseModel):
-    """Configure model-width and head-width arrays for a Transformer block stack."""
+class VariableWidthEncoderLayerConfig(BaseModel):
+    """Describe every configurable component used by one variable-width block."""
 
-    d_models: list[int]
-    dim_heads: list[int]
-    causal: bool = False
-    ff_mult: float = Field(default=4.0, gt=0.0)
-    dropout: float = Field(default=0.0, ge=0.0, le=1.0)
-    norm_placement: NormPlacement = "pre"
+    attn: SelfAttentionConfig
+    ff: FeedForwardConfig
+    norm: NormConfig
+    pos_encoding: PosEncodingConfig
+    attn_bias: AttnBiasConfig = NoAttnBiasConfig()
 
     @model_validator(mode="after")
-    def _check_width_schedule(self) -> VariableWidthTransformerEncoderConfig:
-        """Reject schedules that cannot define valid attention geometry."""
-        _validate_width_schedule(self.d_models, self.dim_heads)
+    def _check_dimensions(self) -> VariableWidthEncoderLayerConfig:
+        """Reject collaborators whose residual-stream dimensions do not agree."""
+        if self.ff.dim != self.attn.dim:
+            raise ValueError(f"ff.dim ({self.ff.dim}) must equal attn.dim ({self.attn.dim})")
+        if self.norm.dim != self.attn.dim:
+            raise ValueError(f"norm.dim ({self.norm.dim}) must equal attn.dim ({self.attn.dim})")
+        if (
+            not isinstance(self.pos_encoding, NoPosEncodingConfig)
+            and self.pos_encoding.dim_head != self.attn.dim_head
+        ):
+            raise ValueError(
+                f"pos_encoding.dim_head ({self.pos_encoding.dim_head}) must equal"
+                f" attn.dim_head ({self.attn.dim_head})"
+            )
+        if (
+            isinstance(self.attn_bias, DistanceBiasConfig)
+            and self.attn_bias.heads != self.attn.heads
+        ):
+            raise ValueError(
+                f"attn_bias.heads ({self.attn_bias.heads}) must equal attn.heads"
+                f" ({self.attn.heads})"
+            )
         return self
 
 
+class VariableWidthTransformerEncoderConfig(BaseModel):
+    """Configure an ordered list of complete, independently validated blocks."""
+
+    layers: list[VariableWidthEncoderLayerConfig] = Field(min_length=1)
+    norm_placement: NormPlacement = "pre"
+
+
 def variable_width_encoder_config(
+    *,
     d_models: list[int],
     dim_heads: list[int],
-    *,
     causal: bool = False,
     ff_mult: float = 4.0,
     dropout: float = 0.0,
     norm_placement: NormPlacement = "pre",
 ) -> VariableWidthTransformerEncoderConfig:
-    """Build a global-attention RoPE/RMSNorm/SwiGLU variable-width preset.
+    """Build the default global-attention RoPE/RMSNorm/SwiGLU preset.
 
     Each pair ``(d_models[i], dim_heads[i])`` specifies one Transformer block.
     The number of query heads is derived exactly as ``d_model // dim_head``.
+    Construct ``VariableWidthTransformerEncoderConfig`` directly to configure every
+    attention, feed-forward, norm, positional, and attention-bias component per block.
     """
+    _validate_width_schedule(d_models, dim_heads)
+    layers = [
+        _plain_layer_config(
+            d_model,
+            dim_head,
+            causal,
+            ff_mult,
+            dropout,
+        )
+        for d_model, dim_head in zip(d_models, dim_heads, strict=True)
+    ]
     return VariableWidthTransformerEncoderConfig(
-        d_models=d_models,
-        dim_heads=dim_heads,
-        causal=causal,
-        ff_mult=ff_mult,
-        dropout=dropout,
+        layers=layers,
         norm_placement=norm_placement,
     )
 
@@ -88,6 +127,28 @@ def _validate_width_schedule(d_models: list[int], dim_heads: list[int]) -> None:
             )
 
 
+def _plain_layer_config(
+    d_model: int,
+    dim_head: int,
+    causal: bool,
+    ff_mult: float,
+    dropout: float,
+) -> VariableWidthEncoderLayerConfig:
+    """Expand one width pair into the default preset's explicit component configs."""
+    return VariableWidthEncoderLayerConfig(
+        attn=SelfAttentionConfig(
+            dim=d_model,
+            heads=d_model // dim_head,
+            dim_head=dim_head,
+            causal=causal,
+            dropout=dropout,
+        ),
+        ff=SwiGLUConfig(dim=d_model, mult=ff_mult, dropout=dropout),
+        norm=RMSNormConfig(dim=d_model),
+        pos_encoding=RoPE1DConfig(dim_head=dim_head),
+    )
+
+
 class _VariableWidthLayer(nn.Module):
     """Adapt the residual width before applying one ordinary Transformer block."""
 
@@ -110,8 +171,8 @@ class _VariableWidthLayer(nn.Module):
 class VariableWidthTransformerEncoder(nn.Module):
     """Run explicit Transformer blocks with learned projections at width changes.
 
-    The input feature width must equal ``config.d_models[0]``. The returned tensor uses
-    the last configured width. Adjacent equal-width blocks use an identity; differing
+    The input feature width must equal the first layer's ``attn.dim``. The returned tensor
+    uses the last layer's width. Adjacent equal-width blocks use an identity; differing
     widths use a bias-free learned projection before the incoming block.
 
     Reference: Wu et al., "Variable-Width Transformers" (2026),
@@ -125,19 +186,19 @@ class VariableWidthTransformerEncoder(nn.Module):
         super().__init__()
         self.config = config
         self.layers = nn.ModuleList(self._build_layers(config))
-        self.final_norm = build_norm(RMSNormConfig(dim=config.d_models[-1]))
+        self.final_norm = build_norm(config=config.layers[-1].norm)
 
     def _build_layers(
         self,
         config: VariableWidthTransformerEncoderConfig,
     ) -> list[_VariableWidthLayer]:
         """Build one projected wrapper per configured Transformer block."""
-        previous_dim = config.d_models[0]
+        previous_dim = config.layers[0].attn.dim
         layers: list[_VariableWidthLayer] = []
-        for d_model, dim_head in zip(config.d_models, config.dim_heads, strict=True):
-            current_dim = d_model
+        for layer_config in config.layers:
+            current_dim = layer_config.attn.dim
             projection = self._build_projection(previous_dim, current_dim)
-            layer = self._build_transformer_layer(d_model, dim_head, config)
+            layer = self._build_transformer_layer(layer_config, config.norm_placement)
             layers.append(_VariableWidthLayer(projection, layer))
             previous_dim = current_dim
         return layers
@@ -150,57 +211,46 @@ class VariableWidthTransformerEncoder(nn.Module):
 
     def _build_transformer_layer(
         self,
-        d_model: int,
-        dim_head: int,
-        config: VariableWidthTransformerEncoderConfig,
+        config: VariableWidthEncoderLayerConfig,
+        norm_placement: NormPlacement,
     ) -> TransformerLayerBase:
-        """Construct one block from its indexed dimensions and shared preset settings."""
-        attn_config = SelfAttentionConfig(
-            dim=d_model,
-            heads=d_model // dim_head,
-            dim_head=dim_head,
-            causal=config.causal,
-            dropout=config.dropout,
-        )
+        """Construct one block entirely from its explicit component configurations."""
         self_attn = SelfAttention(
-            config=attn_config,
-            pos_encoding=build_pos_encoding(RoPE1DConfig(dim_head=dim_head)),
-            attn_bias=build_attn_bias(NoAttnBiasConfig()),
+            config=config.attn,
+            pos_encoding=build_pos_encoding(config=config.pos_encoding),
+            attn_bias=build_attn_bias(config=config.attn_bias),
         )
-        feed_forward = build_ff(
-            SwiGLUConfig(dim=d_model, mult=config.ff_mult, dropout=config.dropout)
-        )
-        norm_config = RMSNormConfig(dim=d_model)
-        match config.norm_placement:
+        feed_forward = build_ff(config=config.ff)
+        match norm_placement:
             case "pre":
                 return TransformerLayer(
-                    self_attn,
-                    feed_forward,
-                    build_norm(norm_config),
-                    build_norm(norm_config),
+                    self_attn=self_attn,
+                    ff=feed_forward,
+                    norm_attn=build_norm(config=config.norm),
+                    norm_ff=build_norm(config=config.norm),
                 )
             case "post":
                 return PostNormTransformerLayer(
-                    self_attn,
-                    feed_forward,
-                    build_norm(norm_config),
-                    build_norm(norm_config),
+                    self_attn=self_attn,
+                    ff=feed_forward,
+                    norm_attn=build_norm(config=config.norm),
+                    norm_ff=build_norm(config=config.norm),
                 )
             case "sandwich":
                 return SandwichNormTransformerLayer(
-                    self_attn,
-                    feed_forward,
-                    build_norm(norm_config),
-                    build_norm(norm_config),
-                    build_norm(norm_config),
-                    build_norm(norm_config),
+                    self_attn=self_attn,
+                    ff=feed_forward,
+                    norm_attn_pre=build_norm(config=config.norm),
+                    norm_attn_post=build_norm(config=config.norm),
+                    norm_ff_pre=build_norm(config=config.norm),
+                    norm_ff_post=build_norm(config=config.norm),
                 )
             case "reordered":
                 return ReorderedNormTransformerLayer(
-                    self_attn,
-                    feed_forward,
-                    build_norm(norm_config),
-                    build_norm(norm_config),
+                    self_attn=self_attn,
+                    ff=feed_forward,
+                    norm_attn=build_norm(config=config.norm),
+                    norm_ff=build_norm(config=config.norm),
                 )
 
     def forward(self, input: SequenceInput) -> Tensor:
