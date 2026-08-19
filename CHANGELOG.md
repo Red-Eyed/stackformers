@@ -6,6 +6,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/): MAJOR for breaking public API changes,
 MINOR for backwards-compatible features, PATCH for bug fixes and internal changes.
 
+## [4.7.0b3] — 2026-08-19
+
+### Backwards Incompatible Changes
+
+#### Variable-width encoder configuration
+
+`VariableWidthTransformerEncoderConfig` now represents variable block geometry as parallel
+`d_models` and `dim_heads` arrays, with `causal`, `ff_mult`, `dropout`, and `norm_placement` stored
+once as shared settings. Earlier beta configs stored an array of
+`VariableWidthEncoderLayerConfig` objects under `layers`; that class and its public export are
+removed. Explicit constructors and serialized beta configs must migrate from values such as
+`config.layers[index].attn.dim` to `config.d_models[index]`. The preset continues to construct
+global attention with RoPE, RMSNorm, SwiGLU, and no attention bias. Callers of
+`variable_width_encoder_config` are unchanged.
+
 ## [4.7.0b2] — 2026-08-19
 
 ### Added

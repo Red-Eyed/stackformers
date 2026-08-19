@@ -74,9 +74,9 @@ model = VariableWidthTransformerEncoder(config)
 
 The preset derives each block's head count as `d_model // dim_head`. It inserts a bias-free
 learned projection before a block when its residual width differs from the preceding block;
-equal-width neighbors use an identity. The expanded config keeps every layer's attention,
-feed-forward, norm, positional-encoding, and attention-bias choices explicit and serializable.
-The input width must match the first `d_models` entry, and the output uses the last entry.
+equal-width neighbors use an identity. Its config stores `d_models` and `dim_heads` as parallel
+arrays, while shared choices such as dropout and feed-forward multiplier remain scalar. The input
+width must match the first `d_models` entry, and the output uses the last entry.
 
 Reference: [Wu et al., “Variable-Width Transformers” (2026)](https://arxiv.org/abs/2606.18246).
 The paper uses parameter-free residual resizing; this preset instead makes each width transition

@@ -1,5 +1,37 @@
 # Transformer model development log
 
+## 2026-08-19 — Structure-of-arrays variable-width config
+
+### Observation
+
+The variable-width encoder's expanded configuration stored one object per block, even though
+the preset varies only model width and head width between blocks. Reading either architecture
+schedule therefore required traversing `layers` and extracting nested component fields.
+
+### Decision
+
+Store parallel `d_models` and `dim_heads` arrays directly on
+`VariableWidthTransformerEncoderConfig`, while keeping `causal`, `ff_mult`, `dropout`, and
+`norm_placement` as shared scalar settings. Validate the two arrays together, remove the
+intermediate `VariableWidthEncoderLayerConfig`, and derive the preset's concrete attention,
+feed-forward, norm, positional-encoding, and attention-bias configs only while constructing the
+encoder. The model topology and tensor operations remain unchanged.
+
+### Verified
+
+- Direct and convenience-factory configs preserve both width arrays and shared settings through
+  serialization.
+- Config construction rejects empty, unequal, non-positive, and indivisible dimension arrays,
+  along with invalid shared feed-forward multipliers and dropout probabilities.
+- Encoder construction derives the expected attention dimensions and head counts at each block.
+- Existing padded, packed, gradient, normalization-topology, and export behavior remains covered
+  by the variable-width encoder tests.
+
+### Unproven
+
+This representation-only change makes no claim about model accuracy, convergence, parameter
+count, memory use, or runtime performance.
+
 ## 2026-08-19 — HardSwish-gated feed-forward variant
 
 ### Observation

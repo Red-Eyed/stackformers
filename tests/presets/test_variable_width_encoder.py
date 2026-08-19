@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 from pydantic import ValidationError
 
-from stackformers.feedforward.config import SwiGLUConfig
+from stackformers.attention.self_attn import SelfAttention
 from stackformers.layers import (
     NormPlacement,
     PostNormTransformerLayer,
@@ -16,10 +16,7 @@ from stackformers.layers import (
     TransformerLayer,
     TransformerLayerBase,
 )
-from stackformers.norm.config import RMSNormConfig
-from stackformers.positional.config import RoPE1DConfig
 from stackformers.presets.variable_width_encoder import (
-    VariableWidthEncoderLayerConfig,
     VariableWidthTransformerEncoder,
     VariableWidthTransformerEncoderConfig,
     variable_width_encoder_config,
@@ -86,34 +83,41 @@ def test_packed_output_uses_final_width(
     assert output.shape == (NT, D_OUT)
 
 
-def test_config_expands_explicit_layer_components(
+def test_config_stores_architecture_as_structure_of_arrays(
     config: VariableWidthTransformerEncoderConfig,
 ) -> None:
-    """The convenience schedule remains inspectable as ordinary component configs."""
-    first, _, last = config.layers
-
-    assert first.attn.dim == D_IN
-    assert first.attn.heads == 3
-    assert first.attn.dim_head == 64
-    assert isinstance(first.ff, SwiGLUConfig)
-    assert first.ff.dim == D_IN
-    assert isinstance(first.norm, RMSNormConfig)
-    assert first.norm.dim == D_IN
-    assert isinstance(first.pos_encoding, RoPE1DConfig)
-    assert first.pos_encoding.dim_head == 64
-    assert last.attn.dim == D_OUT
-    assert last.attn.heads == 6
+    """Per-block dimensions are parallel arrays while shared settings remain scalar."""
+    assert config.d_models == D_MODELS
+    assert config.dim_heads == DIM_HEADS
+    assert config.causal is False
+    assert config.ff_mult == 4.0
+    assert config.dropout == 0.0
 
 
-def test_config_round_trip_preserves_component_types(
+def test_config_round_trip_preserves_architecture_schedules(
     config: VariableWidthTransformerEncoderConfig,
 ) -> None:
-    """Serialized schedules restore every discriminated collaborator configuration."""
+    """Serialized configs restore the SoA schedules and shared settings."""
     restored = VariableWidthTransformerEncoderConfig.model_validate(config.model_dump())
 
     assert restored == config
-    assert isinstance(restored.layers[-1].ff, SwiGLUConfig)
-    assert isinstance(restored.layers[-1].pos_encoding, RoPE1DConfig)
+
+
+def test_encoder_derives_attention_geometry_from_width_schedules(
+    config: VariableWidthTransformerEncoderConfig,
+) -> None:
+    """Each block derives its concrete attention config from the two parallel arrays."""
+    encoder = VariableWidthTransformerEncoder(config)
+    first_attn = encoder.get_submodule("layers.0.layer.self_attn")
+    last_attn = encoder.get_submodule("layers.2.layer.self_attn")
+
+    assert isinstance(first_attn, SelfAttention)
+    assert first_attn.config.dim == D_IN
+    assert first_attn.config.heads == 3
+    assert first_attn.config.dim_head == 64
+    assert isinstance(last_attn, SelfAttention)
+    assert last_attn.config.dim == D_OUT
+    assert last_attn.config.heads == 6
 
 
 def test_projection_exists_only_at_width_change(
@@ -179,26 +183,20 @@ def test_invalid_width_schedules_are_rejected(
         variable_width_encoder_config(d_models, dim_heads)
 
 
-@pytest.mark.parametrize(
-    ("component", "replacement", "message"),
-    [
-        ("ff", SwiGLUConfig(dim=D_OUT), "ff.dim"),
-        ("norm", RMSNormConfig(dim=D_OUT), "norm.dim"),
-        ("pos_encoding", RoPE1DConfig(dim_head=128), "pos_encoding.dim_head"),
-    ],
-)
-def test_layer_config_rejects_mismatched_component_dimensions(
-    component: str,
-    replacement: SwiGLUConfig | RMSNormConfig | RoPE1DConfig,
-    message: str,
-) -> None:
-    """Explicit collaborators fail before mismatched dimensions reach tensor operations."""
-    base = variable_width_encoder_config([D_IN], [64]).layers[0]
-    payload = base.model_dump()
-    payload[component] = replacement.model_dump()
+@pytest.mark.parametrize("ff_mult", [0.0, -1.0])
+def test_config_rejects_non_positive_ff_multiplier(ff_mult: float) -> None:
+    """Invalid shared FF multipliers fail during config validation."""
+    with pytest.raises(ValidationError, match="greater than 0"):
+        variable_width_encoder_config(D_MODELS, DIM_HEADS, ff_mult=ff_mult)
 
-    with pytest.raises(ValidationError, match=message):
-        VariableWidthEncoderLayerConfig.model_validate(payload)
+
+@pytest.mark.parametrize("dropout", [-0.1, 1.1])
+def test_config_rejects_dropout_outside_probability_range(
+    dropout: float,
+) -> None:
+    """Invalid shared dropout values fail during config validation."""
+    with pytest.raises(ValidationError, match="greater than or equal to 0|less than or equal to 1"):
+        variable_width_encoder_config(D_MODELS, DIM_HEADS, dropout=dropout)
 
 
 def test_width_projection_propagates_gradients(device: torch.device) -> None:
