@@ -22,6 +22,7 @@ from stackformers.presets.variable_width_encoder import (
     variable_width_encoder_config,
 )
 from stackformers.sequence import PackedInput, PaddedInput, make_packed_input, make_padded_input
+from tests.export_utils import ExportShapeMode, export_and_run
 
 B, N, D_IN, D_OUT = 2, 8, 192, 384
 NT = 10
@@ -214,14 +215,29 @@ def test_width_projection_propagates_gradients(device: torch.device) -> None:
     assert projection.weight.grad is not None
 
 
-def test_variable_width_encoder_is_torch_export_compatible() -> None:
-    """Width transitions remain traceable as tensor-only sequence transformations."""
+@pytest.mark.parametrize("shape_mode", tuple(ExportShapeMode), ids=lambda mode: mode.value)
+def test_variable_width_encoder_is_export_compatible(shape_mode: ExportShapeMode) -> None:
+    """Width transitions export with static and dynamic shapes through each backend."""
     config = variable_width_encoder_config(D_MODELS, DIM_HEADS)
     encoder = VariableWidthTransformerEncoder(config)
     x = torch.randn(B, N, D_IN)
     mask = torch.ones(B, N, dtype=torch.bool)
     input = make_padded_input(x, mask)
+    resized_input = make_padded_input(
+        torch.randn(1, N // 2, D_IN),
+        torch.ones(1, N // 2, dtype=torch.bool),
+    )
+    batch = torch.export.Dim("batch", min=1, max=B)
+    tokens = torch.export.Dim("tokens", min=1, max=N)
+    shapes = torch.export.ShapesCollection()
+    shapes[input.x] = {0: batch, 1: tokens}
+    shapes[input.mask] = {0: batch, 1: tokens}
+    shapes[input.abs_positions] = {0: batch, 1: tokens}
 
-    exported = torch.export.export(encoder, (input,))
-
-    assert torch.equal(exported.module()(input), encoder(input))
+    export_and_run(
+        encoder,
+        (input,),
+        shape_mode,
+        dynamic_shapes=shapes.dynamic_shapes(encoder, (input,)),
+        runtime_args=(resized_input,),
+    )

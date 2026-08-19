@@ -5,11 +5,14 @@ import torch
 import torch.export
 import torch.nn as nn
 
-from stackformers.positional.config import RoPE1DConfig, RoPE2DConfig, YaRNConfig
+from stackformers.positional.config import RoPE1DConfig, RoPE2DConfig, RoPENDConfig, YaRNConfig
 from stackformers.positional.none import NoPosEncoding
+from stackformers.positional.protocols import PosEncoding
 from stackformers.positional.rope1d import RotaryEmbedding1D
 from stackformers.positional.rope2d import RotaryEmbedding2D
+from stackformers.positional.rope_nd import RotaryEmbeddingND
 from tests.conftest import atol
+from tests.export_utils import ExportShapeMode, export_and_run
 
 B, H, N, DH = 2, 4, 8, 32
 
@@ -351,9 +354,10 @@ def test_yarn_differs_from_base_rope(
 
 
 class _PaddedRopeWrapper(nn.Module):
-    """Wraps forward_padded into a plain forward for torch.export."""
+    """Wrap positional encoding into a tensor-only forward for export."""
 
-    def __init__(self, enc: RotaryEmbedding1D) -> None:
+    def __init__(self, enc: PosEncoding) -> None:
+        """Store the positional encoding under test."""
         super().__init__()
         self.enc = enc
 
@@ -364,68 +368,136 @@ class _PaddedRopeWrapper(nn.Module):
         q_pos: torch.Tensor,
         k_pos: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Apply padded positional encoding to tensor-only export inputs."""
         return self.enc.forward_padded(q, k, q_pos, k_pos)
 
 
-def _export_rope(
-    rope: RotaryEmbedding1D, n: int, s: int, max_len: int = 512
-) -> torch.export.ExportedProgram:
-    wrapper = _PaddedRopeWrapper(rope).eval()
+def _rope1d_export_inputs(
+    n: int,
+    s: int,
+    dim_head: int = DH,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Build tensor-only 1-D RoPE inputs with independent query and key lengths."""
     b = 1
-    q = torch.randn(b, H, n, DH)
-    k = torch.randn(b, H, s, DH)
+    q = torch.randn(b, H, n, dim_head)
+    k = torch.randn(b, H, s, dim_head)
     q_pos = torch.arange(n, dtype=torch.float32).view(1, n, 1).expand(b, -1, -1).clone()
     k_pos = torch.arange(s, dtype=torch.float32).view(1, s, 1).expand(b, -1, -1).clone()
+    return q, k, q_pos, k_pos
+
+
+def _export_rope(
+    rope: PosEncoding,
+    example_inputs: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+    shape_mode: ExportShapeMode,
+    *,
+    runtime_inputs: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor] | None = None,
+    max_len: int = 512,
+) -> tuple[torch.Tensor, ...]:
+    """Export RoPE with static or symbolic query and key token dimensions."""
+    wrapper = _PaddedRopeWrapper(rope).eval()
     n_dim = torch.export.Dim("n", min=1, max=max_len)
     s_dim = torch.export.Dim("s", min=1, max=max_len)
-    return torch.export.export(
+    return export_and_run(
         wrapper,
-        (q, k, q_pos, k_pos),
+        example_inputs,
+        shape_mode,
         dynamic_shapes=({2: n_dim}, {2: s_dim}, {1: n_dim}, {1: s_dim}),
+        runtime_args=runtime_inputs,
     )
 
 
-def test_rope1d_export_succeeds() -> None:
-    assert _export_rope(RotaryEmbedding1D(RoPE1DConfig(dim_head=DH)), n=8, s=8) is not None
+@pytest.mark.parametrize("shape_mode", tuple(ExportShapeMode), ids=lambda mode: mode.value)
+def test_rope1d_export_succeeds(shape_mode: ExportShapeMode) -> None:
+    """RoPE-1D exports with concrete and symbolic sequence dimensions."""
+    rope = RotaryEmbedding1D(RoPE1DConfig(dim_head=DH))
+
+    _export_rope(rope, _rope1d_export_inputs(8, 8), shape_mode)
 
 
 def test_rope1d_export_runs_at_new_length() -> None:
-    mod = _export_rope(RotaryEmbedding1D(RoPE1DConfig(dim_head=DH)), n=8, s=8).module()
-    b = 1
-    q = torch.randn(b, H, 16, DH)
-    q_pos = torch.arange(16, dtype=torch.float32).view(1, 16, 1).expand(b, -1, -1).clone()
-    q_out, k_out = mod(q, q, q_pos, q_pos)
-    assert q_out.shape == (b, H, 16, DH)
-    assert k_out.shape == (b, H, 16, DH)
+    """Dynamic PyTorch and ONNX exports accept a longer self-attention sequence."""
+    outputs = _export_rope(
+        RotaryEmbedding1D(RoPE1DConfig(dim_head=DH)),
+        _rope1d_export_inputs(8, 8),
+        ExportShapeMode.DYNAMIC,
+        runtime_inputs=_rope1d_export_inputs(16, 16),
+    )
+
+    assert [output.shape for output in outputs] == [(1, H, 16, DH), (1, H, 16, DH)]
 
 
 def test_rope1d_export_cross_attn_different_lengths() -> None:
-    mod = _export_rope(RotaryEmbedding1D(RoPE1DConfig(dim_head=DH)), n=6, s=12).module()
-    b = 1
-    q = torch.randn(b, H, 4, DH)
-    k = torch.randn(b, H, 20, DH)
-    q_pos = torch.arange(4, dtype=torch.float32).view(1, 4, 1).expand(b, -1, -1).clone()
-    k_pos = torch.arange(20, dtype=torch.float32).view(1, 20, 1).expand(b, -1, -1).clone()
-    q_out, k_out = mod(q, k, q_pos, k_pos)
-    assert q_out.shape == (b, H, 4, DH)
-    assert k_out.shape == (b, H, 20, DH)
+    """Dynamic exports preserve independent query and context sequence dimensions."""
+    outputs = _export_rope(
+        RotaryEmbedding1D(RoPE1DConfig(dim_head=DH)),
+        _rope1d_export_inputs(6, 12),
+        ExportShapeMode.DYNAMIC,
+        runtime_inputs=_rope1d_export_inputs(4, 20),
+    )
+
+    assert [output.shape for output in outputs] == [(1, H, 4, DH), (1, H, 20, DH)]
 
 
-def test_yarn_rope_export_succeeds() -> None:
+@pytest.mark.parametrize("shape_mode", tuple(ExportShapeMode), ids=lambda mode: mode.value)
+def test_yarn_rope_export_succeeds(shape_mode: ExportShapeMode) -> None:
+    """YaRN-scaled RoPE exports with concrete and symbolic sequence dimensions."""
     yarn = YaRNConfig(scale=4.0, original_max_seq_len=512)
-    assert (
-        _export_rope(RotaryEmbedding1D(RoPE1DConfig(dim_head=DH, yarn=yarn)), n=8, s=8) is not None
+    _export_rope(
+        RotaryEmbedding1D(RoPE1DConfig(dim_head=DH, yarn=yarn)),
+        _rope1d_export_inputs(8, 8),
+        shape_mode,
     )
 
 
 def test_yarn_rope_export_runs_at_extended_length() -> None:
+    """Dynamic YaRN exports execute at their configured extended context length."""
     yarn = YaRNConfig(scale=4.0, original_max_seq_len=512)
-    mod = _export_rope(
-        RotaryEmbedding1D(RoPE1DConfig(dim_head=DH, yarn=yarn)), n=8, s=8, max_len=4096
-    ).module()
-    b = 1
-    q = torch.randn(b, H, 2048, DH)
-    q_pos = torch.arange(2048, dtype=torch.float32).view(1, 2048, 1).expand(b, -1, -1).clone()
-    q_out, k_out = mod(q, q, q_pos, q_pos)
-    assert q_out.shape == (b, H, 2048, DH)
-    assert k_out.shape == (b, H, 2048, DH)
+    outputs = _export_rope(
+        RotaryEmbedding1D(RoPE1DConfig(dim_head=DH, yarn=yarn)),
+        _rope1d_export_inputs(8, 8),
+        ExportShapeMode.DYNAMIC,
+        runtime_inputs=_rope1d_export_inputs(2048, 2048),
+        max_len=4096,
+    )
+
+    assert [output.shape for output in outputs] == [(1, H, 2048, DH), (1, H, 2048, DH)]
+
+
+@pytest.mark.parametrize("shape_mode", tuple(ExportShapeMode), ids=lambda mode: mode.value)
+def test_rope2d_grid_positions_export(shape_mode: ExportShapeMode) -> None:
+    """RoPE-2D exports the non-square positions produced by ``_grid_positions``."""
+    positions = _grid_positions(1, torch.device("cpu"), torch.float32)
+    q = torch.randn(1, H, GN, DH)
+    example_inputs = q, q.clone(), positions, positions.clone()
+    runtime_inputs = (
+        example_inputs[0][:, :, :6],
+        example_inputs[1][:, :, :6],
+        example_inputs[2][:, :6],
+        example_inputs[3][:, :6],
+    )
+
+    _export_rope(
+        RotaryEmbedding2D(RoPE2DConfig(dim_head=DH)),
+        example_inputs,
+        shape_mode,
+        runtime_inputs=runtime_inputs,
+    )
+
+
+@pytest.mark.parametrize("shape_mode", tuple(ExportShapeMode), ids=lambda mode: mode.value)
+def test_rope_nd_export(shape_mode: ExportShapeMode) -> None:
+    """RoPE-ND exports three-coordinate positions with static and dynamic token counts."""
+    dim_head = 48
+    q = torch.randn(1, H, 8, dim_head)
+    positions = torch.rand(1, 8, 3)
+    example_inputs = q, q.clone(), positions, positions.clone()
+    runtime_inputs = (
+        example_inputs[0][:, :, :5],
+        example_inputs[1][:, :, :5],
+        example_inputs[2][:, :5],
+        example_inputs[3][:, :5],
+    )
+    rope = RotaryEmbeddingND(RoPENDConfig(dim_head=dim_head, coords=3, r_min=0.5, r_max=100.0))
+
+    _export_rope(rope, example_inputs, shape_mode, runtime_inputs=runtime_inputs)

@@ -20,6 +20,7 @@ from stackformers.presets.cross_attender import (
     plain_cross_attender_config,
 )
 from stackformers.sequence import PaddedInput, make_padded_input
+from tests.export_utils import ExportShapeMode, export_and_run
 
 B, Nq, S, D, H = 2, 8, 12, 64, 4  # Nq=query len, S=context len
 
@@ -94,3 +95,41 @@ def test_cross_attender_config_rejects_unknown_norm_placement() -> None:
 
     with pytest.raises(ValidationError):
         CrossAttenderConfig.model_validate(payload)
+
+
+@pytest.mark.parametrize("shape_mode", tuple(ExportShapeMode), ids=lambda mode: mode.value)
+def test_plain_cross_attender_is_export_compatible(shape_mode: ExportShapeMode) -> None:
+    """The preset exports static and independently dynamic query/context lengths."""
+    model = CrossAttender(plain_cross_attender_config(D, heads=1, num_layers=1))
+    query = make_padded_input(
+        torch.randn(2, Nq, D),
+        torch.ones(2, Nq, dtype=torch.bool),
+    )
+    context = make_padded_input(
+        torch.randn(2, S, D),
+        torch.ones(2, S, dtype=torch.bool),
+    )
+    resized_query = make_padded_input(
+        torch.randn(1, Nq // 2, D),
+        torch.ones(1, Nq // 2, dtype=torch.bool),
+    )
+    resized_context = make_padded_input(
+        torch.randn(1, S // 2, D),
+        torch.ones(1, S // 2, dtype=torch.bool),
+    )
+    batch = torch.export.Dim("batch", min=1, max=B)
+    query_tokens = torch.export.Dim("query_tokens", min=1, max=Nq)
+    context_tokens = torch.export.Dim("context_tokens", min=1, max=S)
+    shapes = torch.export.ShapesCollection()
+    for tensor in query:
+        shapes[tensor] = {0: batch, 1: query_tokens}
+    for tensor in context:
+        shapes[tensor] = {0: batch, 1: context_tokens}
+
+    export_and_run(
+        model,
+        (query, context),
+        shape_mode,
+        dynamic_shapes=shapes.dynamic_shapes(model, (query, context)),
+        runtime_args=(resized_query, resized_context),
+    )

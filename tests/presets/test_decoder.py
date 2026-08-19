@@ -20,6 +20,7 @@ from stackformers.presets.decoder import (
     plain_decoder_config,
 )
 from stackformers.sequence import PaddedInput, make_padded_input
+from tests.export_utils import ExportShapeMode, export_and_run
 
 B, N, S, D, H = 2, 8, 12, 64, 4  # N=target len, S=context len
 
@@ -89,3 +90,41 @@ def test_decoder_config_rejects_unknown_norm_placement() -> None:
 
     with pytest.raises(ValidationError):
         TransformerDecoderConfig.model_validate(payload)
+
+
+@pytest.mark.parametrize("shape_mode", tuple(ExportShapeMode), ids=lambda mode: mode.value)
+def test_plain_decoder_is_export_compatible(shape_mode: ExportShapeMode) -> None:
+    """The decoder preset exports static and independently dynamic target/context lengths."""
+    model = TransformerDecoder(plain_decoder_config(D, heads=1, num_layers=1))
+    target = make_padded_input(
+        torch.randn(2, N, D),
+        torch.ones(2, N, dtype=torch.bool),
+    )
+    context = make_padded_input(
+        torch.randn(2, S, D),
+        torch.ones(2, S, dtype=torch.bool),
+    )
+    resized_target = make_padded_input(
+        torch.randn(1, N // 2, D),
+        torch.ones(1, N // 2, dtype=torch.bool),
+    )
+    resized_context = make_padded_input(
+        torch.randn(1, S // 2, D),
+        torch.ones(1, S // 2, dtype=torch.bool),
+    )
+    batch = torch.export.Dim("batch", min=1, max=B)
+    target_tokens = torch.export.Dim("target_tokens", min=1, max=N)
+    context_tokens = torch.export.Dim("context_tokens", min=1, max=S)
+    shapes = torch.export.ShapesCollection()
+    for tensor in target:
+        shapes[tensor] = {0: batch, 1: target_tokens}
+    for tensor in context:
+        shapes[tensor] = {0: batch, 1: context_tokens}
+
+    export_and_run(
+        model,
+        (target, context),
+        shape_mode,
+        dynamic_shapes=shapes.dynamic_shapes(model, (target, context)),
+        runtime_args=(resized_target, resized_context),
+    )

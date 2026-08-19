@@ -17,6 +17,7 @@ from stackformers.feedforward.config import SwiGLUConfig
 from stackformers.norm.config import NormPlacement, RMSNormConfig
 from stackformers.presets.cross_attender import CrossAttender, CrossAttenderConfig
 from stackformers.sequence import make_padded_input
+from tests.export_utils import ExportShapeMode, export_and_run
 from tests.norm_topology_helpers import (
     AffineNorm,
     ScaleCrossAttention,
@@ -249,17 +250,35 @@ def test_cross_attender_norm_placement_gradients(norm_placement: NormPlacement) 
 
 
 @pytest.mark.parametrize("norm_placement", ["pre", "post", "sandwich", "reordered"])
-def test_cross_attender_norm_placement_is_torch_export_compatible(
+@pytest.mark.parametrize("shape_mode", tuple(ExportShapeMode), ids=lambda mode: mode.value)
+def test_cross_attender_norm_placement_is_export_compatible(
     norm_placement: NormPlacement,
+    shape_mode: ExportShapeMode,
 ) -> None:
-    """Every cross-attender topology remains traceable with both sequence inputs."""
+    """Every cross-attender topology supports static and dynamic export."""
     x_input = make_topology_input()
     ctx_input = make_topology_input(12)
     layer = _cross_attender_layer(norm_placement)
+    resized_x_input = make_padded_input(
+        torch.arange(8, dtype=torch.float32).reshape(1, 2, 4),
+        torch.ones(1, 2, dtype=torch.bool),
+    )
+    resized_ctx_input = make_padded_input(
+        torch.arange(12, 28, dtype=torch.float32).reshape(1, 4, 4),
+        torch.ones(1, 4, dtype=torch.bool),
+    )
+    query_tokens = torch.export.Dim("query_tokens", min=1, max=4)
+    context_tokens = torch.export.Dim("context_tokens", min=1, max=5)
+    shapes = torch.export.ShapesCollection()
+    for tensor in x_input:
+        shapes[tensor] = {1: query_tokens}
+    for tensor in ctx_input:
+        shapes[tensor] = {1: context_tokens}
 
-    exported = torch.export.export(layer, (x_input, ctx_input))
-
-    assert torch.equal(
-        exported.module()(x_input, ctx_input).x,
-        layer(x_input, ctx_input).x,
+    export_and_run(
+        layer,
+        (x_input, ctx_input),
+        shape_mode,
+        dynamic_shapes=shapes.dynamic_shapes(layer, (x_input, ctx_input)),
+        runtime_args=(resized_x_input, resized_ctx_input),
     )

@@ -24,6 +24,7 @@ from stackformers.norm.config import RMSNormConfig
 from stackformers.norm.factory import build_norm
 from stackformers.positional.none import NoPosEncoding
 from stackformers.sequence import PaddedInput, make_padded_input
+from tests.export_utils import ExportShapeMode, export_and_run
 from tests.norm_topology_helpers import (
     AffineNorm,
     ScaleFeedForward,
@@ -258,13 +259,28 @@ def test_legacy_whole_module_without_placement_defaults_to_pre_norm() -> None:
 
 
 @pytest.mark.parametrize("norm_placement", ["pre", "post", "sandwich", "reordered"])
-def test_norm_placement_is_torch_export_compatible(
+@pytest.mark.parametrize("shape_mode", tuple(ExportShapeMode), ids=lambda mode: mode.value)
+def test_norm_placement_is_export_compatible(
     norm_placement: NormPlacement,
+    shape_mode: ExportShapeMode,
 ) -> None:
-    """Every placement remains traceable through the library's promised export path."""
+    """Every placement supports static and dynamic PyTorch and ONNX export."""
     layer: TransformerLayerBase = _order_test_layer(norm_placement)
     input = _order_test_input()
+    resized_input = make_padded_input(
+        torch.arange(8, dtype=torch.float32).reshape(1, 2, 4),
+        torch.ones(1, 2, dtype=torch.bool),
+    )
+    tokens = torch.export.Dim("tokens", min=1, max=4)
+    shapes = torch.export.ShapesCollection()
+    shapes[input.x] = {1: tokens}
+    shapes[input.mask] = {1: tokens}
+    shapes[input.abs_positions] = {1: tokens}
 
-    exported = torch.export.export(layer, (input,))
-
-    assert torch.equal(exported.module()(input).x, layer(input).x)
+    export_and_run(
+        layer,
+        (input,),
+        shape_mode,
+        dynamic_shapes=shapes.dynamic_shapes(layer, (input,)),
+        runtime_args=(resized_input,),
+    )

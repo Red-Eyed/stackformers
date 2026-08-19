@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Literal, TypeAlias
+
 import pytest
 import torch
+import torch.nn as nn
 from pydantic import ValidationError
 
 from stackformers.layers import (
@@ -14,16 +18,106 @@ from stackformers.layers import (
     TransformerLayer,
     TransformerLayerBase,
 )
+from stackformers.positional.config import (
+    LearnedPosEncodingConfig,
+    RoPE1DConfig,
+    RoPE2DConfig,
+    RoPENDConfig,
+    YaRNConfig,
+)
 from stackformers.presets.encoder import (
     TransformerEncoder,
     TransformerEncoderConfig,
+    node_encoder_config,
     plain_encoder_config,
     windowed_encoder_config,
 )
 from stackformers.sequence import PackedInput, PaddedInput, make_packed_input, make_padded_input
+from tests.export_utils import ExportShapeMode, export_and_run
 
 B, N, D, H = 2, 16, 64, 4
 NT = 10  # two packed seqs: 6 + 4
+
+EncoderExportVariant: TypeAlias = Literal[
+    "plain",
+    "yarn",
+    "rope2d",
+    "rope_nd",
+    "learned",
+    "windowed",
+    "node",
+]
+
+
+@dataclass(frozen=True)
+class EncoderExportCase:
+    """Hold one encoder and its example and resized padded inputs."""
+
+    model: nn.Module
+    example: PaddedInput
+    resized: PaddedInput
+
+
+def _positioned_input(batch: int, tokens: int, dim: int, coords: int) -> PaddedInput:
+    """Build an export input with the requested number of coordinate channels."""
+    x = torch.randn(batch, tokens, dim)
+    mask = torch.ones(batch, tokens, dtype=torch.bool)
+    positions = torch.rand(batch, tokens, coords)
+    return PaddedInput(x=x, mask=mask, abs_positions=positions)
+
+
+def _encoder_export_case(variant: EncoderExportVariant) -> EncoderExportCase:
+    """Build one distinct public encoder configuration and two valid input shapes."""
+    dim = 192 if variant == "rope_nd" else D
+    example = make_padded_input(torch.randn(2, 6, dim), torch.ones(2, 6, dtype=torch.bool))
+    resized = make_padded_input(torch.randn(1, 3, dim), torch.ones(1, 3, dtype=torch.bool))
+    ff_mult = 1.0 if variant == "rope_nd" else 1.5
+    config = plain_encoder_config(dim, heads=1, num_layers=1, ff_mult=ff_mult)
+
+    if variant == "yarn":
+        pos_encoding = RoPE1DConfig(
+            dim_head=dim,
+            yarn=YaRNConfig(scale=4.0, original_max_seq_len=512),
+        )
+        config = config.model_copy(update={"pos_encoding": pos_encoding})
+    elif variant == "rope2d":
+        config = config.model_copy(update={"pos_encoding": RoPE2DConfig(dim_head=dim)})
+        example = _positioned_input(2, 6, dim, coords=2)
+        resized = _positioned_input(1, 3, dim, coords=2)
+    elif variant == "rope_nd":
+        pos_encoding = RoPENDConfig(
+            dim_head=dim,
+            coords=3,
+            r_min=0.5,
+            r_max=100.0,
+        )
+        config = config.model_copy(update={"pos_encoding": pos_encoding})
+        example = _positioned_input(2, 6, dim, coords=3)
+        resized = _positioned_input(1, 3, dim, coords=3)
+    elif variant == "learned":
+        config = config.model_copy(
+            update={"pos_encoding": LearnedPosEncodingConfig(dim_head=dim, max_seq_len=8)}
+        )
+    elif variant == "windowed":
+        config = windowed_encoder_config(
+            dim,
+            heads=1,
+            num_layers=1,
+            window_size=2,
+            ff_mult=1.5,
+        )
+    elif variant == "node":
+        config = node_encoder_config(
+            dim,
+            heads=1,
+            num_layers=1,
+            r_max=4.0,
+            ff_mult=1.5,
+        )
+        example = _positioned_input(2, 6, dim, coords=2)
+        resized = _positioned_input(1, 3, dim, coords=2)
+
+    return EncoderExportCase(TransformerEncoder(config), example, resized)
 
 
 @pytest.fixture
@@ -152,3 +246,29 @@ def test_padded_and_packed_share_weights() -> None:
         packed_out = enc(packed)
     assert padded_out.shape == (B, N, D)
     assert packed_out.shape == (NT, D)
+
+
+@pytest.mark.parametrize(
+    "variant",
+    ["plain", "yarn", "rope2d", "rope_nd", "learned", "windowed", "node"],
+)
+@pytest.mark.parametrize("shape_mode", tuple(ExportShapeMode), ids=lambda mode: mode.value)
+def test_encoder_variant_is_export_compatible(
+    variant: EncoderExportVariant,
+    shape_mode: ExportShapeMode,
+) -> None:
+    """Every encoder path exports with both static and dynamic input shapes."""
+    case = _encoder_export_case(variant)
+    batch = torch.export.Dim("batch", min=1, max=2)
+    tokens = torch.export.Dim("tokens", min=1, max=8)
+    shapes = torch.export.ShapesCollection()
+    for tensor in case.example:
+        shapes[tensor] = {0: batch, 1: tokens}
+
+    export_and_run(
+        case.model,
+        (case.example,),
+        shape_mode,
+        dynamic_shapes=shapes.dynamic_shapes(case.model, (case.example,)),
+        runtime_args=(case.resized,),
+    )

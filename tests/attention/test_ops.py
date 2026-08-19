@@ -9,6 +9,7 @@ Covers:
 
 from __future__ import annotations
 
+import pytest
 import torch
 import torch.export
 import torch.nn as nn
@@ -18,6 +19,7 @@ from stackformers.attention.ops import (
     _packed_heads_to_padded,
     _padded_heads_to_packed,
 )
+from tests.export_utils import ExportShapeMode, export_and_run
 
 B = 3
 H = 2
@@ -101,8 +103,12 @@ class _CuToIndicesWrapper(nn.Module):
         return _cu_to_indices(cu, b)
 
 
-def _export_cu_to_indices(max_batch: int = 64) -> torch.export.ExportedProgram:
-    """Export _CuToIndicesWrapper with a dynamic bp1 dimension.
+def _export_cu_to_indices(
+    shape_mode: ExportShapeMode,
+    runtime_cu: torch.Tensor | None = None,
+    max_batch: int = 64,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Export and run _CuToIndicesWrapper with a concrete or symbolic batch dimension.
 
     nt (total tokens) is data-dependent (derived from cu values) and varies
     independently of bp1, exercising the unbacked-symbol path in torch.export.
@@ -110,28 +116,36 @@ def _export_cu_to_indices(max_batch: int = 64) -> torch.export.ExportedProgram:
     wrapper = _CuToIndicesWrapper()
     cu = torch.tensor([0, 3, 5], dtype=torch.long)  # 2 sequences, nt=5
     bp1_dim = torch.export.Dim("bp1", min=3, max=max_batch + 1)
-    return torch.export.export(wrapper, (cu,), dynamic_shapes=({0: bp1_dim},))
+    batch_indices, position_indices = export_and_run(
+        wrapper,
+        (cu,),
+        shape_mode,
+        dynamic_shapes=({0: bp1_dim},),
+        runtime_args=(runtime_cu,) if runtime_cu is not None else None,
+    )
+    return batch_indices, position_indices
 
 
-def test_cu_to_indices_export_succeeds() -> None:
-    """_cu_to_indices must be traceable by torch.export (no .tolist())."""
-    assert _export_cu_to_indices() is not None
+@pytest.mark.parametrize("shape_mode", tuple(ExportShapeMode), ids=lambda mode: mode.value)
+def test_cu_to_indices_export_succeeds(shape_mode: ExportShapeMode) -> None:
+    """Packed indices export with concrete and symbolic batch dimensions."""
+    batch_idx, pos_idx = _export_cu_to_indices(shape_mode)
+    assert batch_idx.tolist() == [0, 0, 0, 1, 1]
+    assert pos_idx.tolist() == [0, 1, 2, 0, 1]
 
 
 def test_cu_to_indices_export_new_batch_and_seqlens() -> None:
-    """Exported _cu_to_indices produces correct indices for a different batch and nt."""
-    mod = _export_cu_to_indices().module()
+    """Dynamic exports produce correct indices for a different batch and token count."""
     cu = torch.tensor([0, 4, 7, 10], dtype=torch.long)  # 3 sequences, nt=10
-    batch_idx, pos_idx = mod(cu)
+    batch_idx, pos_idx = _export_cu_to_indices(ExportShapeMode.DYNAMIC, cu)
     assert batch_idx.tolist() == [0, 0, 0, 0, 1, 1, 1, 2, 2, 2]
     assert pos_idx.tolist() == [0, 1, 2, 3, 0, 1, 2, 0, 1, 2]
 
 
 def test_cu_to_indices_export_same_batch_different_seqlens() -> None:
-    """Exported _cu_to_indices runs when nt changes but batch size stays the same."""
-    mod = _export_cu_to_indices().module()
+    """Dynamic exports run when token count changes but batch size stays fixed."""
     # Same batch=2 as trace, different lengths → different nt
     cu = torch.tensor([0, 6, 11], dtype=torch.long)  # lengths 6/5, nt=11
-    batch_idx, pos_idx = mod(cu)
+    batch_idx, pos_idx = _export_cu_to_indices(ExportShapeMode.DYNAMIC, cu)
     assert batch_idx.tolist() == [0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1]
     assert pos_idx.tolist() == [0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4]
