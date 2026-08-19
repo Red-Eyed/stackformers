@@ -45,6 +45,12 @@ class SwiGLUConfig(_FFBase):
     kind: Literal["swiglu"] = "swiglu"
 
 
+class HardSwishGLUConfig(_FFBase):
+    """Config for a parameter-matched GLU with a HardSwish gate."""
+
+    kind: Literal["hardswish_glu"] = "hardswish_glu"
+
+
 class GEGLUConfig(_FFBase):
     """Config for the GEGLU feed-forward network (Noam Shazeer, 2020)."""
 
@@ -78,6 +84,6 @@ class ReluSquaredConfig(_FFBase):
 
 
 FeedForwardConfig = Annotated[
-    SwiGLUConfig | GEGLUConfig | GELUConfig | ReluSquaredConfig,
+    SwiGLUConfig | HardSwishGLUConfig | GEGLUConfig | GELUConfig | ReluSquaredConfig,
     Field(discriminator="kind"),
 ]

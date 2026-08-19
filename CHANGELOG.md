@@ -6,6 +6,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/): MAJOR for breaking public API changes,
 MINOR for backwards-compatible features, PATCH for bug fixes and internal changes.
 
+## [4.7.0b2] — 2026-08-19
+
+### Added
+
+- **`HardSwishGLU`** — a bias-free, parameter-matched gated feed-forward variant using
+  `nn.Hardswish` instead of SwiGLU's `nn.SiLU`. Select it with
+  `HardSwishGLUConfig(kind="hardswish_glu")`; serialized configurations preserve the distinction
+  between the exact SwiGLU operation and its piecewise-linear HardSwish alternative.
+
+### Compatibility
+
+- Existing feed-forward classes, config discriminators, presets, and defaults are unchanged.
+  `HardSwishGLU` is opt-in and uses the same input/output shape and hidden-width rule as SwiGLU.
+
 ## [4.7.0b1] — 2026-08-18
 
 ### Added

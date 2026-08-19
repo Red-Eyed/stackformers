@@ -28,6 +28,7 @@ from stackformers.decoder import (
 from stackformers.encoder import Encoder
 from stackformers.feedforward.config import FeedForwardConfig
 from stackformers.feedforward.factory import build_ff
+from stackformers.feedforward.hardswish_glu import HardSwishGLU
 from stackformers.feedforward.protocols import FeedForward
 from stackformers.feedforward.swiglu import SwiGLU
 from stackformers.layers import (
@@ -146,6 +147,7 @@ __all__ = [
     "SelfAttention",
     "CrossAttention",
     # feedforward
+    "HardSwishGLU",
     "SwiGLU",
     # builders
     "build_norm",

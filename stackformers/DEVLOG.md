@@ -1,5 +1,32 @@
 # Transformer model development log
 
+## 2026-08-19 — HardSwish-gated feed-forward variant
+
+### Observation
+
+SwiGLU couples the gated feed-forward structure to an exact SiLU activation. Mobile-oriented
+models may prefer HardSwish's piecewise-linear approximation, but changing `SwiGLU` itself would
+silently alter existing configs, checkpoints, and callers that depend on the named operation.
+
+### Decision
+
+Add `HardSwishGLU` as an explicit feed-forward implementation with its own discriminated
+`HardSwishGLUConfig`. Retain the same bias-free three-projection structure and parameter-matched
+two-thirds hidden-width rule as SwiGLU. Wire it through the common factory without changing any
+preset default.
+
+### Verified
+
+- The module preserves token shapes across supported test dtypes, remains bias-free, and
+  propagates finite gradients.
+- The configuration round-trips through the `FeedForwardConfig` discriminator and the shared
+  factory constructs the selected implementation.
+
+### Unproven
+
+No accuracy, convergence, exported-graph size, or ARM latency benefit is claimed. Those properties
+remain workload- and runtime-dependent and require comparison against exact SwiGLU.
+
 ## 2026-08-18 — Variable-width encoder preset
 
 ### Observation
