@@ -6,6 +6,39 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/): MAJOR for breaking public API changes,
 MINOR for backwards-compatible features, PATCH for bug fixes and internal changes.
 
+## [4.7.0b5] — 2026-08-28
+
+### Highlights
+
+- Add an export-oriented decoder path that reuses cross-attention K/V projections and grows a
+  self-attention K/V cache one token at a time, while leaving existing encoder, decoder, and
+  attention APIs unchanged.
+
+### New Features
+
+- Add composition-only `CachedSelfAttentionWrapper`, `CachedCrossAttentionWrapper`,
+  `DecoderCrossAttentionCacheBuilder`, and `CachedDecoderWrapper` APIs. The wrappers share the
+  existing model's parameters and support every built-in positional encoding and decoder
+  normalization topology.
+- Define a C++/ONNX Runtime-friendly tensor boundary with required, non-optional cross and self
+  caches, a required `step_i` tensor, dynamically shaped batch/source/history axes, and a returned
+  self cache for the next decoder session run. Cached self-attention currently requires global
+  causal attention with `NoAttnBias`.
+
+### Documentation
+
+- Add an encoder-decoder example that exports separate encoder, cross-cache builder, and cached
+  one-token decoder ONNX graphs, then verifies their autoregressive outputs with ONNX Runtime.
+- Document cache layouts, tensor names, ownership, lifecycle, dynamic axes, and the initial
+  zero-length self-cache contract for C++ integration.
+
+### Developers
+
+- Add eager parity, gradient, export, ONNX Runtime, positional-encoding, and stable `4.6.0` public
+  API regression coverage for the cached path.
+- Standardize export-facing structured records on `NamedTuple` or `TypedDict` and enforce the
+  repository's no-dataclass policy with Ruff.
+
 ## [4.7.0b4] — 2026-08-19
 
 ### Backwards Incompatible Changes

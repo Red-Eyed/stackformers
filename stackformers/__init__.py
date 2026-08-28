@@ -7,9 +7,14 @@ __version__ = version("stackformers")
 from stackformers.attention import (
     AttnBias,
     AttnBiasConfig,
+    CachedCrossAttentionWrapper,
+    CachedSelfAttentionWrapper,
     CrossAttention,
     CrossAttentionConfig,
+    CrossAttentionKVCache,
     CrossAttn,
+    DecoderCrossAttentionCache,
+    DecoderStepOutput,
     DistanceBiasConfig,
     NoAttnBias,
     NoAttnBiasConfig,
@@ -36,6 +41,7 @@ from stackformers.decoder import (
     ReorderedNormDecoderLayer,
     SandwichNormDecoderLayer,
 )
+from stackformers.decoder_cache import CachedDecoderWrapper, DecoderCrossAttentionCacheBuilder
 from stackformers.encoder import Encoder
 from stackformers.feedforward import (
     GEGLU,
@@ -143,7 +149,12 @@ __all__ = [
     "PosEncoding",
     "SelfAttn",
     "CrossAttn",
+    "CachedCrossAttentionWrapper",
+    "CachedSelfAttentionWrapper",
     "AttnBias",
+    "CrossAttentionKVCache",
+    "DecoderCrossAttentionCache",
+    "DecoderStepOutput",
     "FeedForward",
     "Norm",
     "EncoderLike",
@@ -213,6 +224,8 @@ __all__ = [
     "SandwichNormDecoderLayer",
     "ReorderedNormDecoderLayer",
     "Decoder",
+    "DecoderCrossAttentionCacheBuilder",
+    "CachedDecoderWrapper",
     "CrossAttenderLayerBase",
     "CrossAttenderLayer",
     "PostNormCrossAttenderLayer",

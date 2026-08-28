@@ -1,4 +1,10 @@
 from stackformers.attention.bias import NoAttnBias
+from stackformers.attention.cache import (
+    CrossAttentionKVCache,
+    DecoderCrossAttentionCache,
+    DecoderStepOutput,
+)
+from stackformers.attention.cached import CachedCrossAttentionWrapper, CachedSelfAttentionWrapper
 from stackformers.attention.config import (
     AttnBiasConfig,
     CrossAttentionConfig,
@@ -9,7 +15,11 @@ from stackformers.attention.config import (
 from stackformers.attention.cross_attn import CrossAttention
 from stackformers.attention.distance_bias import RelativeDistanceBias
 from stackformers.attention.factory import build_attn_bias
-from stackformers.attention.protocols import AttnBias, CrossAttn, SelfAttn
+from stackformers.attention.protocols import (
+    AttnBias,
+    CrossAttn,
+    SelfAttn,
+)
 from stackformers.attention.self_attn import SelfAttention
 
 __all__ = [
@@ -20,7 +30,12 @@ __all__ = [
     "DistanceBiasConfig",
     "SelfAttn",
     "CrossAttn",
+    "CachedCrossAttentionWrapper",
+    "CachedSelfAttentionWrapper",
     "AttnBias",
+    "CrossAttentionKVCache",
+    "DecoderCrossAttentionCache",
+    "DecoderStepOutput",
     "SelfAttention",
     "CrossAttention",
     "NoAttnBias",

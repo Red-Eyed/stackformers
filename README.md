@@ -93,6 +93,43 @@ model = TransformerDecoder(plain_decoder_config(dim=512, heads=8, num_layers=6))
 out   = model(make_padded_input(x, mask), make_padded_input(context, ctx_mask))
 ```
 
+For autoregressive export, build cross K/V once and pass both required cache tensors to every
+one-token decoder invocation:
+
+```python
+import torch
+
+from stackformers import (
+    CachedDecoderWrapper,
+    DecoderCrossAttentionCacheBuilder,
+)
+
+model.eval()
+cache_builder = DecoderCrossAttentionCacheBuilder(model).eval()
+cached_decoder = CachedDecoderWrapper(model).eval()
+
+cross_cache = cache_builder(context_input)
+self_kv_cache = torch.empty(num_layers, 2, batch, kv_heads, 0, dim_head)
+step_i = torch.tensor([0], dtype=torch.int64)
+cache_onnx = torch.onnx.export(cache_builder, (context_input,), dynamo=True)
+decoder_onnx = torch.onnx.export(
+    cached_decoder,
+    (target_token, cross_cache, self_kv_cache, step_i),
+    dynamo=True,
+)
+```
+
+The cache builder runs once per encoder context. Each decoder call consumes exactly one target
+token, the immutable cross cache, the growing self cache, and `step_i`; it returns the output token
+and a self cache extended by one position. K/V tensors retain `kv_heads` rather than expanded query
+heads. Cache construction positions cross K once, while cached decoding positions each new self K
+and both self/cross Q, so all built-in positional encodings remain available. Batch, source, and
+past-target axes are dynamic during export; model width, layer count, head geometry, and the
+one-token axis remain static because weights constrain them.
+
+See the complete eager, ONNX export, and raw ONNX Runtime demonstration in
+[`examples/encoder_decoder_onnxruntime.py`](examples/encoder_decoder_onnxruntime.py).
+
 ### Explicit config
 
 Full control with JSON round-trip via `kind` discriminators:

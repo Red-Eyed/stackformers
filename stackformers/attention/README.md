@@ -18,6 +18,16 @@ Multi-head self-attention and cross-attention.
 
 **GQA / MQA.** Set `kv_heads < heads` in either config. Key and value heads are repeated via `einops.repeat` before the dot-product — no attention-specific changes needed.
 
+**Exportable decoder K/V caches.** `CachedCrossAttentionWrapper` composes an existing cross-attention
+module and projects one fixed padded context at the configured `kv_heads` width.
+`CachedSelfAttentionWrapper` composes an existing self-attention module, consumes one target token and a
+required cache tensor whose sequence length equals `step_i`, then returns a cache extended by one
+position. `DecoderCrossAttentionCacheBuilder` stacks every decoder layer into one dense
+`(layers, 2, batch, kv_heads, source, dim_head)` tensor and retains the shared context mask;
+`CachedDecoderWrapper` mirrors each normalization topology for the one-token graph. The wrappers position
+K before storage and Q on each step through the existing joint positional API. Ordinary attention,
+decoder, preset, and positional classes contain no cache-specific methods.
+
 **Geometry a rotary encoding cannot carry.** `RelativeDistanceBias` adds a learned function of the Euclidean distance between node positions to the logits, making attention invariant to any global translation or rotation of the input. It lives here rather than in `positional/` because it *cannot* live there: RoPE rotates by `ω·p`, which is linear in position by construction — and that linearity is exactly what makes the query and key rotations cancel into a relative offset. Distance is not linear in position, so no rotary encoding, axial or otherwise, can express it; a bias is the only route. Pair it with `NoPosEncoding` — a rotary encoding alongside it would reintroduce the preferred frame it exists to remove. Use it when node coordinates have no meaningful axes; when up and right *do* mean something, RoPE-2D keeps direction and stays varlen-compatible.
 
 **The bias costs the varlen path, by construction.** `varlen_attn` has no bias slot, so any non-`None` `AttnBias` forces the padded SDPA path and materialises a `(b, h, n, s)` tensor. The `(b, n, s, num_rbf)` shell intermediate is retained for backward and is `num_rbf/h` times larger still — it, not the bias, dominates activation memory. `NoAttnBias` returns `None` precisely so the common case keeps the kernel. `TransformerEncoder` shares one bias *module* across layers, but each layer still *calls* it, so the tensor is recomputed and retained per layer; at large node counts the levers are a smaller `num_rbf`, checkpointing the bias, or hoisting the call out of the layer loop.

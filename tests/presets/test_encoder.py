@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Literal, TypeAlias
+from typing import Literal, NamedTuple, TypeAlias
 
 import pytest
 import torch
@@ -49,8 +48,7 @@ EncoderExportVariant: TypeAlias = Literal[
 ]
 
 
-@dataclass(frozen=True)
-class EncoderExportCase:
+class EncoderExportCase(NamedTuple):
     """Hold one encoder and its example and resized padded inputs."""
 
     model: nn.Module

@@ -1,5 +1,51 @@
 # Transformer model development log
 
+## 2026-08-21 — Exportable decoder cross/self-attention K/V caches
+
+### Observation
+
+Autoregressive ONNX decoding projected the same fixed encoder context into cross-attention keys
+and values at every generation step and recomputed self-attention K/V for the complete target
+prefix. On a mobile C++ runtime this repeated work adds latency even though the encoder context and
+all earlier target projections are unchanged.
+
+### Decision
+
+Add cache behavior only through composed classes, leaving existing attention, decoder-layer,
+decoder, preset, and positional classes unchanged. `CachedCrossAttentionWrapper` projects and
+positions context K once; `CachedSelfAttentionWrapper` accepts one target token plus a required growing cache and
+returns the cache extended by one position. They share the wrapped modules' projection,
+normalization, positional, dropout, and output parameters without copying them. Query-only and
+key-only cross positioning use the existing joint positional API with a zero-token counterpart,
+so every built-in encoding works without a new positional interface.
+
+`DecoderCrossAttentionCacheBuilder` exposes the once-per-context graph and `CachedDecoderWrapper`
+constructs a separate executor for each existing normalization topology. The decoder graph accepts
+the immutable dense cross cache, required dense self cache, and an int64 `step_i`; it returns the
+output token and next self cache. The context validity mask remains separate because padding cannot
+be derived from tensor dimensions. Cache lengths come from tensor dimensions, so there is no
+source-length input. Batch, source-token, and past-token axes are dynamic, while
+layer/head/feature geometry and the one-token decoder axis remain fixed by the model contract.
+
+### Verified
+
+- Cached and ordinary outputs match for MHA/GQA, QK-Norm, context/target padding, RoPE positional
+  encoding, and every decoder normalization topology.
+- Repeated calls project only the new self/cross queries and new self K/V; context K/V projection
+  runs only during cache construction, and both caches remain at `kv_heads` width.
+- Separate encoder, cross-cache builder, and one-token decoder graphs execute in ONNX Runtime with
+  growing-prefix parity. Exported runtime-varying batch/source/past axes accept shapes different
+  from the export examples, including a zero-length initial self cache.
+- Composing cache executors adds no parameters or buffers, leaves ordinary checkpoint keys
+  unchanged, and requires no cache-specific methods on the existing model classes.
+
+### Unproven
+
+No mobile-device latency, peak-memory, binary-size, or power measurement has been made. ONNX
+Runtime CPU parity does not establish support or performance for a particular mobile execution
+provider. Cached self-attention currently supports global causal attention with no attention bias;
+sliding-window attention and custom bias collaborators remain unsupported on the cached path.
+
 ## 2026-08-19 — Restore complete variable-width layer configs
 
 ### Observation

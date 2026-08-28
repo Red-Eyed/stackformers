@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 
 from stackformers.attention.bias import NoAttnBias
+from stackformers.attention.cached import CachedSelfAttentionWrapper
 from stackformers.attention.config import SelfAttentionConfig
 from stackformers.attention.protocols import AttnBias
 from stackformers.attention.self_attn import SelfAttention
@@ -134,6 +135,54 @@ def test_self_attn_gqa(device_dtype: tuple[torch.device, torch.dtype]) -> None:
     x = torch.randn(B, N, D, device=device, dtype=dtype)
     mask = torch.ones(B, N, dtype=torch.bool, device=device)
     assert attn(make_padded_input(x, mask)).shape == (B, N, D)
+
+
+@pytest.mark.parametrize("use_rope", [False, True])
+@pytest.mark.parametrize("kv_heads", [None, 2])
+def test_cached_self_attn_matches_full_causal_prefix(
+    device_dtype: tuple[torch.device, torch.dtype],
+    x_pad: PaddedInput,
+    use_rope: bool,
+    kv_heads: int | None,
+) -> None:
+    """Required growing caches preserve causal output with RoPE and GQA."""
+    device, dtype = device_dtype
+    config = SelfAttentionConfig(
+        dim=D,
+        heads=H,
+        dim_head=DH,
+        kv_heads=kv_heads,
+        causal=True,
+    )
+    position = RotaryEmbedding1D(RoPE1DConfig(dim_head=DH)) if use_rope else NoPosEncoding()
+    attention = SelfAttention(config=config, pos_encoding=position).to(
+        device=device,
+        dtype=dtype,
+    )
+    cached = CachedSelfAttentionWrapper(attention)
+    cache = torch.zeros(
+        2,
+        B,
+        config.effective_kv_heads,
+        0,
+        DH,
+        device=device,
+        dtype=dtype,
+    )
+
+    with torch.no_grad():
+        for step in range(N):
+            prefix = PaddedInput(*(tensor[:, : step + 1] for tensor in x_pad))
+            token = PaddedInput(*(tensor[:, step : step + 1] for tensor in x_pad))
+            expected = attention(prefix)[:, -1:]
+            actual, cache = cached(
+                token,
+                cache,
+                torch.tensor([step], dtype=torch.int64, device=device),
+            )
+            torch.testing.assert_close(actual, expected)
+
+    assert cache.shape == (2, B, config.effective_kv_heads, N, DH)
 
 
 def test_self_attn_gradients(device: torch.device) -> None:
