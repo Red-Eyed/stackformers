@@ -1,4 +1,29 @@
-# Encoder–decoder ONNX Runtime example
+# Examples
+
+Each example is a small, deterministic program built from the public Stackformers API. They run
+on CPU and avoid external datasets, tokenizers, or model downloads.
+
+| Example | What it demonstrates |
+| --- | --- |
+| [`padded_and_packed.py`](padded_and_packed.py) | One encoder and one set of weights processing equivalent padded and packed variable-length batches. |
+| [`causal_language_model.py`](causal_language_model.py) | A decoder-only language model with token embeddings, causal attention, next-token loss, and an optimizer step. |
+| [`image_encoder.py`](image_encoder.py) | Image patch projection, explicit row/column positions, RoPE-2D, pooling, and classification. |
+| [`point_cloud_encoder.py`](point_cloud_encoder.py) | Continuous 3-D positions, coordinate centering, RoPE-ND, and translation invariance. |
+| [`subclassed_encoder.py`](subclassed_encoder.py) | A focused preset-hook override and a fully user-owned `TransformerEncoderBase` subclass. |
+| [`encoder_decoder_onnxruntime.py`](encoder_decoder_onnxruntime.py) | Separate encoder, cross-cache, and cached-decoder ONNX graphs with ONNX Runtime parity. |
+
+Run any example from the repository root:
+
+```bash
+uv run examples/padded_and_packed.py
+uv run examples/causal_language_model.py
+uv run examples/image_encoder.py
+uv run examples/point_cloud_encoder.py
+uv run examples/subclassed_encoder.py
+uv run examples/encoder_decoder_onnxruntime.py
+```
+
+## Encoder–decoder ONNX Runtime
 
 [`encoder_decoder_onnxruntime.py`](encoder_decoder_onnxruntime.py) builds one ordinary
 `TransformerEncoder` + `TransformerDecoder` model and exports the same modules along deployment

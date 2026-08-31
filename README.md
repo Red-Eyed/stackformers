@@ -7,6 +7,10 @@ Every architectural choice — positional encoding, normalization, feedforward v
 uv add stackformers
 ```
 
+Runnable examples cover variable-length layouts, causal language modeling, image patches,
+continuous point coordinates, user subclassing, and cached ONNX Runtime deployment. See the
+[`examples` guide](examples/README.md).
+
 ---
 
 ## Why

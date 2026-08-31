@@ -6,6 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/): MAJOR for breaking public API changes,
 MINOR for backwards-compatible features, PATCH for bug fixes and internal changes.
 
+## [4.7.0b6] — 2026-08-31
+
+### Documentation
+
+- Add runnable, CPU-friendly examples for equivalent padded and packed batches, causal language
+  modeling, image patches with RoPE-2D, continuous point coordinates with RoPE-ND, and both
+  focused and fully user-owned encoder subclassing.
+
 ## [4.7.0b5] — 2026-08-28
 
 ### Highlights
