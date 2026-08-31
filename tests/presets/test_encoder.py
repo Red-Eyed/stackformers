@@ -32,7 +32,7 @@ from stackformers.presets.encoder import (
     windowed_encoder_config,
 )
 from stackformers.sequence import PackedInput, PaddedInput, make_packed_input, make_padded_input
-from tests.export_utils import ExportShapeMode, export_and_run
+from tests.export_utils import ONNX_OPSET_CASES, ExportShapeMode, export_and_run
 
 B, N, D, H = 2, 16, 64, 4
 NT = 10  # two packed seqs: 6 + 4
@@ -251,9 +251,11 @@ def test_padded_and_packed_share_weights() -> None:
     ["plain", "yarn", "rope2d", "rope_nd", "learned", "windowed", "node"],
 )
 @pytest.mark.parametrize("shape_mode", tuple(ExportShapeMode), ids=lambda mode: mode.value)
+@pytest.mark.parametrize("opset_version", ONNX_OPSET_CASES)
 def test_encoder_variant_is_export_compatible(
     variant: EncoderExportVariant,
     shape_mode: ExportShapeMode,
+    opset_version: int,
 ) -> None:
     """Every encoder path exports with both static and dynamic input shapes."""
     case = _encoder_export_case(variant)
@@ -267,6 +269,7 @@ def test_encoder_variant_is_export_compatible(
         case.model,
         (case.example,),
         shape_mode,
+        opset_version,
         dynamic_shapes=shapes.dynamic_shapes(case.model, (case.example,)),
         runtime_args=(case.resized,),
     )

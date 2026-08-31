@@ -44,7 +44,7 @@ from stackformers.layers import (
     TransformerLayerBase,
 )
 from stackformers.sequence import PackedInput, PaddedInput, make_packed_input, make_padded_input
-from tests.export_utils import ExportShapeMode, export_and_run
+from tests.export_utils import ONNX_OPSET_CASES, ExportShapeMode, export_and_run
 
 B, N, D_IN, D_OUT = 2, 8, 192, 384
 NT = 10
@@ -356,10 +356,12 @@ def test_every_feed_forward_variant_is_configurable(
 
 @pytest.mark.parametrize(("config_type", "_"), FEED_FORWARD_VARIANTS)
 @pytest.mark.parametrize("shape_mode", tuple(ExportShapeMode), ids=lambda mode: mode.value)
+@pytest.mark.parametrize("opset_version", ONNX_OPSET_CASES)
 def test_variable_width_encoder_is_export_compatible(
     config_type: FeedForwardConfigType,
     _: type[nn.Module],
     shape_mode: ExportShapeMode,
+    opset_version: int,
 ) -> None:
     """Every feed-forward variant exports with static and dynamic shapes."""
     config = _config_with_feed_forward(config_type)
@@ -382,6 +384,7 @@ def test_variable_width_encoder_is_export_compatible(
         encoder,
         (input,),
         shape_mode,
+        opset_version,
         dynamic_shapes=shapes.dynamic_shapes(encoder, (input,)),
         runtime_args=(resized_input,),
     )

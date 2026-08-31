@@ -20,7 +20,7 @@ from stackformers.presets.decoder import (
     plain_decoder_config,
 )
 from stackformers.sequence import PaddedInput, make_padded_input
-from tests.export_utils import ExportShapeMode, export_and_run
+from tests.export_utils import ONNX_OPSET_CASES, ExportShapeMode, export_and_run
 
 B, N, S, D, H = 2, 8, 12, 64, 4  # N=target len, S=context len
 
@@ -93,7 +93,11 @@ def test_decoder_config_rejects_unknown_norm_placement() -> None:
 
 
 @pytest.mark.parametrize("shape_mode", tuple(ExportShapeMode), ids=lambda mode: mode.value)
-def test_plain_decoder_is_export_compatible(shape_mode: ExportShapeMode) -> None:
+@pytest.mark.parametrize("opset_version", ONNX_OPSET_CASES)
+def test_plain_decoder_is_export_compatible(
+    shape_mode: ExportShapeMode,
+    opset_version: int,
+) -> None:
     """The decoder preset exports static and independently dynamic target/context lengths."""
     model = TransformerDecoder(plain_decoder_config(D, heads=1, num_layers=1))
     target = make_padded_input(
@@ -125,6 +129,7 @@ def test_plain_decoder_is_export_compatible(shape_mode: ExportShapeMode) -> None
         model,
         (target, context),
         shape_mode,
+        opset_version,
         dynamic_shapes=shapes.dynamic_shapes(model, (target, context)),
         runtime_args=(resized_target, resized_context),
     )

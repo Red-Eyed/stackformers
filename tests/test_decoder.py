@@ -18,7 +18,7 @@ from stackformers.norm.config import NormPlacement, RMSNormConfig
 from stackformers.positional.config import NoPosEncodingConfig, RoPE1DConfig
 from stackformers.presets.decoder import TransformerDecoder, TransformerDecoderConfig
 from stackformers.sequence import make_padded_input
-from tests.export_utils import ExportShapeMode, export_and_run
+from tests.export_utils import ONNX_OPSET_CASES, ExportShapeMode, export_and_run
 from tests.norm_topology_helpers import (
     AffineNorm,
     ScaleCrossAttention,
@@ -296,9 +296,11 @@ def test_decoder_norm_placement_gradients(norm_placement: NormPlacement) -> None
 
 @pytest.mark.parametrize("norm_placement", ["pre", "post", "sandwich", "reordered"])
 @pytest.mark.parametrize("shape_mode", tuple(ExportShapeMode), ids=lambda mode: mode.value)
+@pytest.mark.parametrize("opset_version", ONNX_OPSET_CASES)
 def test_decoder_norm_placement_is_export_compatible(
     norm_placement: NormPlacement,
     shape_mode: ExportShapeMode,
+    opset_version: int,
 ) -> None:
     """Every decoder topology supports static and dynamic export."""
     x_input = make_topology_input()
@@ -324,6 +326,7 @@ def test_decoder_norm_placement_is_export_compatible(
         layer,
         (x_input, ctx_input),
         shape_mode,
+        opset_version,
         dynamic_shapes=shapes.dynamic_shapes(layer, (x_input, ctx_input)),
         runtime_args=(resized_x_input, resized_ctx_input),
     )

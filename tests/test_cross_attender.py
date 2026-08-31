@@ -17,7 +17,7 @@ from stackformers.feedforward.config import SwiGLUConfig
 from stackformers.norm.config import NormPlacement, RMSNormConfig
 from stackformers.presets.cross_attender import CrossAttender, CrossAttenderConfig
 from stackformers.sequence import make_padded_input
-from tests.export_utils import ExportShapeMode, export_and_run
+from tests.export_utils import ONNX_OPSET_CASES, ExportShapeMode, export_and_run
 from tests.norm_topology_helpers import (
     AffineNorm,
     ScaleCrossAttention,
@@ -251,9 +251,11 @@ def test_cross_attender_norm_placement_gradients(norm_placement: NormPlacement) 
 
 @pytest.mark.parametrize("norm_placement", ["pre", "post", "sandwich", "reordered"])
 @pytest.mark.parametrize("shape_mode", tuple(ExportShapeMode), ids=lambda mode: mode.value)
+@pytest.mark.parametrize("opset_version", ONNX_OPSET_CASES)
 def test_cross_attender_norm_placement_is_export_compatible(
     norm_placement: NormPlacement,
     shape_mode: ExportShapeMode,
+    opset_version: int,
 ) -> None:
     """Every cross-attender topology supports static and dynamic export."""
     x_input = make_topology_input()
@@ -279,6 +281,7 @@ def test_cross_attender_norm_placement_is_export_compatible(
         layer,
         (x_input, ctx_input),
         shape_mode,
+        opset_version,
         dynamic_shapes=shapes.dynamic_shapes(layer, (x_input, ctx_input)),
         runtime_args=(resized_x_input, resized_ctx_input),
     )

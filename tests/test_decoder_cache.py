@@ -18,7 +18,7 @@ from stackformers.positional.config import RoPE1DConfig
 from stackformers.positional.rope1d import RotaryEmbedding1D
 from stackformers.presets.decoder import TransformerDecoder, plain_decoder_config
 from stackformers.sequence import PaddedInput, make_padded_input
-from tests.export_utils import ExportShapeMode, export_and_run
+from tests.export_utils import ONNX_OPSET_CASES, ExportShapeMode, export_and_run
 
 B, N, S, D, H = 2, 4, 6, 64, 1
 
@@ -195,9 +195,11 @@ def test_decoder_rejects_cache_for_different_layer_count(
 
 
 @pytest.mark.parametrize("shape_mode", tuple(ExportShapeMode), ids=lambda mode: mode.value)
+@pytest.mark.parametrize("opset_version", ONNX_OPSET_CASES)
 def test_decoder_cache_builder_exports_to_onnx(
     decoder_inputs: tuple[PaddedInput, PaddedInput],
     shape_mode: ExportShapeMode,
+    opset_version: int,
 ) -> None:
     """The once-per-context cache builder supports static and dynamic ONNX export."""
     _, context = decoder_inputs
@@ -217,15 +219,18 @@ def test_decoder_cache_builder_exports_to_onnx(
         builder,
         (context,),
         shape_mode,
+        opset_version,
         dynamic_shapes=shapes.dynamic_shapes(builder, (context,)),
         runtime_args=(resized_context,),
     )
 
 
 @pytest.mark.parametrize("shape_mode", tuple(ExportShapeMode), ids=lambda mode: mode.value)
+@pytest.mark.parametrize("opset_version", ONNX_OPSET_CASES)
 def test_cached_decoder_exports_to_onnx(
     decoder_inputs: tuple[PaddedInput, PaddedInput],
     shape_mode: ExportShapeMode,
+    opset_version: int,
 ) -> None:
     """Required dense caches export with dynamic batch and context length."""
     target, context = decoder_inputs
@@ -258,6 +263,7 @@ def test_cached_decoder_exports_to_onnx(
         cached_decoder,
         (target_token, cross_cache, self_cache, step_i),
         shape_mode,
+        opset_version,
         dynamic_shapes=shapes.dynamic_shapes(
             cached_decoder,
             (target_token, cross_cache, self_cache, step_i),

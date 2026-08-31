@@ -21,7 +21,7 @@ from stackformers.sequence import (
     padded_to_packed,
     position_ids_from_packed,
 )
-from tests.export_utils import ExportShapeMode, export_and_run
+from tests.export_utils import ONNX_OPSET_CASES, ExportShapeMode, export_and_run
 
 
 def test_padded_sequence_mask_shape() -> None:
@@ -140,6 +140,7 @@ class _PosIdsWrapper(nn.Module):
 
 def _export_pos_ids(
     shape_mode: ExportShapeMode,
+    opset_version: int,
     runtime_cu: torch.Tensor | None = None,
     max_batch: int = 64,
 ) -> torch.Tensor:
@@ -155,6 +156,7 @@ def _export_pos_ids(
         wrapper,
         (cu,),
         shape_mode,
+        opset_version,
         dynamic_shapes=({0: bp1_dim},),
         runtime_args=(runtime_cu,) if runtime_cu is not None else None,
     )
@@ -162,16 +164,21 @@ def _export_pos_ids(
 
 
 @pytest.mark.parametrize("shape_mode", tuple(ExportShapeMode), ids=lambda mode: mode.value)
-def test_position_ids_export_succeeds(shape_mode: ExportShapeMode) -> None:
+@pytest.mark.parametrize("opset_version", ONNX_OPSET_CASES)
+def test_position_ids_export_succeeds(
+    shape_mode: ExportShapeMode,
+    opset_version: int,
+) -> None:
     """Packed position IDs export with concrete and symbolic batch dimensions."""
-    assert _export_pos_ids(shape_mode).tolist() == [0, 1, 2, 0, 1]
+    assert _export_pos_ids(shape_mode, opset_version).tolist() == [0, 1, 2, 0, 1]
 
 
-def test_position_ids_export_new_batch_and_seqlens() -> None:
+@pytest.mark.parametrize("opset_version", ONNX_OPSET_CASES)
+def test_position_ids_export_new_batch_and_seqlens(opset_version: int) -> None:
     """Dynamic exports run with a different batch size and sequence lengths."""
     # 3 sequences, lengths 4/3/3 → nt=10 (both batch and nt differ from trace)
     cu = torch.tensor([0, 4, 7, 10], dtype=torch.long)
-    assert _export_pos_ids(ExportShapeMode.DYNAMIC, cu).tolist() == [
+    assert _export_pos_ids(ExportShapeMode.DYNAMIC, opset_version, cu).tolist() == [
         0,
         1,
         2,
@@ -185,11 +192,12 @@ def test_position_ids_export_new_batch_and_seqlens() -> None:
     ]
 
 
-def test_position_ids_export_same_batch_different_seqlens() -> None:
+@pytest.mark.parametrize("opset_version", ONNX_OPSET_CASES)
+def test_position_ids_export_same_batch_different_seqlens(opset_version: int) -> None:
     """Dynamic exports run when token count changes but batch size stays fixed."""
     # Same batch=2 as the trace, but different lengths → different nt
     cu = torch.tensor([0, 6, 11], dtype=torch.long)  # lengths 6/5, nt=11
-    assert _export_pos_ids(ExportShapeMode.DYNAMIC, cu).tolist() == [
+    assert _export_pos_ids(ExportShapeMode.DYNAMIC, opset_version, cu).tolist() == [
         0,
         1,
         2,

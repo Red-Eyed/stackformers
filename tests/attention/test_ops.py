@@ -19,7 +19,7 @@ from stackformers.attention.ops import (
     _packed_heads_to_padded,
     _padded_heads_to_packed,
 )
-from tests.export_utils import ExportShapeMode, export_and_run
+from tests.export_utils import ONNX_OPSET_CASES, ExportShapeMode, export_and_run
 
 B = 3
 H = 2
@@ -105,6 +105,7 @@ class _CuToIndicesWrapper(nn.Module):
 
 def _export_cu_to_indices(
     shape_mode: ExportShapeMode,
+    opset_version: int,
     runtime_cu: torch.Tensor | None = None,
     max_batch: int = 64,
 ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -120,6 +121,7 @@ def _export_cu_to_indices(
         wrapper,
         (cu,),
         shape_mode,
+        opset_version,
         dynamic_shapes=({0: bp1_dim},),
         runtime_args=(runtime_cu,) if runtime_cu is not None else None,
     )
@@ -127,25 +129,31 @@ def _export_cu_to_indices(
 
 
 @pytest.mark.parametrize("shape_mode", tuple(ExportShapeMode), ids=lambda mode: mode.value)
-def test_cu_to_indices_export_succeeds(shape_mode: ExportShapeMode) -> None:
+@pytest.mark.parametrize("opset_version", ONNX_OPSET_CASES)
+def test_cu_to_indices_export_succeeds(
+    shape_mode: ExportShapeMode,
+    opset_version: int,
+) -> None:
     """Packed indices export with concrete and symbolic batch dimensions."""
-    batch_idx, pos_idx = _export_cu_to_indices(shape_mode)
+    batch_idx, pos_idx = _export_cu_to_indices(shape_mode, opset_version)
     assert batch_idx.tolist() == [0, 0, 0, 1, 1]
     assert pos_idx.tolist() == [0, 1, 2, 0, 1]
 
 
-def test_cu_to_indices_export_new_batch_and_seqlens() -> None:
+@pytest.mark.parametrize("opset_version", ONNX_OPSET_CASES)
+def test_cu_to_indices_export_new_batch_and_seqlens(opset_version: int) -> None:
     """Dynamic exports produce correct indices for a different batch and token count."""
     cu = torch.tensor([0, 4, 7, 10], dtype=torch.long)  # 3 sequences, nt=10
-    batch_idx, pos_idx = _export_cu_to_indices(ExportShapeMode.DYNAMIC, cu)
+    batch_idx, pos_idx = _export_cu_to_indices(ExportShapeMode.DYNAMIC, opset_version, cu)
     assert batch_idx.tolist() == [0, 0, 0, 0, 1, 1, 1, 2, 2, 2]
     assert pos_idx.tolist() == [0, 1, 2, 3, 0, 1, 2, 0, 1, 2]
 
 
-def test_cu_to_indices_export_same_batch_different_seqlens() -> None:
+@pytest.mark.parametrize("opset_version", ONNX_OPSET_CASES)
+def test_cu_to_indices_export_same_batch_different_seqlens(opset_version: int) -> None:
     """Dynamic exports run when token count changes but batch size stays fixed."""
     # Same batch=2 as trace, different lengths → different nt
     cu = torch.tensor([0, 6, 11], dtype=torch.long)  # lengths 6/5, nt=11
-    batch_idx, pos_idx = _export_cu_to_indices(ExportShapeMode.DYNAMIC, cu)
+    batch_idx, pos_idx = _export_cu_to_indices(ExportShapeMode.DYNAMIC, opset_version, cu)
     assert batch_idx.tolist() == [0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1]
     assert pos_idx.tolist() == [0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4]

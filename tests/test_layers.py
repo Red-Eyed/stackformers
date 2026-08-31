@@ -24,7 +24,7 @@ from stackformers.norm.config import RMSNormConfig
 from stackformers.norm.factory import build_norm
 from stackformers.positional.none import NoPosEncoding
 from stackformers.sequence import PaddedInput, make_padded_input
-from tests.export_utils import ExportShapeMode, export_and_run
+from tests.export_utils import ONNX_OPSET_CASES, ExportShapeMode, export_and_run
 from tests.norm_topology_helpers import (
     AffineNorm,
     ScaleFeedForward,
@@ -260,9 +260,11 @@ def test_legacy_whole_module_without_placement_defaults_to_pre_norm() -> None:
 
 @pytest.mark.parametrize("norm_placement", ["pre", "post", "sandwich", "reordered"])
 @pytest.mark.parametrize("shape_mode", tuple(ExportShapeMode), ids=lambda mode: mode.value)
+@pytest.mark.parametrize("opset_version", ONNX_OPSET_CASES)
 def test_norm_placement_is_export_compatible(
     norm_placement: NormPlacement,
     shape_mode: ExportShapeMode,
+    opset_version: int,
 ) -> None:
     """Every placement supports static and dynamic PyTorch and ONNX export."""
     layer: TransformerLayerBase = _order_test_layer(norm_placement)
@@ -281,6 +283,7 @@ def test_norm_placement_is_export_compatible(
         layer,
         (input,),
         shape_mode,
+        opset_version,
         dynamic_shapes=shapes.dynamic_shapes(layer, (input,)),
         runtime_args=(resized_input,),
     )

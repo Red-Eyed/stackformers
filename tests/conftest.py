@@ -22,8 +22,31 @@ if torch.cuda.is_available():
 _DEVICES = list(dict.fromkeys(d for d, _ in _DEVICE_DTYPE))  # deduplicated, ordered
 
 
+def _absolute_collection_argument(rootpath: Path, argument: str) -> str:
+    """Preserve a pytest path or node ID after the session changes directories."""
+    path, *selectors = argument.split("::")
+    absolute_path = Path(path)
+    if not absolute_path.is_absolute():
+        absolute_path = rootpath / absolute_path
+    return "::".join((str(absolute_path), *selectors))
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Resolve collection paths before xdist starts workers from the test work directory."""
+    config.args = [
+        _absolute_collection_argument(config.rootpath, argument) for argument in config.args
+    ]
+
+
 def pytest_sessionstart(session: pytest.Session) -> None:
     """Run tests from the repository's ignored work directory."""
+    worker_count = session.config.getoption("numprocesses", default=None)
+    is_xdist_controller = not hasattr(session.config, "workerinput") and worker_count not in (
+        None,
+        0,
+    )
+    if is_xdist_controller:
+        return
     work_dir = session.config.rootpath / "work_dir"
     work_dir.mkdir(exist_ok=True)
     # ONNX Runtime writes telemetry state to the process working directory during import.

@@ -5,12 +5,51 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any, TypeAlias
 
+import pytest
 import torch
 import torch.nn as nn
+from _pytest.mark.structures import ParameterSet
+from onnx import defs
 from onnxscript import ir
+from torch.onnx import _constants
 from torch.utils import _pytree
 
 DynamicShapes: TypeAlias = dict[str, Any] | tuple[Any, ...] | list[Any] | None
+ONNX_OPSET_VERSIONS = tuple(
+    range(15, min(defs.onnx_opset_version(), _constants.ONNX_MAX_OPSET) + 1)
+)
+REQUIRED_ONNX_OPSET_VERSIONS = tuple(
+    version for version in ONNX_OPSET_VERSIONS if 18 <= version <= 22
+)
+OPTIONAL_ONNX_OPSET_VERSIONS = tuple(
+    version for version in ONNX_OPSET_VERSIONS if version not in REQUIRED_ONNX_OPSET_VERSIONS
+)
+
+
+def _optional_onnx_opset_reason(opset_version: int) -> str:
+    """Describe why an opset remains compatibility coverage rather than a requirement."""
+    if opset_version < 18:
+        return "PyTorch's ONNX C API cannot down-convert Transformer reductions below 18"
+    if opset_version == 23:
+        return "ONNX Runtime rejects PyTorch's opset-23 Attention mask shape"
+    return "This installed opset has not been promoted to required compatibility"
+
+
+def _onnx_opset_case(opset_version: int) -> ParameterSet:
+    """Build one required or optional opset compatibility case."""
+    if opset_version in REQUIRED_ONNX_OPSET_VERSIONS:
+        return pytest.param(opset_version, id=f"required-opset-{opset_version}")
+    return pytest.param(
+        opset_version,
+        marks=pytest.mark.xfail(
+            reason=_optional_onnx_opset_reason(opset_version),
+            strict=False,
+        ),
+        id=f"optional-opset-{opset_version}",
+    )
+
+
+ONNX_OPSET_CASES = tuple(_onnx_opset_case(version) for version in ONNX_OPSET_VERSIONS)
 
 
 class ExportShapeMode(StrEnum):
@@ -39,6 +78,14 @@ def _assert_onnx_shape_mode(program: torch.onnx.ONNXProgram, mode: ExportShapeMo
         assert all(isinstance(dimension, int) for dimension in dimensions)
 
 
+def _assert_onnx_opset_version(
+    program: torch.onnx.ONNXProgram,
+    opset_version: int,
+) -> None:
+    """Verify that down-conversion produced the requested standard ONNX opset."""
+    assert program.model.opset_imports[""] == opset_version
+
+
 def _flatten_tensor_output(output: Any) -> tuple[torch.Tensor, ...]:
     """Flatten an exported output tree and require tensor-only leaves."""
     leaves, _ = _pytree.tree_flatten(output)
@@ -50,14 +97,17 @@ def export_and_run(
     model: nn.Module,
     example_args: tuple[Any, ...],
     mode: ExportShapeMode,
+    opset_version: int,
     *,
     dynamic_shapes: DynamicShapes = None,
     runtime_args: tuple[Any, ...] | None = None,
 ) -> tuple[torch.Tensor, ...]:
-    """Run PyTorch and ONNX exports and verify both against eager PyTorch.
+    """Run PyTorch and one requested ONNX export, then verify both against eager PyTorch.
 
     Static modes execute the example shape. Dynamic modes execute ``runtime_args`` when
-    supplied, so the same pytest case checks that symbolic dimensions survive export.
+    supplied, so the same pytest case checks that symbolic dimensions survive export. The ONNX
+    graph must declare ``opset_version`` after conversion rather than silently retaining the
+    exporter's native opset.
     """
     if mode.is_dynamic:
         assert dynamic_shapes is not None
@@ -80,9 +130,11 @@ def export_and_run(
             example_args,
             dynamo=True,
             dynamic_shapes=selected_shapes,
+            opset_version=opset_version,
         )
         assert isinstance(onnx_program, torch.onnx.ONNXProgram)
         _assert_onnx_shape_mode(onnx_program, mode)
+        _assert_onnx_opset_version(onnx_program, opset_version)
         onnx_actual = _flatten_tensor_output(onnx_program(*execution_args))
 
     for actual in (torch_actual, onnx_actual):
