@@ -47,32 +47,3 @@ dev = [
     "onnxruntime>=1.29.0",
     "onnxscript>=0.7.1",
 ]
-
-# ── Ruff ─────────────────────────────────────────────────────────────────────
-
-[tool.ruff]
-line-length = 100
-
-[tool.ruff.lint]
-select = ["E", "F", "I", "TID251", "UP"]
-# jaxtyping shape strings are not valid Python syntax — these are intentional
-ignore = ["F722", "F821", "UP037"]
-
-[tool.ruff.lint.flake8-tidy-imports.banned-api]
-"dataclasses".msg = "Use NamedTuple for tuple records or TypedDict for mapping records."
-
-# ── Pyrefly ───────────────────────────────────────────────────────────────────
-
-[tool.pyrefly]
-python-version = "3.12.0"
-# Point at the uv venv so pyrefly finds torch and other installed packages
-python-interpreter-path = ".venv/bin/python"
-# Include both source and tests so both are type-checked
-project-includes = ["stackformers", "tests"]
-# Do not infer types from first-use (stricter)
-infer-with-first-use = false
-
-# ── Pytest ────────────────────────────────────────────────────────────────────
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]

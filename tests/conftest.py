@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 import pytest
 import torch
+
+_ORIGINAL_WORKING_DIRECTORY = Path.cwd()
 
 _DEVICE_DTYPE: list[tuple[str, torch.dtype]] = [
     ("cpu", torch.float32),
@@ -15,6 +20,19 @@ if torch.cuda.is_available():
     ]
 
 _DEVICES = list(dict.fromkeys(d for d, _ in _DEVICE_DTYPE))  # deduplicated, ordered
+
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    """Run tests from the repository's ignored work directory."""
+    work_dir = session.config.rootpath / "work_dir"
+    work_dir.mkdir(exist_ok=True)
+    # ONNX Runtime writes telemetry state to the process working directory during import.
+    os.chdir(work_dir)
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: pytest.ExitCode) -> None:
+    """Restore the caller's working directory after the test session."""
+    os.chdir(_ORIGINAL_WORKING_DIRECTORY)
 
 
 def _dd_id(pair: tuple[str, torch.dtype]) -> str:

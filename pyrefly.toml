@@ -1,0 +1,7 @@
+python-version = "3.12.0"
+# Point at the uv venv so pyrefly finds torch and other installed packages
+python-interpreter-path = ".venv/bin/python"
+# Include both source and tests so both are type-checked
+project-includes = ["stackformers", "tests"]
+# Do not infer types from first-use (stricter)
+infer-with-first-use = false
