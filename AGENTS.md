@@ -1,5 +1,11 @@
 # Repository guidance
 
+## Repository commands
+
+Read `Justfile` before running setup, build, formatting, linting, type-checking, testing, or
+cleanup commands. Prefer its existing recipes so local and automated workflows use the same
+tool arguments and defaults.
+
 ## Python structured records
 
 Never use `dataclasses` in this repository. PyTorch recognizes `NamedTuple` and `TypedDict`
