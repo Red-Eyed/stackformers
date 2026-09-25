@@ -50,6 +50,10 @@ def padded_sdpa(
     attn_mask = padding_mask(mask, q.dtype)
     if bias is not None:
         attn_mask = attn_mask + bias
+    # ONNX Runtime's Attention kernel (opset >=23) requires an explicit query
+    # dimension even though ONNX permits broadcasting it. expand keeps this a
+    # view in PyTorch and preserves symbolic query lengths during export.
+    attn_mask = attn_mask.expand(-1, -1, n, -1)
     if window_size is None:
         if causal:
             attn_mask = attn_mask + window_mask(n, s, s, True, q.device, q.dtype)

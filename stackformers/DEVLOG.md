@@ -1,5 +1,38 @@
 # Transformer model development log
 
+## 2026-09-25 — ONNX Runtime attention-mask compatibility
+
+### Observation
+
+Static and dynamic opset-23 encoder graphs exported successfully but failed in ONNX Runtime
+with `inconsistent q_sequence_length (between attn_mask and Q)`. The padding-only mask had
+shape `(batch, 1, 1, keys)`: valid ONNX broadcasting, but rejected by the runtime's Attention
+kernel. The test matrix marked opset 23 as an expected failure and excluded newer opsets using
+PyTorch's legacy exporter limit.
+
+### Decision
+
+Expand the combined padding/bias mask to the query length in the shared padded SDPA path.
+This retains PyTorch view semantics and symbolic lengths without changing attention APIs,
+parameters, or masking values. Add a local comment explaining the runtime constraint, require
+opsets 23–25, and compare multi-head padded exports against the original broadcast-mask SDPA
+with independently resized batch, query, and context axes, including a single query.
+
+### Verified
+
+Static and dynamic plain encoder exports execute with eager parity at opsets 23, 24, and 25
+using PyTorch 2.11.0, ONNX 1.22.0, and ONNX Runtime 1.29.0 on CPU.
+`just check` passes formatting, lint, type checking, and the full test suite: 1059 passed,
+21 skipped, 138 expected failures, and 99 optional-case unexpected passes. Required coverage
+includes opsets 18–25 across the existing encoder, decoder, cross-attention, and cache tests,
+plus the new padding-mask regression cases.
+
+### Unproven
+
+GPU/mobile execution-provider support and memory/performance effects have not been measured.
+The installed exporter does not preserve the requested opset 26 for the plain encoder; this
+change does not claim support beyond opset 25.
+
 ## 2026-08-21 — Exportable decoder cross/self-attention K/V caches
 
 ### Observation

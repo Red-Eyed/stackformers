@@ -11,15 +11,15 @@ import torch.nn as nn
 from _pytest.mark.structures import ParameterSet
 from onnx import defs
 from onnxscript import ir
-from torch.onnx import _constants
 from torch.utils import _pytree
 
 DynamicShapes: TypeAlias = dict[str, Any] | tuple[Any, ...] | list[Any] | None
-ONNX_OPSET_VERSIONS = tuple(
-    range(15, min(defs.onnx_opset_version(), _constants.ONNX_MAX_OPSET) + 1)
-)
+# The dynamo exporter supports opsets beyond the legacy exporter's ONNX_MAX_OPSET.
+# Cap coverage at the highest verified target; newer requests may silently retain
+# an older opset, which _assert_onnx_opset_version deliberately rejects.
+ONNX_OPSET_VERSIONS = tuple(range(15, min(defs.onnx_opset_version(), 25) + 1))
 REQUIRED_ONNX_OPSET_VERSIONS = tuple(
-    version for version in ONNX_OPSET_VERSIONS if 18 <= version <= 22
+    version for version in ONNX_OPSET_VERSIONS if 18 <= version <= 25
 )
 OPTIONAL_ONNX_OPSET_VERSIONS = tuple(
     version for version in ONNX_OPSET_VERSIONS if version not in REQUIRED_ONNX_OPSET_VERSIONS
@@ -30,8 +30,6 @@ def _optional_onnx_opset_reason(opset_version: int) -> str:
     """Describe why an opset remains compatibility coverage rather than a requirement."""
     if opset_version < 18:
         return "PyTorch's ONNX C API cannot down-convert Transformer reductions below 18"
-    if opset_version == 23:
-        return "ONNX Runtime rejects PyTorch's opset-23 Attention mask shape"
     return "This installed opset has not been promoted to required compatibility"
 
 

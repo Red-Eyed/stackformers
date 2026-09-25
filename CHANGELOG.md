@@ -6,6 +6,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/): MAJOR for breaking public API changes,
 MINOR for backwards-compatible features, PATCH for bug fixes and internal changes.
 
+## [Unreleased]
+
+### Bug Fixes
+
+- Fix ONNX Runtime attention-mask shape errors for opsets 23–25 by explicitly expanding
+  the query dimension, including dynamic batch and sequence lengths.
+
+### Developers
+
+- Require ONNX Runtime parity at opsets 23–25 instead of accepting opset-23 failures or
+  excluding newer dynamo exports using PyTorch's legacy exporter limit.
+
 ## [4.7.0b6] — 2026-08-31
 
 ### Documentation
