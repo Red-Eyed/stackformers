@@ -13,7 +13,11 @@ from stackformers.attention.cache_validation import (
     supported_self_attention,
 )
 from stackformers.attention.cached import CachedSelfAttentionWrapper
-from stackformers.attention.config import SelfAttentionConfig, _validate_attn_dims
+from stackformers.attention.config import (
+    CrossAttentionConfig,
+    SelfAttentionConfig,
+    _validate_head_grouping,
+)
 from stackformers.attention.layout import matching_layouts
 from stackformers.attention.self_attn import SelfAttention
 from stackformers.decoder import Decoder, DecoderLayerBase
@@ -70,26 +74,27 @@ def test_layout_success_preserves_native_records(padded_input: PaddedInput, pack
 
 
 @pytest.mark.parametrize(
-    ("dim", "heads", "kv_heads", "message"),
+    ("heads", "kv_heads", "message"),
     [
-        (65, 2, None, "dim (65) must be divisible by heads (2)"),
-        (64, 4, 3, "heads (4) must be divisible by kv_heads (3)"),
+        (4, 3, "heads (4) must be divisible by kv_heads (3)"),
+        (4, 8, "heads (4) must be divisible by kv_heads (8)"),
     ],
 )
+@pytest.mark.parametrize("config_type", [SelfAttentionConfig, CrossAttentionConfig])
 def test_head_geometry_failure_is_data_then_pydantic_error(
-    dim: int,
+    config_type: type[SelfAttentionConfig] | type[CrossAttentionConfig],
     heads: int,
     kv_heads: int | None,
     message: str,
     recwarn: pytest.WarningsRecorder,
 ) -> None:
     """Core dimension failures are silent data; the public config retains ValidationError."""
-    outcome = _validate_attn_dims(dim, heads, kv_heads)
+    outcome = _validate_head_grouping(heads, kv_heads)
     assert isinstance(outcome, Failure)
     assert str(outcome.failure()) == message
     assert len(recwarn) == 0
     with pytest.raises(ValidationError) as caught:
-        SelfAttentionConfig(dim=dim, heads=heads, kv_heads=kv_heads)
+        config_type(dim=512, heads=heads, kv_heads=kv_heads)
     assert caught.value.errors()[0]["ctx"]["error"].args == (message,)
 
 

@@ -1,5 +1,38 @@
 # Transformer model development log
 
+## 2026-09-26 — Independent attention projection widths (5.0.0rc2)
+
+### Observation
+
+Attention projects model features into `heads * dim_head` query features and projects the
+result back to the model width. Requiring `dim` divisible by `heads` rejected valid geometry
+such as `dim=512`, `heads=12`, and `dim_head=64` before these projections could run.
+
+### Decision
+
+Remove the model-width divisibility check from both attention configs. Keep Result-based
+validation for the required query/key-value head grouping. Retain the existing non-square
+projection warnings and the convenience preset's inferred head-count policy.
+
+### Verified
+
+Twelve parameterized CPU regression cases cover compressed and expanded attention widths
+for self- and cross-attention with MHA, GQA, and MQA. Padded and packed outputs agree, retain
+the model width, and produce finite nonzero input and query-projection gradients. Invalid
+key-value head grouping still produces the existing Pydantic validation errors.
+
+The isolated full quality gate passes: 1229 passed, 21 skipped, 162 expected failures, and
+87 optional-case unexpected passes. Sixty compatibility cases use frozen outputs,
+input gradients, and checkpoint shapes captured from the verified `5.0.0rc1` wheel at commit
+`c40fbaf`. Existing positional and keyword constructor/call APIs match those observations
+under omitted defaults, square/compressed/expanded projections, MHA/GQA/MQA, Q/K normalization,
+and causal self-attention across padded and packed inputs. The reference fixture identifies
+its source release and is independent of current attention code.
+
+### Unproven
+
+The new geometries have not been exercised on GPU hardware or benchmarked for throughput.
+
 ## 2026-09-26 — Shared Result core with compatible public adapters
 
 Commit: `738a3ad`

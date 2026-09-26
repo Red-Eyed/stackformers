@@ -8,6 +8,12 @@ MINOR for backwards-compatible features, PATCH for bug fixes and internal change
 
 ## [Unreleased]
 
+### Bug Fixes
+
+- Allow model widths that are not divisible by the query-head count in self- and
+  cross-attention configs. Internal query width remains `heads * dim_head`; grouped
+  attention still requires `heads` divisible by `kv_heads`.
+
 ## [5.0.0rc1] — 2026-09-26
 
 ### Backwards Incompatible Changes
