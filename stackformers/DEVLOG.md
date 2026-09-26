@@ -1,6 +1,39 @@
 # Transformer model development log
 
+## 2026-09-26 — Variable-width encoder schedules and explicit heads (5.0.0rc3)
+
+### Observation
+
+The convenience preset required a head-dimension list, shared the other settings across all
+layers, and inferred query heads from residual width. The in-progress schedule support also
+changed the public head-dimension length error without changing its Result validation core.
+
+### Decision
+
+Accept scalar or per-layer head dimensions, query heads, causal flags, feed-forward multipliers,
+dropout, and normalization placement. Omitted heads retain exact legacy inference; explicit
+heads allow compressed or expanded attention independently of the residual width. Keep
+schedule failures as Result data, restore legacy width diagnostics, and validate lists before
+constructing modules. Use a closed TypedDict for the test settings so strict Pyrefly can check
+keyword expansion without suppressions.
+
+### Verified
+
+The full quality gate passes: 1256 passed, 21 skipped, 162 expected failures, and 87 optional-case
+unexpected passes.
+Explicit compressed and expanded projections run padded and packed inputs with finite nonzero
+gradients. Equivalent explicit head counts preserve the legacy factory config, strict
+checkpoint loading, and exact outputs. Scheduled normalization selects the requested layer
+types, and strict Torch export preserves the new independent geometries' eager output. Existing
+required ONNX export cases, formatting checks, Ruff, and strict Pyrefly pass.
+
+### Unproven
+
+GPU execution and throughput of the new explicit-head geometries have not been measured.
+
 ## 2026-09-26 — Independent attention projection widths (5.0.0rc2)
+
+Commit: `ce443ff`
 
 ### Observation
 

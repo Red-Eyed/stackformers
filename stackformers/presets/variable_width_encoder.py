@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 import torch.nn as nn
 from pydantic import BaseModel, Field, model_validator
@@ -35,6 +35,35 @@ from stackformers.positional.factory import build_pos_encoding
 
 if TYPE_CHECKING:
     from stackformers.sequence import SequenceInput
+
+_T = TypeVar("_T")
+
+
+def _schedule_length_error(name: str, expected: int, actual: int) -> ValueError:
+    """Preserve legacy head-dimension diagnostics while naming other schedule failures."""
+    match name:
+        case "dim_heads":
+            return ValueError(
+                f"d_models and dim_heads must have equal lengths; got {expected} and {actual}"
+            )
+        case _:
+            return ValueError(
+                f"d_models/layers and {name} must have equal lengths;"
+                f" expected {expected}, got {actual}"
+            )
+
+
+def _layer_values(value: _T | list[_T], count: int, name: str) -> Result[list[_T], ValueError]:
+    """Broadcast a shared setting or reject a schedule with the wrong layer count."""
+    if count == 0:
+        return Failure(ValueError("d_models must contain at least one block width"))
+    match value:
+        case list():
+            if len(value) != count:
+                return Failure(_schedule_length_error(name, count, len(value)))
+            return Success(value)
+        case _:
+            return Success([value] * count)
 
 
 class VariableWidthEncoderLayerConfig(BaseModel):
@@ -88,40 +117,74 @@ class VariableWidthTransformerEncoderConfig(BaseModel):
     """Configure an ordered list of complete, independently validated blocks."""
 
     layers: list[VariableWidthEncoderLayerConfig] = Field(min_length=1)
-    norm_placement: NormPlacement = "pre"
+    norm_placement: NormPlacement | list[NormPlacement] = "pre"
+
+    @model_validator(mode="after")
+    def _check_placements(self) -> VariableWidthTransformerEncoderConfig:
+        """Validate placement schedules before any modules are constructed."""
+        unwrap_or_raise(_layer_values(self.norm_placement, len(self.layers), "norm_placement"))
+        return self
 
 
 def variable_width_encoder_config(
     *,
     d_models: list[int],
-    dim_heads: list[int],
-    causal: bool = False,
-    ff_mult: float = 4.0,
-    dropout: float = 0.0,
-    norm_placement: NormPlacement = "pre",
+    dim_heads: int | list[int],
+    heads: int | list[int] | None = None,
+    causal: bool | list[bool] = False,
+    ff_mult: float | list[float] = 4.0,
+    dropout: float | list[float] = 0.0,
+    norm_placement: NormPlacement | list[NormPlacement] = "pre",
 ) -> VariableWidthTransformerEncoderConfig:
     """Build the default global-attention RoPE/RMSNorm/SwiGLU preset.
 
-    Each pair ``(d_models[i], dim_heads[i])`` specifies one Transformer block.
-    The number of query heads is derived exactly as ``d_model // dim_head``.
+    ``d_models`` defines the layer count. Every other setting accepts a shared
+    scalar or a list of exactly that length; mismatched lists raise ``ValueError``.
+    Omit ``heads`` to derive query heads exactly as ``d_model // dim_head``;
+    this requires each model width divisible by its head dimension. Explicit
+    ``heads`` makes the internal attention width independent of the model width.
     Construct ``VariableWidthTransformerEncoderConfig`` directly to configure every
     attention, feed-forward, norm, positional, and attention-bias component per block.
     """
-    unwrap_or_raise(_validate_width_schedule(d_models, dim_heads))
+    count = len(d_models)
+    head_dims = unwrap_or_raise(_layer_values(dim_heads, count, "dim_heads"))
+    query_heads = unwrap_or_raise(_query_head_counts(d_models, head_dims, heads))
+    causal_values = unwrap_or_raise(_layer_values(causal, count, "causal"))
+    ff_mults = unwrap_or_raise(_layer_values(ff_mult, count, "ff_mult"))
+    dropouts = unwrap_or_raise(_layer_values(dropout, count, "dropout"))
     layers = [
         _plain_layer_config(
             d_model,
+            layer_heads,
             dim_head,
-            causal,
-            ff_mult,
-            dropout,
+            layer_causal,
+            layer_ff_mult,
+            layer_dropout,
         )
-        for d_model, dim_head in zip(d_models, dim_heads, strict=True)
+        for d_model, layer_heads, dim_head, layer_causal, layer_ff_mult, layer_dropout in zip(
+            d_models, query_heads, head_dims, causal_values, ff_mults, dropouts, strict=True
+        )
     ]
     return VariableWidthTransformerEncoderConfig(
         layers=layers,
         norm_placement=norm_placement,
     )
+
+
+def _query_head_counts(
+    d_models: list[int], dim_heads: list[int], heads: int | list[int] | None
+) -> Result[list[int], ValueError]:
+    """Resolve explicit head schedules or retain the legacy exact-inference contract."""
+    match heads:
+        case None:
+            return _validate_width_schedule(d_models, dim_heads).map(
+                lambda _: [
+                    d_model // dim_head
+                    for d_model, dim_head in zip(d_models, dim_heads, strict=True)
+                ]
+            )
+        case _:
+            return _layer_values(heads, len(d_models), "heads")
 
 
 def _validate_width_schedule(
@@ -157,16 +220,17 @@ def _validate_width_schedule(
 
 def _plain_layer_config(
     d_model: int,
+    heads: int,
     dim_head: int,
     causal: bool,
     ff_mult: float,
     dropout: float,
 ) -> VariableWidthEncoderLayerConfig:
-    """Expand one width pair into the default preset's explicit component configs."""
+    """Build one default preset layer from explicit attention geometry and settings."""
     return VariableWidthEncoderLayerConfig(
         attn=SelfAttentionConfig(
             dim=d_model,
-            heads=d_model // dim_head,
+            heads=heads,
             dim_head=dim_head,
             causal=causal,
             dropout=dropout,
@@ -227,10 +291,13 @@ class VariableWidthTransformerEncoder(nn.Module):
         """Build one projected wrapper per configured Transformer block."""
         previous_dim = config.layers[0].attn.dim
         layers: list[_VariableWidthLayer] = []
-        for layer_config in config.layers:
+        placements = unwrap_or_raise(
+            _layer_values(config.norm_placement, len(config.layers), "norm_placement")
+        )
+        for layer_config, placement in zip(config.layers, placements, strict=True):
             current_dim = layer_config.attn.dim
             projection = self._build_projection(previous_dim, current_dim)
-            layer = self._build_transformer_layer(layer_config, config.norm_placement)
+            layer = self._build_transformer_layer(layer_config, placement)
             layers.append(_VariableWidthLayer(projection, layer))
             previous_dim = current_dim
         return layers

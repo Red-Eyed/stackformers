@@ -76,7 +76,10 @@ config = variable_width_encoder_config(
 model = VariableWidthTransformerEncoder(config)
 ```
 
-The preset derives each block's head count as `d_model // dim_head`. It inserts a bias-free
+Omitting `heads` derives each block's head count as `d_model // dim_head`. Set `heads=12` or
+`heads=[12, 12, 16, 16, 16]` to choose the internal attention width independently of `d_models`.
+`dim_heads`, `heads`, `causal`, `ff_mult`, `dropout`, and `norm_placement` accept either a shared
+value or a list with one entry per block. The preset inserts a bias-free
 learned projection before a block when its residual width differs from the preceding block;
 equal-width neighbors use an identity. The convenience factory expands each width pair into a
 `VariableWidthEncoderLayerConfig` whose attention, feed-forward, norm, positional encoding, and

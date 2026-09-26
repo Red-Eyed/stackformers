@@ -9,6 +9,7 @@ import pytest
 import torch
 import torch.nn as nn
 from pydantic import ValidationError
+from typing_extensions import TypedDict
 
 from stackformers import (
     GEGLU,
@@ -43,13 +44,30 @@ from stackformers.layers import (
     TransformerLayer,
     TransformerLayerBase,
 )
-from stackformers.sequence import PackedInput, PaddedInput, make_packed_input, make_padded_input
+from stackformers.sequence import (
+    PackedInput,
+    PaddedInput,
+    make_packed_input,
+    make_padded_input,
+    padded_to_packed,
+)
 from tests.export_utils import ONNX_OPSET_CASES, ExportShapeMode, export_and_run
 
 B, N, D_IN, D_OUT = 2, 8, 192, 384
 NT = 10
 D_MODELS = [D_IN, D_IN, D_OUT]
 DIM_HEADS = [64, 64, 64]
+
+
+class LayerSettings(TypedDict, total=False, closed=True):
+    """Describe optional per-layer schedules used by factory contract tests."""
+
+    heads: int | list[int]
+    causal: bool | list[bool]
+    ff_mult: float | list[float]
+    dropout: float | list[float]
+    norm_placement: NormPlacement | list[NormPlacement]
+
 
 FeedForwardConfigType: TypeAlias = (
     type[SwiGLUConfig]
@@ -164,6 +182,163 @@ def test_config_factory_requires_keyword_arguments() -> None:
     assert factory_parameters["dim_heads"].kind is inspect.Parameter.KEYWORD_ONLY
 
 
+def test_scalar_settings_match_explicit_schedules() -> None:
+    """Broadcasting preserves the complete config produced by repeated list values."""
+    shared = variable_width_encoder_config(
+        d_models=D_MODELS,
+        dim_heads=64,
+        causal=True,
+        ff_mult=2.0,
+        dropout=0.1,
+        norm_placement="post",
+    )
+    scheduled = variable_width_encoder_config(
+        d_models=D_MODELS,
+        dim_heads=DIM_HEADS,
+        causal=[True, True, True],
+        ff_mult=[2.0, 2.0, 2.0],
+        dropout=[0.1, 0.1, 0.1],
+        norm_placement=["post", "post", "post"],
+    )
+
+    assert shared.layers == scheduled.layers
+    assert all(
+        isinstance(wrapper.layer, PostNormTransformerLayer)
+        for wrapper in VariableWidthTransformerEncoder(shared).layers
+    )
+
+
+def test_mixed_schedules_build_independent_layers() -> None:
+    """Each scheduled setting reaches its layer while scalar settings broadcast."""
+    config = variable_width_encoder_config(
+        d_models=D_MODELS,
+        dim_heads=[32, 64, 128],
+        causal=[False, True, True],
+        ff_mult=[1.0, 2.0, 3.0],
+        dropout=0.1,
+        norm_placement=["pre", "post", "sandwich"],
+    )
+    assert [layer.attn.heads for layer in config.layers] == [6, 3, 3]
+    assert [layer.attn.causal for layer in config.layers] == [False, True, True]
+    assert [layer.ff.mult for layer in config.layers] == [1.0, 2.0, 3.0]
+    assert [layer.attn.dropout for layer in config.layers] == [0.1, 0.1, 0.1]
+    assert [layer.ff.dropout for layer in config.layers] == [0.1, 0.1, 0.1]
+    restored = VariableWidthTransformerEncoderConfig.model_validate_json(config.model_dump_json())
+    assert restored == config
+    encoder = VariableWidthTransformerEncoder(restored)
+    assert type(encoder.get_submodule("layers.0.layer")) is TransformerLayer
+    assert type(encoder.get_submodule("layers.1.layer")) is PostNormTransformerLayer
+    assert type(encoder.get_submodule("layers.2.layer")) is SandwichNormTransformerLayer
+    x = torch.randn(1, 2, D_IN, requires_grad=True)
+    output = encoder(make_padded_input(x, torch.ones(1, 2, dtype=torch.bool)))
+    output.square().mean().backward()
+    assert output.shape == (1, 2, D_OUT)
+    assert x.grad is not None and torch.isfinite(x.grad).all()
+
+
+def test_dropout_schedule_reaches_attention_and_feed_forward() -> None:
+    """One per-layer dropout value configures both branches without mutating inputs."""
+    dropouts = [0.0, 0.1, 0.2]
+    config = variable_width_encoder_config(d_models=D_MODELS, dim_heads=64, dropout=dropouts)
+    assert [layer.attn.dropout for layer in config.layers] == [0.0, 0.1, 0.2]
+    assert [layer.ff.dropout for layer in config.layers] == [0.0, 0.1, 0.2]
+    assert dropouts == [0.0, 0.1, 0.2]
+
+
+@pytest.mark.parametrize("heads", [3, [3, 5], [1, 2]], ids=["shared", "expanded", "compressed"])
+@pytest.mark.parametrize("packed", [False, True], ids=["padded", "packed"])
+def test_explicit_heads_allow_independent_projection_widths(
+    heads: int | list[int], packed: bool
+) -> None:
+    """Nondivisible model/head widths run both layouts with a finite training signal."""
+    config = variable_width_encoder_config(d_models=[10, 14], dim_heads=4, heads=heads)
+    expected_heads = heads if isinstance(heads, list) else [heads, heads]
+    assert [layer.attn.heads for layer in config.layers] == expected_heads
+    encoder = VariableWidthTransformerEncoder(config)
+    for index, count in enumerate(expected_heads):
+        projection = encoder.get_submodule(f"layers.{index}.layer.self_attn.to_q")
+        assert isinstance(projection, nn.Linear)
+        assert projection.out_features == count * 4
+    x = torch.linspace(-1.0, 1.0, 20).reshape(1, 2, 10).requires_grad_()
+    padded = make_padded_input(x, torch.ones(1, 2, dtype=torch.bool))
+    output = encoder(padded_to_packed(padded) if packed else padded)
+    assert output.shape == ((2, 14) if packed else (1, 2, 14))
+    assert torch.isfinite(output).all()
+    output.square().mean().backward()
+    assert x.grad is not None and torch.isfinite(x.grad).all()
+    assert x.grad.abs().sum() > 0
+
+
+@pytest.mark.parametrize("packed", [False, True], ids=["padded", "packed"])
+def test_explicit_inferred_heads_preserve_legacy_calls(packed: bool) -> None:
+    """Equivalent explicit heads retain old configs, checkpoints, and outputs."""
+    legacy = variable_width_encoder_config(d_models=D_MODELS, dim_heads=DIM_HEADS)
+    explicit = variable_width_encoder_config(
+        d_models=D_MODELS, dim_heads=DIM_HEADS, heads=[3, 3, 6]
+    )
+    assert legacy == explicit
+    assert [layer.attn.heads for layer in legacy.layers] == [3, 3, 6]
+    legacy_model = VariableWidthTransformerEncoder(legacy)
+    explicit_model = VariableWidthTransformerEncoder(explicit)
+    explicit_model.load_state_dict(legacy_model.state_dict(), strict=True)
+    x = torch.linspace(-1.0, 1.0, 2 * D_IN).reshape(1, 2, D_IN)
+    padded = make_padded_input(x, torch.ones(1, 2, dtype=torch.bool))
+    sequence = padded_to_packed(padded) if packed else padded
+    torch.testing.assert_close(explicit_model(sequence), legacy_model(sequence), rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("heads", [0, -1, [3, 0], [3, -1]])
+def test_invalid_explicit_heads_are_rejected(heads: int | list[int]) -> None:
+    """Explicit counts retain attention's positive-head admission at the public boundary."""
+    with pytest.raises(ValidationError, match="greater than 0"):
+        variable_width_encoder_config(d_models=[10, 14], dim_heads=4, heads=heads)
+
+
+def test_explicit_independent_heads_preserve_torch_export() -> None:
+    """Strict export preserves the new nondivisible geometries' eager tensor output."""
+    config = variable_width_encoder_config(d_models=[10, 14], dim_heads=4, heads=[3, 5])
+    encoder = VariableWidthTransformerEncoder(config).eval()
+    x = torch.linspace(-1.0, 1.0, 20).reshape(1, 2, 10)
+    sequence = make_padded_input(x, torch.ones(1, 2, dtype=torch.bool))
+    exported = torch.export.export(encoder, (sequence,), strict=True).module()
+    actual: object = exported(sequence)
+    assert isinstance(actual, torch.Tensor)
+    torch.testing.assert_close(actual, encoder(sequence))
+
+
+@pytest.mark.parametrize(
+    ("settings", "field"),
+    [
+        ({"heads": []}, "heads"),
+        ({"heads": [3]}, "heads"),
+        ({"causal": []}, "causal"),
+        ({"causal": [True]}, "causal"),
+        ({"ff_mult": [2.0, 3.0]}, "ff_mult"),
+        ({"dropout": [0.0, 0.1, 0.2, 0.3]}, "dropout"),
+        ({"norm_placement": ["pre"]}, "norm_placement"),
+    ],
+)
+def test_setting_schedule_lengths_are_validated(settings: LayerSettings, field: str) -> None:
+    """Lists must match the layer count; singleton lists do not broadcast."""
+    with pytest.raises(ValueError, match=f"{field} must have equal lengths"):
+        variable_width_encoder_config(d_models=D_MODELS, dim_heads=64, **settings)
+
+
+@pytest.mark.parametrize("settings", [{"ff_mult": [1.0, 0.0, 2.0]}, {"dropout": [0.0, 1.1, 0.0]}])
+def test_invalid_scheduled_values_are_rejected(settings: LayerSettings) -> None:
+    """Per-layer values retain the component models' range validation."""
+    with pytest.raises(ValidationError):
+        variable_width_encoder_config(d_models=D_MODELS, dim_heads=64, **settings)
+
+
+def test_direct_config_rejects_mismatched_placements(
+    config: VariableWidthTransformerEncoderConfig,
+) -> None:
+    """Direct configuration validates placement lengths independently of the factory."""
+    with pytest.raises(ValidationError, match="norm_placement must have equal lengths"):
+        VariableWidthTransformerEncoderConfig(layers=config.layers, norm_placement=["pre"])
+
+
 def test_config_round_trip_preserves_component_types(
     config: VariableWidthTransformerEncoderConfig,
 ) -> None:
@@ -263,6 +438,7 @@ def test_norm_placement_selects_each_block_topology(
     ("d_models", "dim_heads", "message"),
     [
         ([], [], "at least one"),
+        ([], [64], "at least one"),
         ([192, 384], [64], "equal lengths"),
         ([192, 250], [64, 64], "must be divisible"),
         ([192, 0], [64, 64], "must be positive"),

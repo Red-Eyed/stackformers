@@ -8,6 +8,14 @@ MINOR for backwards-compatible features, PATCH for bug fixes and internal change
 
 ## [Unreleased]
 
+## [5.0.0rc3] — 2026-09-26
+
+### New Features
+
+- Accept shared or per-layer `dim_heads`, `heads`, `causal`, `ff_mult`, `dropout`, and
+  `norm_placement` in the variable-width encoder factory. Explicit `heads` allows independent
+  model and attention widths; omitting it retains exact `d_model // dim_head` inference.
+
 ### Bug Fixes
 
 - Allow model widths that are not divisible by the query-head count in self- and
