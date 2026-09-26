@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, TypeVar, assert_never
 
 import torch.nn as nn
 from pydantic import BaseModel, Field, model_validator
-from returns.result import Failure, Result, Success
 from torch import Tensor
 from typing_extensions import override
 
@@ -32,6 +31,7 @@ from stackformers.norm.config import NormConfig, NormPlacement, RMSNormConfig
 from stackformers.norm.factory import build_norm
 from stackformers.positional.config import NoPosEncodingConfig, PosEncodingConfig, RoPE1DConfig
 from stackformers.positional.factory import build_pos_encoding
+from stackformers.result import Err, Ok, Result
 
 if TYPE_CHECKING:
     from stackformers.sequence import SequenceInput
@@ -56,14 +56,14 @@ def _schedule_length_error(name: str, expected: int, actual: int) -> ValueError:
 def _layer_values(value: _T | list[_T], count: int, name: str) -> Result[list[_T], ValueError]:
     """Broadcast a shared setting or reject a schedule with the wrong layer count."""
     if count == 0:
-        return Failure(ValueError("d_models must contain at least one block width"))
+        return Err(ValueError("d_models must contain at least one block width"))
     match value:
         case list():
             if len(value) != count:
-                return Failure(_schedule_length_error(name, count, len(value)))
-            return Success(value)
+                return Err(_schedule_length_error(name, count, len(value)))
+            return Ok(value)
         case _:
-            return Success([value] * count)
+            return Ok([value] * count)
 
 
 class VariableWidthEncoderLayerConfig(BaseModel):
@@ -83,18 +83,16 @@ class VariableWidthEncoderLayerConfig(BaseModel):
     def _dimensions_result(self) -> Result[VariableWidthEncoderLayerConfig, ValueError]:
         """Return inconsistent collaborator dimensions as data for boundary validation."""
         if self.ff.dim != self.attn.dim:
-            return Failure(
-                ValueError(f"ff.dim ({self.ff.dim}) must equal attn.dim ({self.attn.dim})")
-            )
+            return Err(ValueError(f"ff.dim ({self.ff.dim}) must equal attn.dim ({self.attn.dim})"))
         if self.norm.dim != self.attn.dim:
-            return Failure(
+            return Err(
                 ValueError(f"norm.dim ({self.norm.dim}) must equal attn.dim ({self.attn.dim})")
             )
         if (
             not isinstance(self.pos_encoding, NoPosEncodingConfig)
             and self.pos_encoding.dim_head != self.attn.dim_head
         ):
-            return Failure(
+            return Err(
                 ValueError(
                     f"pos_encoding.dim_head ({self.pos_encoding.dim_head}) must equal"
                     f" attn.dim_head ({self.attn.dim_head})"
@@ -104,13 +102,13 @@ class VariableWidthEncoderLayerConfig(BaseModel):
             isinstance(self.attn_bias, DistanceBiasConfig)
             and self.attn_bias.heads != self.attn.heads
         ):
-            return Failure(
+            return Err(
                 ValueError(
                     f"attn_bias.heads ({self.attn_bias.heads}) must equal"
                     f" attn.heads ({self.attn.heads})"
                 )
             )
-        return Success(self)
+        return Ok(self)
 
 
 class VariableWidthTransformerEncoderConfig(BaseModel):
@@ -175,16 +173,18 @@ def _query_head_counts(
     d_models: list[int], dim_heads: list[int], heads: int | list[int] | None
 ) -> Result[list[int], ValueError]:
     """Resolve explicit head schedules or retain the legacy exact-inference contract."""
-    match heads:
-        case None:
-            return _validate_width_schedule(d_models, dim_heads).map(
-                lambda _: [
-                    d_model // dim_head
-                    for d_model, dim_head in zip(d_models, dim_heads, strict=True)
-                ]
+    if heads is not None:
+        return _layer_values(heads, len(d_models), "heads")
+    admission = _validate_width_schedule(d_models, dim_heads)
+    match admission:
+        case Err() as failure:
+            return failure
+        case Ok():
+            return Ok(
+                [d_model // dim_head for d_model, dim_head in zip(d_models, dim_heads, strict=True)]
             )
         case _:
-            return _layer_values(heads, len(d_models), "heads")
+            assert_never(admission)
 
 
 def _validate_width_schedule(
@@ -192,9 +192,9 @@ def _validate_width_schedule(
 ) -> Result[tuple[()], ValueError]:
     """Ensure the two per-block schedules define valid attention geometries."""
     if not d_models:
-        return Failure(ValueError("d_models must contain at least one block width"))
+        return Err(ValueError("d_models must contain at least one block width"))
     if len(d_models) != len(dim_heads):
-        return Failure(
+        return Err(
             ValueError(
                 "d_models and dim_heads must have equal lengths;"
                 f" got {len(d_models)} and {len(dim_heads)}"
@@ -202,20 +202,20 @@ def _validate_width_schedule(
         )
     for index, (d_model, dim_head) in enumerate(zip(d_models, dim_heads, strict=True)):
         if d_model <= 0 or dim_head <= 0:
-            return Failure(
+            return Err(
                 ValueError(
                     f"d_models[{index}] and dim_heads[{index}] must be positive;"
                     f" got {d_model} and {dim_head}"
                 )
             )
         if d_model % dim_head != 0:
-            return Failure(
+            return Err(
                 ValueError(
                     f"d_models[{index}] ({d_model}) must be divisible by"
                     f" dim_heads[{index}] ({dim_head})"
                 )
             )
-    return Success(())
+    return Ok(())
 
 
 def _plain_layer_config(

@@ -1,10 +1,10 @@
 """Validate dynamic layout pairs before calling a layout-specific attention contract."""
 
-from returns.result import Failure, Result, Success
 from torch import Tensor
 
 from stackformers._result import unwrap_or_raise
 from stackformers.attention.protocols import CrossAttn
+from stackformers.result import Err, Ok, Result
 from stackformers.sequence import PackedInput, PaddedInput, SequenceInput
 
 
@@ -14,11 +14,11 @@ def matching_layouts(
     """Return a jointly narrowed pair, carrying a layout mismatch as failure data."""
     match queries, context:
         case PaddedInput(), PaddedInput():
-            return Success((queries, context))
+            return Ok((queries, context))
         case PackedInput(), PackedInput():
-            return Success((queries, context))
+            return Ok((queries, context))
         case _:
-            return Failure(ValueError("cross-attention inputs must have matching layouts"))
+            return Err(ValueError("cross-attention inputs must have matching layouts"))
 
 
 def call_cross_attention(

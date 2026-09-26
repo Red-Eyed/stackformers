@@ -113,6 +113,7 @@ from stackformers.presets.variable_width_encoder import (
     VariableWidthTransformerEncoderConfig,
     variable_width_encoder_config,
 )
+from stackformers.result import Err, Ok, Result
 from stackformers.sequence import (
     PackedInput,
     PackedSequence,
@@ -131,6 +132,9 @@ from stackformers.sequence import (
 
 __all__ = [
     "__version__",
+    "Result",
+    "Ok",
+    "Err",
     # sequences
     "PaddedSequence",
     "PackedSequence",

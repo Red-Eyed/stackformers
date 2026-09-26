@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from returns.result import Failure, Result, Success
-
 from stackformers.attention.bias import NoAttnBias
+from stackformers.result import Err, Ok, Result
 
 if TYPE_CHECKING:
     from stackformers.attention.self_attn import SelfAttention
@@ -17,16 +16,16 @@ def supported_self_attention(
 ) -> Result[SelfAttention, NotImplementedError]:
     """Return the supported cached equation or explain its unsupported features."""
     if not attention.config.causal or attention.config.window_size is not None:
-        return Failure(
+        return Err(
             NotImplementedError(
                 "cached self-attention currently supports global causal attention only"
             )
         )
     match attention.attn_bias:
         case NoAttnBias():
-            return Success(attention)
+            return Ok(attention)
         case _:
-            return Failure(
+            return Err(
                 NotImplementedError("cached self-attention currently supports NoAttnBias only")
             )
 
@@ -34,8 +33,8 @@ def supported_self_attention(
 def single_token(token_count: int) -> Result[tuple[()], ValueError]:
     """Admit exactly one target token without raising on unsupported counts."""
     if token_count != 1:
-        return Failure(ValueError("cached self-attention requires exactly one target token"))
-    return Success(())
+        return Err(ValueError("cached self-attention requires exactly one target token"))
+    return Ok(())
 
 
 def matching_layer_counts(
@@ -43,11 +42,11 @@ def matching_layer_counts(
 ) -> Result[tuple[()], ValueError]:
     """Return mismatched dense-cache layer counts as data, in public validation order."""
     if cross_layers != expected_layers:
-        return Failure(
+        return Err(
             ValueError(f"cross cache has {cross_layers} layers, decoder has {expected_layers}")
         )
     if self_layers != expected_layers:
-        return Failure(
+        return Err(
             ValueError(f"self cache has {self_layers} layers, decoder has {expected_layers}")
         )
-    return Success(())
+    return Ok(())

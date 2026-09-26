@@ -13,9 +13,9 @@ import warnings
 
 import pytest
 import torch
-from returns.result import Failure, Result, Success
 
 from stackformers.attention import varlen_backend as vb
+from stackformers.result import Err, Ok, Result
 from stackformers.sequence import PackedSequence
 
 NT, H, DH = 5, 2, 8
@@ -61,7 +61,7 @@ def test_unavailable_kernel_warns(
     packed: Packed, force_eligible: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An eligible query with no imported kernel falls back and reports the import reason."""
-    monkeypatch.setattr(vb, "_kernel", Failure(ImportError("no module")))
+    monkeypatch.setattr(vb, "_kernel", Err(ImportError("no module")))
     with pytest.warns(UserWarning, match="unavailable"):
         out = _attempt(packed)
     assert out is None
@@ -76,7 +76,7 @@ def test_attention_bias_warns(
         """Provide a callable backend while bias eligibility is checked."""
         return torch.zeros(NT, H, DH)
 
-    monkeypatch.setattr(vb, "_kernel", Success(vb._checked_kernel(kernel)))
+    monkeypatch.setattr(vb, "_kernel", Ok(vb._checked_kernel(kernel)))
     bias = torch.zeros(1, 1, NT, NT)
     with pytest.warns(UserWarning, match="attention bias"):
         out = _attempt(packed, bias=bias)
@@ -92,7 +92,7 @@ def test_signature_error_warns(
         """Expose an incompatible vendor signature so Python raises the TypeError."""
         return query
 
-    monkeypatch.setattr(vb, "_kernel", Success(vb._checked_kernel(renamed_kwarg)))
+    monkeypatch.setattr(vb, "_kernel", Ok(vb._checked_kernel(renamed_kwarg)))
     with pytest.warns(UserWarning, match="call failed.*unexpected keyword argument 'key'"):
         out = _attempt(packed)
     assert out is None
@@ -107,7 +107,7 @@ def test_runtime_error_warns(
         """Simulate an unsupported device at the vendor call boundary."""
         raise RuntimeError("varlen_attn requires compute capability >= 8.0")
 
-    monkeypatch.setattr(vb, "_kernel", Success(vb._checked_kernel(unsupported)))
+    monkeypatch.setattr(vb, "_kernel", Ok(vb._checked_kernel(unsupported)))
     with pytest.warns(UserWarning, match="call failed"):
         out = _attempt(packed)
     assert out is None
@@ -122,7 +122,7 @@ def test_non_tensor_return_warns(
         """Return an invalid payload to exercise response validation."""
         return ("not", "a", "tensor")
 
-    monkeypatch.setattr(vb, "_kernel", Success(vb._checked_kernel(kernel)))
+    monkeypatch.setattr(vb, "_kernel", Ok(vb._checked_kernel(kernel)))
     with pytest.warns(UserWarning, match="expected Tensor"):
         out = _attempt(packed)
     assert out is None
@@ -138,7 +138,7 @@ def test_success_returns_kernel_tensor(
         """Return the known tensor to check that the adapter preserves identity."""
         return expected
 
-    monkeypatch.setattr(vb, "_kernel", Success(vb._checked_kernel(kernel)))
+    monkeypatch.setattr(vb, "_kernel", Ok(vb._checked_kernel(kernel)))
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         out = _attempt(packed)
@@ -153,9 +153,9 @@ def test_core_unavailable_preserves_import_error(
     """A missing injected kernel returns its exact cause and leaves warning policy outside."""
     q, k, v, seq = packed
     error = ImportError("missing experimental backend")
-    outcome = vb.attempt_varlen_attn(q, k, v, seq, seq, False, None, None, kernel=Failure(error))
-    assert isinstance(outcome, Failure)
-    fallback = outcome.failure()
+    outcome = vb.attempt_varlen_attn(q, k, v, seq, seq, False, None, None, kernel=Err(error))
+    assert isinstance(outcome, Err)
+    fallback = outcome.error
     assert fallback.kind is vb.FallbackKind.UNAVAILABLE
     assert fallback.detail is error
     assert len(recwarn) == 0
@@ -174,11 +174,11 @@ def test_core_rejects_auxiliary_return_without_auxiliary_request(
         return torch.zeros_like(q), torch.zeros(NT, H)
 
     outcome = vb.attempt_varlen_attn(
-        q, k, v, seq, seq, False, None, None, kernel=Success(vb._checked_kernel(kernel))
+        q, k, v, seq, seq, False, None, None, kernel=Ok(vb._checked_kernel(kernel))
     )
-    assert isinstance(outcome, Failure)
-    assert outcome.failure().kind is vb.FallbackKind.INVALID_RETURN
-    assert outcome.failure().detail == "tuple"
+    assert isinstance(outcome, Err)
+    assert outcome.error.kind is vb.FallbackKind.INVALID_RETURN
+    assert outcome.error.detail == "tuple"
     assert len(recwarn) == 0
 
 
@@ -198,10 +198,10 @@ def test_core_call_failure_preserves_kernel_exception(
         raise error
 
     outcome = vb.attempt_varlen_attn(
-        q, k, v, seq, seq, False, None, None, kernel=Success(vb._checked_kernel(kernel))
+        q, k, v, seq, seq, False, None, None, kernel=Ok(vb._checked_kernel(kernel))
     )
-    assert isinstance(outcome, Failure)
-    fallback = outcome.failure()
+    assert isinstance(outcome, Err)
+    fallback = outcome.error
     assert fallback.kind is vb.FallbackKind.CALL_FAILED
     assert fallback.detail is error
     assert len(recwarn) == 0
@@ -218,7 +218,7 @@ def test_core_does_not_hide_unexpected_kernel_errors(packed: Packed, force_eligi
 
     with pytest.raises(ValueError, match="unexpected kernel bug") as caught:
         vb.attempt_varlen_attn(
-            q, k, v, seq, seq, False, None, None, kernel=Success(vb._checked_kernel(kernel))
+            q, k, v, seq, seq, False, None, None, kernel=Ok(vb._checked_kernel(kernel))
         )
     assert caught.value is error
 
@@ -234,15 +234,15 @@ def test_core_preserves_normalized_kernel_outcome(
     q, k, v, seq = packed
     expected: Result[torch.Tensor, vb.VarlenFallback]
     if succeeds:
-        expected = Success(q)
+        expected = Ok(q)
     else:
-        expected = Failure(vb.VarlenFallback(vb.FallbackKind.CALL_FAILED, RuntimeError("failed")))
+        expected = Err(vb.VarlenFallback(vb.FallbackKind.CALL_FAILED, RuntimeError("failed")))
 
     def kernel(**kwargs: object) -> Result[torch.Tensor, vb.VarlenFallback]:
         """Supply an already normalized outcome directly to the core."""
         return expected
 
-    outcome = vb.attempt_varlen_attn(q, k, v, seq, seq, False, None, None, kernel=Success(kernel))
+    outcome = vb.attempt_varlen_attn(q, k, v, seq, seq, False, None, None, kernel=Ok(kernel))
     assert outcome is expected
     assert len(recwarn) == 0
 
@@ -265,6 +265,8 @@ def test_loader_normalizes_vendor_response(
     monkeypatch.setattr(vendor, "varlen_attn", kernel)
     outcome = vb.attempt_varlen_attn(q, k, v, seq, seq, False, None, None, kernel=vb._load())
     if valid_response:
-        assert outcome.unwrap() is q
+        assert isinstance(outcome, Ok)
+        assert outcome.value is q
     else:
-        assert outcome.failure() == vb.VarlenFallback(vb.FallbackKind.INVALID_RETURN, "tuple")
+        assert isinstance(outcome, Err)
+        assert outcome.error == vb.VarlenFallback(vb.FallbackKind.INVALID_RETURN, "tuple")

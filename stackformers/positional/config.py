@@ -5,9 +5,9 @@ from __future__ import annotations
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, model_validator
-from returns.result import Failure, Result, Success
 
 from stackformers._result import unwrap_or_raise
+from stackformers.result import Err, Ok, Result
 
 
 class YaRNConfig(BaseModel):
@@ -37,14 +37,14 @@ class YaRNConfig(BaseModel):
     def _beta_ordering_result(self) -> Result[YaRNConfig, ValueError]:
         """Return an inverted frequency partition as data for boundary validation."""
         if self.beta_slow >= self.beta_fast:
-            return Failure(
+            return Err(
                 ValueError(
                     f"beta_slow ({self.beta_slow}) must be less than beta_fast ({self.beta_fast})."
                     " Swapped values invert the high/low-frequency partition and silently"
                     " break scaling."
                 )
             )
-        return Success(self)
+        return Ok(self)
 
 
 class RoPE1DConfig(BaseModel):
@@ -106,7 +106,7 @@ class RoPENDConfig(BaseModel):
         """Return invalid rotary geometry as data without invoking Pydantic."""
         pairs = 2 * self.coords
         if self.dim_head % pairs != 0:
-            return Failure(
+            return Err(
                 ValueError(
                     f"dim_head ({self.dim_head}) must be divisible by 2 * coords ({pairs}):"
                     f" dim_head is split into {self.coords} per-axis blocks, and each block"
@@ -114,7 +114,7 @@ class RoPENDConfig(BaseModel):
                 )
             )
         if self.bands_per_axis < 2:
-            return Failure(
+            return Err(
                 ValueError(
                     f"dim_head ({self.dim_head}) leaves {self.bands_per_axis} band per axis;"
                     f" at least 2 bands are needed, so dim_head must be at least {4 * self.coords}."
@@ -124,8 +124,8 @@ class RoPENDConfig(BaseModel):
                 )
             )
         if self.r_max <= self.r_min:
-            return Failure(ValueError(f"r_max ({self.r_max}) must exceed r_min ({self.r_min})."))
-        return Success(self)
+            return Err(ValueError(f"r_max ({self.r_max}) must exceed r_min ({self.r_min})."))
+        return Ok(self)
 
     @property
     def bands_per_axis(self) -> int:

@@ -5,8 +5,8 @@ from typing import TYPE_CHECKING
 import pytest
 import torch
 from pydantic import ValidationError
-from returns.result import Failure, Success
 
+from stackformers import decoder_cache as dc
 from stackformers.attention.cache_validation import (
     matching_layer_counts,
     single_token,
@@ -32,6 +32,7 @@ from stackformers.presets.variable_width_encoder import (
     _validate_width_schedule,
     variable_width_encoder_config,
 )
+from stackformers.result import Err, Ok
 from stackformers.sequence import PaddedInput, make_padded_input, padded_to_packed
 
 if TYPE_CHECKING:
@@ -51,15 +52,15 @@ def decoder() -> Decoder:
 
 
 @pytest.mark.parametrize("packed_queries", [False, True])
-def test_layout_failure_is_a_shared_result(padded_input: PaddedInput, packed_queries: bool) -> None:
+def test_layout_failure_is_a_result(padded_input: PaddedInput, packed_queries: bool) -> None:
     """Both mismatched orders return inspectable errors without raising in the core."""
     packed = padded_to_packed(padded_input)
     queries: SequenceInput = packed if packed_queries else padded_input
     context: SequenceInput = padded_input if packed_queries else packed
     outcome = matching_layouts(queries, context)
-    assert isinstance(outcome, Failure)
-    assert isinstance(outcome.failure(), ValueError)
-    assert str(outcome.failure()) == "cross-attention inputs must have matching layouts"
+    assert isinstance(outcome, Err)
+    assert isinstance(outcome.error, ValueError)
+    assert str(outcome.error) == "cross-attention inputs must have matching layouts"
 
 
 @pytest.mark.parametrize("packed", [False, True])
@@ -67,8 +68,8 @@ def test_layout_success_preserves_native_records(padded_input: PaddedInput, pack
     """Validation returns the original pair rather than copying tensors or metadata."""
     sequence: SequenceInput = padded_to_packed(padded_input) if packed else padded_input
     outcome = matching_layouts(sequence, sequence)
-    assert isinstance(outcome, Success)
-    queries, context = outcome.unwrap()
+    assert isinstance(outcome, Ok)
+    queries, context = outcome.value
     assert queries is sequence
     assert context is sequence
 
@@ -90,8 +91,8 @@ def test_head_geometry_failure_is_data_then_pydantic_error(
 ) -> None:
     """Core dimension failures are silent data; the public config retains ValidationError."""
     outcome = _validate_head_grouping(heads, kv_heads)
-    assert isinstance(outcome, Failure)
-    assert str(outcome.failure()) == message
+    assert isinstance(outcome, Err)
+    assert str(outcome.error) == message
     assert len(recwarn) == 0
     with pytest.raises(ValidationError) as caught:
         config_type(dim=512, heads=heads, kv_heads=kv_heads)
@@ -104,10 +105,10 @@ def test_yarn_ordering_failure_is_data_then_pydantic_error() -> None:
         scale=2.0, original_max_seq_len=16, beta_fast=1.0, beta_slow=2.0
     )
     outcome = config._beta_ordering_result()
-    assert isinstance(outcome, Failure)
+    assert isinstance(outcome, Err)
     with pytest.raises(ValidationError) as caught:
         YaRNConfig(scale=2.0, original_max_seq_len=16, beta_fast=1.0, beta_slow=2.0)
-    assert caught.value.errors()[0]["ctx"]["error"].args == outcome.failure().args
+    assert caught.value.errors()[0]["ctx"]["error"].args == outcome.error.args
 
 
 @pytest.mark.parametrize(("dim_head", "r_max"), [(6, 2.0), (4, 2.0), (8, 1.0)])
@@ -115,10 +116,10 @@ def test_rotary_geometry_failure_is_data_then_pydantic_error(dim_head: int, r_ma
     """Divisibility, band count, and spatial range failures retain boundary diagnostics."""
     config = RoPENDConfig.model_construct(dim_head=dim_head, coords=2, r_min=1.0, r_max=r_max)
     outcome = config._geometry_result()
-    assert isinstance(outcome, Failure)
+    assert isinstance(outcome, Err)
     with pytest.raises(ValidationError) as caught:
         RoPENDConfig(dim_head=dim_head, coords=2, r_min=1.0, r_max=r_max)
-    assert caught.value.errors()[0]["ctx"]["error"].args == outcome.failure().args
+    assert caught.value.errors()[0]["ctx"]["error"].args == outcome.error.args
 
 
 @pytest.mark.parametrize(
@@ -130,10 +131,10 @@ def test_width_schedule_failure_is_data_then_value_error(
 ) -> None:
     """The preset still raises the same validation message from its Result core."""
     outcome = _validate_width_schedule(d_models, dim_heads)
-    assert isinstance(outcome, Failure)
+    assert isinstance(outcome, Err)
     with pytest.raises(ValueError) as caught:
         variable_width_encoder_config(d_models=d_models, dim_heads=dim_heads)
-    assert caught.value.args == outcome.failure().args
+    assert caught.value.args == outcome.error.args
 
 
 @pytest.mark.parametrize(("dim_head", "divisor"), [(3, 2), (6, 4)])
@@ -145,14 +146,14 @@ def test_rotary_width_keeps_constructor_assertion(dim_head: int, divisor: int) -
         case _:
             message = "dim_head must be divisible by 4 for 2-D RoPE"
     outcome = rotary_head_width(dim_head, divisor, message)
-    assert isinstance(outcome, Failure)
+    assert isinstance(outcome, Err)
     with pytest.raises(AssertionError) as caught:
         match divisor:
             case 2:
                 RotaryEmbedding1D(RoPE1DConfig(dim_head=dim_head))
             case _:
                 RotaryEmbedding2D(RoPE2DConfig(dim_head=dim_head))
-    assert caught.value.args == outcome.failure().args
+    assert caught.value.args == outcome.error.args
 
 
 @pytest.mark.parametrize(("causal", "window_size"), [(False, None), (True, 4)])
@@ -166,18 +167,18 @@ def test_unsupported_cache_equation_is_data_then_exception(
         NoPosEncoding(),
     )
     outcome = supported_self_attention(attention)
-    assert isinstance(outcome, Failure)
+    assert isinstance(outcome, Err)
     with pytest.raises(NotImplementedError) as caught:
         CachedSelfAttentionWrapper(attention)
-    assert caught.value.args == outcome.failure().args
+    assert caught.value.args == outcome.error.args
 
 
 @pytest.mark.parametrize("token_count", [0, 2])
 def test_invalid_cached_token_count_is_data(token_count: int) -> None:
     """Unsupported step lengths return the existing diagnostic without unwinding."""
     outcome = single_token(token_count)
-    assert isinstance(outcome, Failure)
-    assert str(outcome.failure()) == "cached self-attention requires exactly one target token"
+    assert isinstance(outcome, Err)
+    assert str(outcome.error) == "cached self-attention requires exactly one target token"
 
 
 @pytest.mark.parametrize(
@@ -194,28 +195,52 @@ def test_cache_layer_failures_preserve_validation_order(
 ) -> None:
     """Core validation selects the established first error when both caches mismatch."""
     outcome = matching_layer_counts(cross_layers, self_layers, 2)
-    assert isinstance(outcome, Failure)
-    assert str(outcome.failure()) == message
+    assert isinstance(outcome, Err)
+    assert str(outcome.error) == message
 
 
 def test_decoder_resolution_failure_is_data_then_type_error() -> None:
     """An unsupported public module stays diagnosable through the core Result interface."""
     module = torch.nn.Identity()
     outcome = _unwrap_decoder(module)
-    assert isinstance(outcome, Failure)
+    assert isinstance(outcome, Err)
     with pytest.raises(TypeError) as caught:
         CachedDecoderWrapper(module)
-    assert caught.value.args == outcome.failure().args
+    assert caught.value.args == outcome.error.args
 
 
-def test_cached_layer_captures_expected_constructor_failure(decoder: Decoder) -> None:
-    """Building through a public constructor does not leak its expected cache rejection."""
+def test_cached_layer_returns_expected_admission_failure(decoder: Decoder) -> None:
+    """Recoverable cache admission fails as data before a public executor is constructed."""
     layer = decoder.layers[0]
     assert isinstance(layer, DecoderLayerBase)
     layer.self_attn = SelfAttention(SelfAttentionConfig(dim=64, heads=1), NoPosEncoding())
     outcome = _cached_layer(layer)
-    assert isinstance(outcome, Failure)
-    assert isinstance(outcome.failure(), NotImplementedError)
+    assert isinstance(outcome, Err)
+    assert isinstance(outcome.error, NotImplementedError)
     with pytest.raises(NotImplementedError) as caught:
         CachedDecoderWrapper(decoder)
-    assert caught.value.args == outcome.failure().args
+    assert caught.value.args == outcome.error.args
+
+
+@pytest.mark.parametrize("component", ["self_type", "self_equation", "cross_type"])
+def test_cached_layer_rejects_before_constructor(
+    decoder: Decoder, monkeypatch: pytest.MonkeyPatch, component: str
+) -> None:
+    """Expected validation failures never enter a constructor and unwind an exception."""
+    layer = decoder.layers[0]
+    assert isinstance(layer, DecoderLayerBase)
+    match component:
+        case "self_type":
+            layer.self_attn = torch.nn.Identity()
+        case "self_equation":
+            layer.self_attn = SelfAttention(SelfAttentionConfig(dim=64, heads=1), NoPosEncoding())
+        case "cross_type":
+            layer.cross_attn = torch.nn.Identity()
+
+    def construct(layer: DecoderLayerBase) -> dc.CachedDecoderLayerBase:
+        """Fail if core admission incorrectly delegates validation to a raising constructor."""
+        pytest.fail("recoverable admission must finish before construction")
+
+    monkeypatch.setattr(dc, "CachedDecoderLayer", construct)
+    outcome = _cached_layer(layer)
+    assert isinstance(outcome, Err)

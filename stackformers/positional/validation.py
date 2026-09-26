@@ -1,6 +1,6 @@
 """Pure rotary-width admission checks that preserve constructor failure detail."""
 
-from returns.result import Failure, Result, Success
+from stackformers.result import Err, Ok, Result
 
 
 def rotary_head_width(
@@ -8,5 +8,5 @@ def rotary_head_width(
 ) -> Result[tuple[()], AssertionError]:
     """Return an invalid pairing width as data for the constructor boundary."""
     if dim_head % divisor != 0:
-        return Failure(AssertionError(message))
-    return Success(())
+        return Err(AssertionError(message))
+    return Ok(())

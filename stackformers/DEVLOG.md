@@ -1,5 +1,42 @@
 # Transformer model development log
 
+## 2026-09-26 — Native NamedTuple Result records (5.0.0rc6)
+
+### Observation
+
+The external `returns` container added a dependency and an unchecked unwrap API. Cached layer
+construction also recovered from anticipated validation failures by raising and catching them.
+
+### Decision
+
+Replace it with one project-owned `Result[T, E] = Ok[T] | Err[E]` alias and two immutable generic
+NamedTuple records. Carry native payloads and original error causes without copying. Keep
+recoverable core failures as data, validate cache admission before construction, and preserve
+the existing public tensor/configuration, validation-exception, and fallback-warning contracts.
+
+Use keyword class patterns. Positional patterns on these generic NamedTuples fail PyTorch 2.11
+Dynamo's `__match_args__` lookup during strict tracing. Keyword patterns pass without compiler
+disables, graph breaks, type suppressions, or casts.
+
+### Verified
+
+The full quality gate passes: 1273 passed, 21 skipped, 162 expected failures, and 87 optional-case
+unexpected passes. Strict/non-strict dynamic export, exported NamedTuple outputs, tensor
+identity and autograd, and full-graph compilation of both tensor and Result outputs pass.
+Compiled recovery handles an empty input as data. Three cache-admission regressions prove that
+expected rejection never invokes an executor constructor. Existing model/API compatibility
+and ONNX export checks pass.
+
+Ruff and strict Pyrefly pass without new suppressions. Four negative checker probes reject
+unnarrowed payload access, missing variants, and wrong success/error types. The `returns`
+dependency has been removed with uv; an extracted-wheel smoke test verifies the public Result
+exports, native tensor autograd, preserved error identity, and dependency metadata.
+
+### Unproven
+
+Compilation checks use the CPU eager backend. CUDA execution and Inductor performance have
+not been measured. Python type annotations do not guarantee that arbitrary code never raises.
+
 ## 2026-09-26 — Normalize the experimental kernel contract (5.0.0rc4)
 
 ### Observation

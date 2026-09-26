@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Generic, TypeVar
 
 import torch.nn as nn
 from pydantic import BaseModel, Field, model_validator
-from returns.result import Failure, Result, Success
 from torch import Tensor
 from typing_extensions import override
 
@@ -38,6 +37,7 @@ from stackformers.positional.config import (
     RoPE1DConfig,
 )
 from stackformers.positional.factory import build_pos_encoding
+from stackformers.result import Err, Ok, Result
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -100,14 +100,14 @@ class TransformerEncoderConfig(BaseModel):
             isinstance(self.attn_bias, DistanceBiasConfig)
             and self.attn_bias.heads != self.attn.heads
         ):
-            return Failure(
+            return Err(
                 ValueError(
                     f"attn_bias.heads ({self.attn_bias.heads}) must equal"
                     f" attn.heads ({self.attn.heads})"
                     " — the bias contributes one logit per query head."
                 )
             )
-        return Success(self)
+        return Ok(self)
 
 
 def plain_encoder_config(

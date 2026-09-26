@@ -13,8 +13,9 @@ from enum import Enum, auto
 from typing import TYPE_CHECKING, NamedTuple, ParamSpec, Protocol, assert_never
 
 import torch
-from returns.result import Failure, Result, Success
 from torch import Tensor
+
+from stackformers.result import Err, Ok, Result
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -69,12 +70,12 @@ def _checked_kernel(call: Callable[_P, object]) -> Callable[_P, Result[Tensor, V
         try:
             response: object = call(*args, **kwargs)
         except (RuntimeError, TypeError) as exc:
-            return Failure(VarlenFallback(FallbackKind.CALL_FAILED, exc))
+            return Err(VarlenFallback(FallbackKind.CALL_FAILED, exc))
         match response:
             case Tensor():
-                return Success(response)
+                return Ok(response)
             case _:
-                return Failure(VarlenFallback(FallbackKind.INVALID_RETURN, type(response).__name__))
+                return Err(VarlenFallback(FallbackKind.INVALID_RETURN, type(response).__name__))
 
     return invoke
 
@@ -84,8 +85,8 @@ def _load() -> Result[_VarlenKernel, ImportError]:
     try:
         from torch.nn.attention.varlen import varlen_attn
     except ImportError as exc:
-        return Failure(exc)
-    return Success(_checked_kernel(varlen_attn))
+        return Err(exc)
+    return Ok(_checked_kernel(varlen_attn))
 
 
 _kernel = _load()
@@ -117,14 +118,16 @@ def attempt_varlen_attn(
 ) -> Result[Tensor, VarlenFallback]:
     """Attempt the injected kernel; return typed fallback detail without emitting warnings."""
     if not _eligible(q):
-        return Failure(VarlenFallback(FallbackKind.INELIGIBLE, "device or dtype is ineligible"))
+        return Err(VarlenFallback(FallbackKind.INELIGIBLE, "device or dtype is ineligible"))
     match kernel:
-        case Failure(error):
-            return Failure(VarlenFallback(FallbackKind.UNAVAILABLE, error))
+        case Err(error=error):
+            return Err(VarlenFallback(FallbackKind.UNAVAILABLE, error))
+        case Ok(value=call):
+            pass
         case _:
-            call = kernel.unwrap()
+            assert_never(kernel)
     if bias is not None:
-        return Failure(VarlenFallback(FallbackKind.UNSUPPORTED_BIAS, "attention bias"))
+        return Err(VarlenFallback(FallbackKind.UNSUPPORTED_BIAS, "attention bias"))
     return call(
         query=q,
         key=k,
@@ -174,9 +177,11 @@ def try_varlen_attn(
     """
     outcome = attempt_varlen_attn(q, k, v, q_seq, k_seq, causal, window_size, bias, kernel=_kernel)
     match outcome:
-        case Failure(fallback):
+        case Err(error=fallback):
             if fallback.kind is not FallbackKind.INELIGIBLE:
                 warnings.warn(_fallback_reason(fallback) + _FALLBACK_NOTE, stacklevel=2)
             return None
+        case Ok(value=output):
+            return output
         case _:
-            return outcome.unwrap()
+            assert_never(outcome)

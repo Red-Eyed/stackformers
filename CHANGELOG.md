@@ -8,6 +8,24 @@ MINOR for backwards-compatible features, PATCH for bug fixes and internal change
 
 ## [Unreleased]
 
+## [5.0.0rc6] — 2026-09-26
+
+### Backwards Incompatible Changes
+
+#### Core Result values
+
+Core outcomes now use `stackformers.result.Result[T, E]`, the union of generic NamedTuples
+`Ok[T]` and `Err[E]`, instead of `returns.result.Result`. Consumers of core outcomes must
+match `Ok(value=value)` / `Err(error=error)` and access the narrowed payload; `unwrap`,
+`failure`, and `map` methods are no longer available. Public tensor/configuration returns,
+validation exceptions, and backend fallback warnings remain compatible. Remove any reliance
+on Stackformers installing `returns` as a transitive dependency.
+
+### Developers
+
+- Validate cached decoder attention admission before constructing executors, returning
+  expected failures as data instead of raising and catching constructor exceptions.
+
 ## [5.0.0rc5] — 2026-09-26
 
 ### Developers

@@ -44,6 +44,18 @@ registration and handling.
 
 Ruff enforces the import restriction through `TID251`.
 
+## Expected failures
+
+Use `Result[T, E] = Ok[T] | Err[E]` from `stackformers.result` for recoverable core failures.
+The alternatives are generic NamedTuples; do not add an external Result dependency or use
+unchecked unwrap methods. Match `Ok(value=value)` / `Err(error=error)` with keyword patterns
+for PyTorch tracing compatibility, and use `assert_never` for closed-union exhaustiveness.
+
+Validate admission before construction instead of raising and catching expected failures.
+Keep exception policy at public adapters for operations that cannot proceed, preserving
+existing API contracts. Catch expected vendor exceptions at the vendor boundary, retaining
+their original causes; unexpected programming failures may propagate.
+
 ## Dimension vocabulary
 
 | Symbol | Meaning |

@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, assert_never, cast
 
 import torch
 import torch.nn as nn
-from returns.result import Failure, Result, Success
 from torch import Tensor
 from typing_extensions import override
 
@@ -17,7 +16,7 @@ from stackformers.attention.cache import (
     DecoderCrossAttentionCache,
     DecoderStepOutput,
 )
-from stackformers.attention.cache_validation import matching_layer_counts
+from stackformers.attention.cache_validation import matching_layer_counts, supported_self_attention
 from stackformers.attention.cached import (
     CachedCrossAttentionWrapper,
     CachedSelfAttentionWrapper,
@@ -32,6 +31,7 @@ from stackformers.decoder import (
     ReorderedNormDecoderLayer,
     SandwichNormDecoderLayer,
 )
+from stackformers.result import Err, Ok, Result
 from stackformers.sequence import PaddedInput, PaddedSequence
 
 
@@ -39,28 +39,26 @@ def _unwrap_decoder(module: nn.Module) -> Result[Decoder, TypeError]:
     """Resolve a low-level decoder from either a stack or its existing preset wrapper."""
     candidate = module if isinstance(module, Decoder) else getattr(module, "_decoder", module)
     if not isinstance(candidate, Decoder):
-        return Failure(
-            TypeError(f"{type(module).__name__} does not contain a Stackformers Decoder")
-        )
-    return Success(candidate)
+        return Err(TypeError(f"{type(module).__name__} does not contain a Stackformers Decoder"))
+    return Ok(candidate)
 
 
 def _self_attention(module: object) -> Result[SelfAttention, TypeError]:
     """Require the standard self-attention whose projections the cache executor reuses."""
     if not isinstance(module, SelfAttention):
-        return Failure(
+        return Err(
             TypeError(f"cached decoding does not support {type(module).__name__} self-attention")
         )
-    return Success(module)
+    return Ok(module)
 
 
 def _cross_attention(module: object) -> Result[CrossAttention, TypeError]:
     """Require the standard cross-attention whose projections the cache executor reuses."""
     if not isinstance(module, CrossAttention):
-        return Failure(
+        return Err(
             TypeError(f"cached decoding does not support {type(module).__name__} cross-attention")
         )
-    return Success(module)
+    return Ok(module)
 
 
 def _layer_cross_cache(cache: Tensor) -> CrossAttentionKVCache:
@@ -230,23 +228,66 @@ class CachedReorderedNormDecoderLayer(CachedDecoderLayerBase):
 def _cached_layer(
     layer: DecoderLayerBase,
 ) -> Result[CachedDecoderLayerBase, TypeError | NotImplementedError]:
-    """Adapt supported public constructors into typed cache-construction outcomes."""
-    try:
-        match layer:
-            case DecoderLayer():
-                return Success(CachedDecoderLayer(layer))
-            case PostNormDecoderLayer():
-                return Success(CachedPostNormDecoderLayer(layer))
-            case SandwichNormDecoderLayer():
-                return Success(CachedSandwichNormDecoderLayer(layer))
-            case ReorderedNormDecoderLayer():
-                return Success(CachedReorderedNormDecoderLayer(layer))
-            case _:
-                return Failure(
-                    TypeError(f"cached decoding does not support {type(layer).__name__}")
-                )
-    except (TypeError, NotImplementedError) as error:
-        return Failure(error)
+    """Validate cache admission before constructing an executor, without exception recovery."""
+    match layer:
+        case (
+            DecoderLayer()
+            | PostNormDecoderLayer()
+            | SandwichNormDecoderLayer()
+            | ReorderedNormDecoderLayer()
+        ):
+            pass
+        case _:
+            return Err(TypeError(f"cached decoding does not support {type(layer).__name__}"))
+    admission = _cached_attention_admission(layer)
+    match admission:
+        case Err() as failure:
+            return failure
+        case Ok():
+            pass
+        case _:
+            assert_never(admission)
+    match layer:
+        case DecoderLayer():
+            return Ok(CachedDecoderLayer(layer))
+        case PostNormDecoderLayer():
+            return Ok(CachedPostNormDecoderLayer(layer))
+        case SandwichNormDecoderLayer():
+            return Ok(CachedSandwichNormDecoderLayer(layer))
+        case ReorderedNormDecoderLayer():
+            return Ok(CachedReorderedNormDecoderLayer(layer))
+        case _:
+            assert_never(layer)
+
+
+def _cached_attention_admission(
+    layer: DecoderLayerBase,
+) -> Result[tuple[()], TypeError | NotImplementedError]:
+    """Reject unsupported attention types and cache equations before invoking constructors."""
+    self_attention = _self_attention(layer.self_attn)
+    match self_attention:
+        case Err() as failure:
+            return failure
+        case Ok(value=attention):
+            pass
+        case _:
+            assert_never(self_attention)
+    supported = supported_self_attention(attention)
+    match supported:
+        case Err() as failure:
+            return failure
+        case Ok():
+            pass
+        case _:
+            assert_never(supported)
+    cross_attention = _cross_attention(layer.cross_attn)
+    match cross_attention:
+        case Err() as failure:
+            return failure
+        case Ok():
+            return Ok(())
+        case _:
+            assert_never(cross_attention)
 
 
 def _decoder_layers(decoder: Decoder) -> Result[tuple[DecoderLayerBase, ...], TypeError]:
@@ -254,9 +295,9 @@ def _decoder_layers(decoder: Decoder) -> Result[tuple[DecoderLayerBase, ...], Ty
     layers: list[DecoderLayerBase] = []
     for layer in decoder.layers:
         if not isinstance(layer, DecoderLayerBase):
-            return Failure(TypeError(f"expected DecoderLayerBase, received {type(layer).__name__}"))
+            return Err(TypeError(f"expected DecoderLayerBase, received {type(layer).__name__}"))
         layers.append(layer)
-    return Success(tuple(layers))
+    return Ok(tuple(layers))
 
 
 class DecoderCrossAttentionCacheBuilder(nn.Module):
