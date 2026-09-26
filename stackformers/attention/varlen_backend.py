@@ -10,47 +10,19 @@ from __future__ import annotations
 
 import warnings
 from enum import Enum, auto
-from typing import TYPE_CHECKING, NamedTuple, Protocol, assert_never
+from typing import TYPE_CHECKING, NamedTuple, ParamSpec, Protocol, assert_never
 
 import torch
 from returns.result import Failure, Result, Success
 from torch import Tensor
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from stackformers.sequence import PackedSequence
 
 _FALLBACK_NOTE = " Falling back to padded SDPA; performance may be lower."
-
-
-class _VarlenKernel(Protocol):
-    """Keyword interface consumed from the experimental backend; validate its result."""
-
-    def __call__(
-        self,
-        *,
-        query: Tensor,
-        key: Tensor,
-        value: Tensor,
-        cu_seq_q: Tensor,
-        cu_seq_k: Tensor,
-        max_q: int,
-        max_k: int,
-        window_size: tuple[int, int],
-    ) -> object:
-        """Invoke the kernel without trusting its experimental return schema."""
-        ...
-
-
-def _load() -> Result[_VarlenKernel, ImportError]:
-    """Load the optional kernel and preserve its import failure for fallback diagnostics."""
-    try:
-        from torch.nn.attention.varlen import varlen_attn
-    except ImportError as exc:
-        return Failure(exc)
-    return Success(varlen_attn)
-
-
-_kernel = _load()
+_P = ParamSpec("_P")
 
 
 class FallbackKind(Enum):
@@ -68,6 +40,55 @@ class VarlenFallback(NamedTuple):
 
     kind: FallbackKind
     detail: str | Exception
+
+
+class _VarlenKernel(Protocol):
+    """Normalized kernel capability, independent of the vendor's response schema."""
+
+    def __call__(
+        self,
+        *,
+        query: Tensor,
+        key: Tensor,
+        value: Tensor,
+        cu_seq_q: Tensor,
+        cu_seq_k: Tensor,
+        max_q: int,
+        max_k: int,
+        window_size: tuple[int, int],
+    ) -> Result[Tensor, VarlenFallback]:
+        """Return output or expected fallback detail; unexpected errors may propagate."""
+        ...
+
+
+def _checked_kernel(call: Callable[_P, object]) -> Callable[_P, Result[Tensor, VarlenFallback]]:
+    """Normalize vendor responses and failures while retaining its parameter signature."""
+
+    def invoke(*args: _P.args, **kwargs: _P.kwargs) -> Result[Tensor, VarlenFallback]:
+        """Translate expected vendor failures and validate its untrusted response."""
+        try:
+            response: object = call(*args, **kwargs)
+        except (RuntimeError, TypeError) as exc:
+            return Failure(VarlenFallback(FallbackKind.CALL_FAILED, exc))
+        match response:
+            case Tensor():
+                return Success(response)
+            case _:
+                return Failure(VarlenFallback(FallbackKind.INVALID_RETURN, type(response).__name__))
+
+    return invoke
+
+
+def _load() -> Result[_VarlenKernel, ImportError]:
+    """Load the optional kernel and preserve its import failure for fallback diagnostics."""
+    try:
+        from torch.nn.attention.varlen import varlen_attn
+    except ImportError as exc:
+        return Failure(exc)
+    return Success(_checked_kernel(varlen_attn))
+
+
+_kernel = _load()
 
 
 def _eligible(q: Tensor) -> bool:
@@ -104,22 +125,16 @@ def attempt_varlen_attn(
             call = kernel.unwrap()
     if bias is not None:
         return Failure(VarlenFallback(FallbackKind.UNSUPPORTED_BIAS, "attention bias"))
-    try:
-        result = call(
-            query=q,
-            key=k,
-            value=v,
-            cu_seq_q=q_seq.cu_seqlens.to(torch.int32),
-            cu_seq_k=k_seq.cu_seqlens.to(torch.int32),
-            max_q=q_seq.max_seqlen,
-            max_k=k_seq.max_seqlen,
-            window_size=_window(causal, window_size),
-        )
-    except (RuntimeError, TypeError) as exc:
-        return Failure(VarlenFallback(FallbackKind.CALL_FAILED, exc))
-    if not isinstance(result, Tensor):
-        return Failure(VarlenFallback(FallbackKind.INVALID_RETURN, type(result).__name__))
-    return Success(result)
+    return call(
+        query=q,
+        key=k,
+        value=v,
+        cu_seq_q=q_seq.cu_seqlens.to(torch.int32),
+        cu_seq_k=k_seq.cu_seqlens.to(torch.int32),
+        max_q=q_seq.max_seqlen,
+        max_k=k_seq.max_seqlen,
+        window_size=_window(causal, window_size),
+    )
 
 
 def _fallback_reason(fallback: VarlenFallback) -> str:

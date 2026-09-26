@@ -8,6 +8,14 @@ MINOR for backwards-compatible features, PATCH for bug fixes and internal change
 
 ## [Unreleased]
 
+## [5.0.0rc4] — 2026-09-26
+
+### Developers
+
+- Require kernels injected into the experimental attention core to return
+  `Result[Tensor, VarlenFallback]`. Normalize PyTorch responses and expected exceptions
+  in the vendor adapter, preserving public tensor-or-None returns, warnings, and error causes.
+
 ## [5.0.0rc3] — 2026-09-26
 
 ### New Features

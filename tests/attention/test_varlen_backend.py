@@ -13,7 +13,7 @@ import warnings
 
 import pytest
 import torch
-from returns.result import Failure, Success
+from returns.result import Failure, Result, Success
 
 from stackformers.attention import varlen_backend as vb
 from stackformers.sequence import PackedSequence
@@ -76,7 +76,7 @@ def test_attention_bias_warns(
         """Provide a callable backend while bias eligibility is checked."""
         return torch.zeros(NT, H, DH)
 
-    monkeypatch.setattr(vb, "_kernel", Success(kernel))
+    monkeypatch.setattr(vb, "_kernel", Success(vb._checked_kernel(kernel)))
     bias = torch.zeros(1, 1, NT, NT)
     with pytest.warns(UserWarning, match="attention bias"):
         out = _attempt(packed, bias=bias)
@@ -88,11 +88,12 @@ def test_signature_error_warns(
 ) -> None:
     """A changed experimental signature raises TypeError, which is caught and falls back."""
 
-    def renamed_kwarg(**kw: object) -> torch.Tensor:
-        raise TypeError("unexpected keyword argument 'cu_seq_q'")
+    def renamed_kwarg(*, query: torch.Tensor) -> torch.Tensor:
+        """Expose an incompatible vendor signature so Python raises the TypeError."""
+        return query
 
-    monkeypatch.setattr(vb, "_kernel", Success(renamed_kwarg))
-    with pytest.warns(UserWarning, match="call failed"):
+    monkeypatch.setattr(vb, "_kernel", Success(vb._checked_kernel(renamed_kwarg)))
+    with pytest.warns(UserWarning, match="call failed.*unexpected keyword argument 'key'"):
         out = _attempt(packed)
     assert out is None
 
@@ -103,9 +104,10 @@ def test_runtime_error_warns(
     """An unsupported-GPU RuntimeError from the call is caught and falls back."""
 
     def unsupported(**kw: object) -> torch.Tensor:
+        """Simulate an unsupported device at the vendor call boundary."""
         raise RuntimeError("varlen_attn requires compute capability >= 8.0")
 
-    monkeypatch.setattr(vb, "_kernel", Success(unsupported))
+    monkeypatch.setattr(vb, "_kernel", Success(vb._checked_kernel(unsupported)))
     with pytest.warns(UserWarning, match="call failed"):
         out = _attempt(packed)
     assert out is None
@@ -120,7 +122,7 @@ def test_non_tensor_return_warns(
         """Return an invalid payload to exercise response validation."""
         return ("not", "a", "tensor")
 
-    monkeypatch.setattr(vb, "_kernel", Success(kernel))
+    monkeypatch.setattr(vb, "_kernel", Success(vb._checked_kernel(kernel)))
     with pytest.warns(UserWarning, match="expected Tensor"):
         out = _attempt(packed)
     assert out is None
@@ -136,7 +138,7 @@ def test_success_returns_kernel_tensor(
         """Return the known tensor to check that the adapter preserves identity."""
         return expected
 
-    monkeypatch.setattr(vb, "_kernel", Success(kernel))
+    monkeypatch.setattr(vb, "_kernel", Success(vb._checked_kernel(kernel)))
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         out = _attempt(packed)
@@ -159,6 +161,27 @@ def test_core_unavailable_preserves_import_error(
     assert len(recwarn) == 0
 
 
+def test_core_rejects_auxiliary_return_without_auxiliary_request(
+    packed: Packed,
+    force_eligible: None,
+    recwarn: pytest.WarningsRecorder,
+) -> None:
+    """A vendor-compatible tuple remains unexpected for this adapter's tensor-only calls."""
+    q, k, v, seq = packed
+
+    def kernel(**kwargs: object) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return the vendor's auxiliary schema despite no auxiliary request."""
+        return torch.zeros_like(q), torch.zeros(NT, H)
+
+    outcome = vb.attempt_varlen_attn(
+        q, k, v, seq, seq, False, None, None, kernel=Success(vb._checked_kernel(kernel))
+    )
+    assert isinstance(outcome, Failure)
+    assert outcome.failure().kind is vb.FallbackKind.INVALID_RETURN
+    assert outcome.failure().detail == "tuple"
+    assert len(recwarn) == 0
+
+
 @pytest.mark.parametrize("error_type", [RuntimeError, TypeError])
 def test_core_call_failure_preserves_kernel_exception(
     packed: Packed,
@@ -174,7 +197,9 @@ def test_core_call_failure_preserves_kernel_exception(
         """Inject an expected experimental failure without needing a CUDA device."""
         raise error
 
-    outcome = vb.attempt_varlen_attn(q, k, v, seq, seq, False, None, None, kernel=Success(kernel))
+    outcome = vb.attempt_varlen_attn(
+        q, k, v, seq, seq, False, None, None, kernel=Success(vb._checked_kernel(kernel))
+    )
     assert isinstance(outcome, Failure)
     fallback = outcome.failure()
     assert fallback.kind is vb.FallbackKind.CALL_FAILED
@@ -192,5 +217,54 @@ def test_core_does_not_hide_unexpected_kernel_errors(packed: Packed, force_eligi
         raise error
 
     with pytest.raises(ValueError, match="unexpected kernel bug") as caught:
-        vb.attempt_varlen_attn(q, k, v, seq, seq, False, None, None, kernel=Success(kernel))
+        vb.attempt_varlen_attn(
+            q, k, v, seq, seq, False, None, None, kernel=Success(vb._checked_kernel(kernel))
+        )
     assert caught.value is error
+
+
+@pytest.mark.parametrize("succeeds", [True, False])
+def test_core_preserves_normalized_kernel_outcome(
+    packed: Packed,
+    force_eligible: None,
+    succeeds: bool,
+    recwarn: pytest.WarningsRecorder,
+) -> None:
+    """Injected normalized providers need no vendor validation or outcome reconstruction."""
+    q, k, v, seq = packed
+    expected: Result[torch.Tensor, vb.VarlenFallback]
+    if succeeds:
+        expected = Success(q)
+    else:
+        expected = Failure(vb.VarlenFallback(vb.FallbackKind.CALL_FAILED, RuntimeError("failed")))
+
+    def kernel(**kwargs: object) -> Result[torch.Tensor, vb.VarlenFallback]:
+        """Supply an already normalized outcome directly to the core."""
+        return expected
+
+    outcome = vb.attempt_varlen_attn(q, k, v, seq, seq, False, None, None, kernel=Success(kernel))
+    assert outcome is expected
+    assert len(recwarn) == 0
+
+
+@pytest.mark.parametrize("valid_response", [True, False])
+def test_loader_normalizes_vendor_response(
+    packed: Packed,
+    force_eligible: None,
+    monkeypatch: pytest.MonkeyPatch,
+    valid_response: bool,
+) -> None:
+    """The actual loader binds the vendor to the Result protocol before core execution."""
+    vendor = pytest.importorskip("torch.nn.attention.varlen")
+    q, k, v, seq = packed
+
+    def kernel(**kwargs: object) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+        """Simulate both tensor and auxiliary payloads from the imported vendor symbol."""
+        return q if valid_response else (q, torch.zeros(NT, H))
+
+    monkeypatch.setattr(vendor, "varlen_attn", kernel)
+    outcome = vb.attempt_varlen_attn(q, k, v, seq, seq, False, None, None, kernel=vb._load())
+    if valid_response:
+        assert outcome.unwrap() is q
+    else:
+        assert outcome.failure() == vb.VarlenFallback(vb.FallbackKind.INVALID_RETURN, "tuple")

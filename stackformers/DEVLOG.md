@@ -1,5 +1,35 @@
 # Transformer model development log
 
+## 2026-09-26 — Normalize the experimental kernel contract (5.0.0rc4)
+
+### Observation
+
+The injected kernel protocol exposed the vendor's raw return schema. Core execution had to
+validate that response and translate vendor exceptions despite already returning a Result.
+
+### Decision
+
+Require injected kernels to return `Result[Tensor, VarlenFallback]`. Wrap the imported vendor
+callable once, preserving its parameter signature, validating its unknown response, and
+converting the existing RuntimeError/TypeError fallback cases into failures with original
+exception identity. Keep warning policy and the public tensor-or-None API unchanged.
+
+### Verified
+
+All 16 backend tests pass, including loader response validation, normalized outcome identity,
+tensor identity, original error identity, warnings, and propagation of unexpected exceptions.
+Strict Pyrefly accepts the normalized protocol and signature-preserving wrapper without casts
+or suppressions. A negative checker probe rejects a raw tensor-returning callable with the
+correct input signature while accepting its normalized wrapper.
+
+The full quality gate passes: 1261 passed, 21 skipped, 162 expected failures, and 87 optional-case
+unexpected passes. Existing model/API compatibility, Torch export, and compilation checks pass.
+The signature fallback test uses an incompatible callable so Python generates the TypeError.
+
+### Unproven
+
+These tests fake vendor execution on CPU; they do not exercise the CUDA kernel.
+
 ## 2026-09-26 — Variable-width encoder schedules and explicit heads (5.0.0rc3)
 
 ### Observation
