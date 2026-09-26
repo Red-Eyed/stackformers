@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, overload
+
 import torch.nn as nn
 from einops import rearrange, repeat
 from torch import Tensor
+from typing_extensions import override
 
-from stackformers.attention.config import CrossAttentionConfig
 from stackformers.attention.ops import packed_attn_or_fallback, padded_sdpa
-from stackformers.positional.protocols import PosEncoding
 from stackformers.sequence import PackedInput, PackedSequence, PaddedInput, SequenceInput
+
+if TYPE_CHECKING:
+    from stackformers.attention.config import CrossAttentionConfig
+    from stackformers.positional.protocols import PosEncoding
 
 
 class CrossAttention(nn.Module):
@@ -46,8 +51,8 @@ class CrossAttention(nn.Module):
             q, k, x_input.abs_positions, ctx_input.abs_positions
         )
         out = padded_sdpa(q, k, v, ctx_input.mask, causal=False, window_size=None, bias=None)
-        out = self.dropout(self.to_out(rearrange(out, "b h n d -> b n (h d)")))
-        return out * x_input.mask.unsqueeze(-1)
+        projected: Tensor = self.dropout(self.to_out(rearrange(out, "b h n d -> b n (h d)")))
+        return projected * x_input.mask.unsqueeze(-1)
 
     def _forward_packed(self, x_input: PackedInput, ctx_input: PackedInput) -> Tensor:
         cfg = self.config
@@ -67,11 +72,31 @@ class CrossAttention(nn.Module):
         out = packed_attn_or_fallback(
             q, k, v, x_seq, ctx_seq, causal=False, window_size=None, bias=None
         )
-        return self.dropout(self.to_out(rearrange(out, "nt h d -> nt (h d)")))
+        projected: Tensor = self.dropout(self.to_out(rearrange(out, "nt h d -> nt (h d)")))
+        return projected
 
+    @overload
+    def forward(self, x_input: PaddedInput, ctx_input: PaddedInput) -> Tensor:
+        """Attend between padded inputs with independently sized sequence axes."""
+        ...
+
+    @overload
+    def forward(self, x_input: PackedInput, ctx_input: PackedInput) -> Tensor:
+        """Attend between packed inputs with matching document counts."""
+        ...
+
+    @override
     def forward(self, x_input: SequenceInput, ctx_input: SequenceInput) -> Tensor:
-        match x_input:
-            case PaddedInput():
-                return self._forward_padded(x_input, ctx_input)  # type: ignore[arg-type]
-            case PackedInput():
-                return self._forward_packed(x_input, ctx_input)  # type: ignore[arg-type]
+        """Attend within one shared layout; raise ValueError for mixed layouts."""
+        match x_input, ctx_input:
+            case PaddedInput(), PaddedInput():
+                return self._forward_padded(x_input, ctx_input)
+            case PackedInput(), PackedInput():
+                return self._forward_packed(x_input, ctx_input)
+            case _:
+                raise ValueError("cross-attention inputs must have matching layouts")
+
+    if TYPE_CHECKING:
+        # Preserve nn.Module's hook machinery at runtime while exposing the
+        # same layout contract for module calls and explicit forward calls.
+        __call__ = forward

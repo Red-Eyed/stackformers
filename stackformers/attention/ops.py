@@ -1,16 +1,21 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import torch
 import torch.nn.functional as F
 from torch import Tensor
 
 from stackformers.attention.varlen_backend import try_varlen_attn
-from stackformers.sequence import PackedSequence
+
+if TYPE_CHECKING:
+    from stackformers.sequence import PackedSequence
 
 
 def padding_mask(mask: Tensor, dtype: torch.dtype) -> Tensor:
+    """Exclude invalid keys completely, including rows with no valid keys."""
     bias = torch.zeros(mask.shape, dtype=dtype, device=mask.device)
-    bias.masked_fill_(~mask, torch.finfo(dtype).min)
+    bias.masked_fill_(~mask, float("-inf"))
     return bias.view(mask.shape[0], 1, 1, mask.shape[1])
 
 
@@ -45,23 +50,28 @@ def padded_sdpa(
     window_size: int | None,
     bias: Tensor | None,
 ) -> Tensor:
-    """SDPA for padded inputs, applying padding mask + optional window mask + attention bias."""
+    """Apply padding, window and bias constraints; return zero for fully excluded rows."""
     n, s = q.shape[-2], k.shape[-2]
     attn_mask = padding_mask(mask, q.dtype)
     if bias is not None:
         attn_mask = attn_mask + bias
-    # ONNX Runtime's Attention kernel (opset >=23) requires an explicit query
-    # dimension even though ONNX permits broadcasting it. expand keeps this a
-    # view in PyTorch and preserves symbolic query lengths during export.
-    attn_mask = attn_mask.expand(-1, -1, n, -1)
-    if window_size is None:
-        if causal:
-            attn_mask = attn_mask + window_mask(n, s, s, True, q.device, q.dtype)
-        # is_causal=False: causal constraint already encoded in attn_mask above
-        return F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, is_causal=False)
-    else:
-        win_mask = window_mask(n, s, window_size, causal, q.device, q.dtype)
-        return F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask + win_mask)
+    if window_size is not None or causal:
+        width = s if window_size is None else window_size
+        attn_mask = attn_mask + window_mask(n, s, width, causal, q.device, q.dtype)
+    return _sdpa_with_empty_rows(q, k, v, attn_mask)
+
+
+def _sdpa_with_empty_rows(q: Tensor, k: Tensor, v: Tensor, attn_mask: Tensor) -> Tensor:
+    """Keep fully excluded rows finite across eager and exported attention backends."""
+    empty_rows = torch.isneginf(attn_mask).all(dim=-1, keepdim=True)
+    # Some exported softmax kernels yield NaN on all -inf. Give those rows a
+    # finite temporary mask, then exclude their outputs and gradients explicitly.
+    safe_mask = attn_mask.masked_fill(empty_rows, 0.0)
+    # ONNX Runtime Attention (opset >=23) requires an explicit query dimension.
+    # Expand after empty-row handling so padding-only masks stay compact until here.
+    safe_mask = safe_mask.expand(-1, -1, q.shape[-2], -1)
+    out = F.scaled_dot_product_attention(q, k, v, attn_mask=safe_mask)
+    return out.masked_fill(empty_rows, 0.0)
 
 
 def _cu_to_indices(cu: Tensor, b: int) -> tuple[Tensor, Tensor]:

@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import torch
 import torch.nn as nn
 from torch import Tensor
+from typing_extensions import override
 
 from stackformers.attention.cache import (
     CrossAttentionKVCache,
@@ -69,6 +70,7 @@ class CachedDecoderLayerBase(nn.Module, ABC):
         self.ff = layer.ff
 
     @abstractmethod
+    @override
     def forward(
         self,
         input: PaddedInput,
@@ -78,6 +80,9 @@ class CachedDecoderLayerBase(nn.Module, ABC):
         step_i: Tensor,
     ) -> tuple[PaddedInput, Tensor]:
         """Decode one token and return this layer's extended self cache."""
+
+    if TYPE_CHECKING:
+        __call__ = forward
 
 
 class CachedDecoderLayer(CachedDecoderLayerBase):
@@ -108,6 +113,9 @@ class CachedDecoderLayer(CachedDecoderLayerBase):
         x = x + self.ff(self.norm_ff(x))
         return input._replace(x=x), updated_self_cache
 
+    if TYPE_CHECKING:
+        __call__ = forward
+
 
 class CachedPostNormDecoderLayer(CachedDecoderLayerBase):
     """Cached executor for the existing post-norm decoder topology."""
@@ -134,6 +142,9 @@ class CachedPostNormDecoderLayer(CachedDecoderLayerBase):
         x = self.norm_cross(x + self.cross_attn(input, _layer_cross_cache(cross_cache), context))
         x = self.norm_ff(x + self.ff(x))
         return input._replace(x=x), updated_self_cache
+
+    if TYPE_CHECKING:
+        __call__ = forward
 
 
 class CachedSandwichNormDecoderLayer(CachedDecoderLayerBase):
@@ -169,6 +180,9 @@ class CachedSandwichNormDecoderLayer(CachedDecoderLayerBase):
         x = x + self.norm_ff_post(self.ff(self.norm_ff_pre(x)))
         return input._replace(x=x), updated_self_cache
 
+    if TYPE_CHECKING:
+        __call__ = forward
+
 
 class CachedReorderedNormDecoderLayer(CachedDecoderLayerBase):
     """Cached executor for the existing residual-post-norm decoder topology."""
@@ -195,6 +209,9 @@ class CachedReorderedNormDecoderLayer(CachedDecoderLayerBase):
         x = x + self.norm_cross(self.cross_attn(input, _layer_cross_cache(cross_cache), context))
         x = x + self.norm_ff(self.ff(x))
         return input._replace(x=x), updated_self_cache
+
+    if TYPE_CHECKING:
+        __call__ = forward
 
 
 def _cached_layer(layer: DecoderLayerBase) -> CachedDecoderLayerBase:
@@ -238,10 +255,11 @@ class DecoderCrossAttentionCacheBuilder(nn.Module):
         )
         self.train(source.training)
 
+    @override
     def forward(self, context: PaddedInput) -> DecoderCrossAttentionCache:
         """Return dense per-layer cross K/V plus the context validity mask."""
         layer_caches = tuple(
-            cast(CachedCrossAttentionWrapper, layer).build_cache(context) for layer in self.layers
+            cast("CachedCrossAttentionWrapper", layer).build_cache(context) for layer in self.layers
         )
         kv = torch.stack(
             tuple(torch.stack((cache.k, cache.v), dim=0) for cache in layer_caches),
@@ -251,6 +269,9 @@ class DecoderCrossAttentionCacheBuilder(nn.Module):
             kv=kv,
             context=PaddedSequence(mask=context.mask),
         )
+
+    if TYPE_CHECKING:
+        __call__ = forward
 
 
 class CachedDecoderWrapper(nn.Module):
@@ -273,6 +294,7 @@ class CachedDecoderWrapper(nn.Module):
         self.final_norm = source.final_norm
         self.train(source.training)
 
+    @override
     def forward(
         self,
         input: PaddedInput,
@@ -304,3 +326,6 @@ class CachedDecoderWrapper(nn.Module):
             x=self.final_norm(input.x),
             self_kv_cache=torch.stack(updated_layer_caches, dim=0),
         )
+
+    if TYPE_CHECKING:
+        __call__ = forward

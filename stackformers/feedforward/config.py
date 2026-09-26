@@ -6,6 +6,7 @@ import warnings
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, model_validator
+from typing_extensions import override
 
 
 class _FFBase(BaseModel):
@@ -63,6 +64,7 @@ class GELUConfig(_FFBase):
     kind: Literal["gelu"] = "gelu"
 
     @property
+    @override
     def inner_dim(self) -> int:
         """Return the hidden width for the non-gated network."""
         return int(self.dim * self.mult)
@@ -78,6 +80,7 @@ class ReluSquaredConfig(_FFBase):
     kind: Literal["relu_squared"] = "relu_squared"
 
     @property
+    @override
     def inner_dim(self) -> int:
         """Return the hidden width for the non-gated network."""
         return int(self.dim * self.mult)

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 import torch
-from jaxtyping import Bool, Float, Int
 from torch import Tensor
+
+if TYPE_CHECKING:
+    from jaxtyping import Bool, Float, Int
 
 # NamedTuple instead of dataclass: PyTorch's pytree system handles tuples natively,
 # so torch.export and torch.compile see the tensor fields without any registration.
@@ -79,7 +81,8 @@ def padded_to_key_padding_mask(seq: PaddedSequence) -> Bool[Tensor, "b n"]:
 
 
 def packed_batch_size(seq: PackedSequence) -> int:
-    return int(seq.cu_seqlens.shape[0]) - 1
+    """Return the document count without specializing symbolic tensor dimensions."""
+    return seq.cu_seqlens.shape[0] - 1
 
 
 def make_padded(mask: Bool[Tensor, "b n"]) -> PaddedSequence:

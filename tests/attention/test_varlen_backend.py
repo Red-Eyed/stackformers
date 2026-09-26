@@ -35,7 +35,12 @@ def packed() -> Packed:
 @pytest.fixture
 def force_eligible(monkeypatch: pytest.MonkeyPatch) -> None:
     """Pretend the query is CUDA + float16 so the eligibility guard does not short-circuit."""
-    monkeypatch.setattr(vb, "_eligible", lambda q: True)
+
+    def eligible(q: torch.Tensor) -> bool:
+        """Admit CPU tensors to exercise the backend invocation boundary."""
+        return True
+
+    monkeypatch.setattr(vb, "_eligible", eligible)
 
 
 def _attempt(packed: Packed, bias: torch.Tensor | None = None) -> torch.Tensor | None:
@@ -65,7 +70,12 @@ def test_attention_bias_warns(
     packed: Packed, force_eligible: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """varlen_attn has no bias slot: an eligible query with a bias falls back with a warning."""
-    monkeypatch.setattr(vb, "_varlen_attn", lambda **kw: torch.zeros(NT, H, DH))
+
+    def kernel(**kw: object) -> torch.Tensor:
+        """Provide a callable backend while bias eligibility is checked."""
+        return torch.zeros(NT, H, DH)
+
+    monkeypatch.setattr(vb, "_varlen_attn", kernel)
     bias = torch.zeros(1, 1, NT, NT)
     with pytest.warns(UserWarning, match="attention bias"):
         out = _attempt(packed, bias=bias)
@@ -104,7 +114,12 @@ def test_non_tensor_return_warns(
     packed: Packed, force_eligible: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A changed return contract (non-Tensor) falls back rather than propagating bad data."""
-    monkeypatch.setattr(vb, "_varlen_attn", lambda **kw: ("not", "a", "tensor"))
+
+    def kernel(**kw: object) -> tuple[str, ...]:
+        """Return an invalid payload to exercise response validation."""
+        return ("not", "a", "tensor")
+
+    monkeypatch.setattr(vb, "_varlen_attn", kernel)
     with pytest.warns(UserWarning, match="expected Tensor"):
         out = _attempt(packed)
     assert out is None
@@ -115,7 +130,12 @@ def test_success_returns_kernel_tensor(
 ) -> None:
     """The happy path returns the kernel's tensor unchanged and emits no warning."""
     expected = torch.randn(NT, H, DH)
-    monkeypatch.setattr(vb, "_varlen_attn", lambda **kw: expected)
+
+    def kernel(**kw: object) -> torch.Tensor:
+        """Return the known tensor to check that the adapter preserves identity."""
+        return expected
+
+    monkeypatch.setattr(vb, "_varlen_attn", kernel)
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         out = _attempt(packed)

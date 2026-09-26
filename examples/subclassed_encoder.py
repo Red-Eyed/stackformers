@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import NamedTuple, Self
+from typing import TYPE_CHECKING, NamedTuple, Self
 
 import torch
 import torch.nn as nn
 from pydantic import BaseModel, Field, model_validator
 from torch import Tensor
+from typing_extensions import override
 
 from stackformers import (
     FeedForward,
@@ -23,8 +23,12 @@ from stackformers import (
     make_padded_input,
     plain_encoder_config,
 )
-from stackformers.norm.protocols import Norm
 from stackformers.presets.encoder import TransformerEncoderBase
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from stackformers.norm.protocols import Norm
 
 DIM = 64
 
@@ -48,14 +52,20 @@ class UserFeedForward(nn.Module):
         self.value = nn.Linear(dim, dim * 2, bias=False)
         self.output = nn.Linear(dim * 2, dim, bias=False)
 
+    @override
     def forward(self, x: Tensor) -> Tensor:
         """Transform tokens without changing their leading dimensions or width."""
-        return self.output(torch.sigmoid(self.gate(x)) * self.value(x))
+        output: Tensor = self.output(torch.sigmoid(self.gate(x)) * self.value(x))
+        return output
+
+    if TYPE_CHECKING:
+        __call__ = forward
 
 
 class FocusedCustomEncoder(TransformerEncoder):
     """Replace only the feed-forward collaborator of the standard encoder preset."""
 
+    @override
     def build_ff(self, config: TransformerEncoderConfig) -> FeedForward:
         """Inject the user feed-forward module while retaining every other preset choice."""
         return UserFeedForward(config.attn.dim)

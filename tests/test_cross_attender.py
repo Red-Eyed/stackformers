@@ -16,7 +16,7 @@ from stackformers.cross_attender import (
 from stackformers.feedforward.config import SwiGLUConfig
 from stackformers.norm.config import NormPlacement, RMSNormConfig
 from stackformers.presets.cross_attender import CrossAttender, CrossAttenderConfig
-from stackformers.sequence import make_padded_input
+from stackformers.sequence import PaddedInput, make_padded_input
 from tests.export_utils import ONNX_OPSET_CASES, ExportShapeMode, export_and_run
 from tests.norm_topology_helpers import (
     AffineNorm,
@@ -110,7 +110,7 @@ def cross_attender(
 @pytest.fixture
 def x_context_inp(
     device_dtype: tuple[torch.device, torch.dtype],
-) -> tuple[object, object]:
+) -> tuple[PaddedInput, PaddedInput]:
     device, dtype = device_dtype
     x = torch.randn(B, N, D, device=device, dtype=dtype)
     context = torch.randn(B, S, D, device=device, dtype=dtype)
@@ -121,10 +121,10 @@ def x_context_inp(
 
 def test_cross_attender_output_shape(
     cross_attender: CrossAttender,
-    x_context_inp: tuple[object, object],
+    x_context_inp: tuple[PaddedInput, PaddedInput],
 ) -> None:
     x_inp, ctx_inp = x_context_inp
-    out = cross_attender(x_inp, ctx_inp)  # type: ignore[arg-type]
+    out = cross_attender(x_inp, ctx_inp)
     assert out.shape == (B, N, D)
 
 

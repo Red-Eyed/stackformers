@@ -3,15 +3,21 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 import torch.nn as nn
 from torch import Tensor
+from typing_extensions import override
 
-from stackformers.attention.protocols import CrossAttn, SelfAttn
-from stackformers.feedforward.protocols import FeedForward
-from stackformers.norm.protocols import Norm
-from stackformers.sequence import SequenceInput
+from stackformers.attention.layout import call_cross_attention
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from stackformers.attention.protocols import CrossAttn, SelfAttn
+    from stackformers.feedforward.protocols import FeedForward
+    from stackformers.norm.protocols import Norm
+    from stackformers.sequence import SequenceInput
 
 
 class DecoderLayerBase(nn.Module, ABC):
@@ -30,8 +36,12 @@ class DecoderLayerBase(nn.Module, ABC):
         self.ff = ff
 
     @abstractmethod
+    @override
     def forward(self, x_input: SequenceInput, ctx_input: SequenceInput) -> SequenceInput:
         """Decode one layer while preserving target-sequence metadata."""
+
+    if TYPE_CHECKING:
+        __call__ = forward
 
 
 class DecoderLayer(DecoderLayerBase):
@@ -62,9 +72,12 @@ class DecoderLayer(DecoderLayerBase):
         x = x_input.x + self.self_attn(normed_self)
         x_input = x_input._replace(x=x)
         normed_cross = x_input._replace(x=self.norm_cross(x_input.x))
-        x = x_input.x + self.cross_attn(normed_cross, ctx_input)
+        x = x_input.x + call_cross_attention(self.cross_attn, normed_cross, ctx_input)
         x = x + self.ff(self.norm_ff(x))
         return x_input._replace(x=x)
+
+    if TYPE_CHECKING:
+        __call__ = forward
 
 
 class PostNormDecoderLayer(DecoderLayerBase):
@@ -93,9 +106,12 @@ class PostNormDecoderLayer(DecoderLayerBase):
         """Normalize each residual sum before evaluating the next branch."""
         x = self.norm_self(x_input.x + self.self_attn(x_input))
         x_input = x_input._replace(x=x)
-        x = self.norm_cross(x + self.cross_attn(x_input, ctx_input))
+        x = self.norm_cross(x + call_cross_attention(self.cross_attn, x_input, ctx_input))
         x = self.norm_ff(x + self.ff(x))
         return x_input._replace(x=x)
+
+    if TYPE_CHECKING:
+        __call__ = forward
 
 
 class SandwichNormDecoderLayer(DecoderLayerBase):
@@ -132,9 +148,12 @@ class SandwichNormDecoderLayer(DecoderLayerBase):
         x = x_input.x + self.norm_self_post(self.self_attn(normed_self))
         x_input = x_input._replace(x=x)
         normed_cross = x_input._replace(x=self.norm_cross_pre(x_input.x))
-        x = x + self.norm_cross_post(self.cross_attn(normed_cross, ctx_input))
+        x = x + self.norm_cross_post(call_cross_attention(self.cross_attn, normed_cross, ctx_input))
         x = x + self.norm_ff_post(self.ff(self.norm_ff_pre(x)))
         return x_input._replace(x=x)
+
+    if TYPE_CHECKING:
+        __call__ = forward
 
 
 class ReorderedNormDecoderLayer(DecoderLayerBase):
@@ -164,9 +183,12 @@ class ReorderedNormDecoderLayer(DecoderLayerBase):
         """Normalize each decoder branch result immediately before residual addition."""
         x = x_input.x + self.norm_self(self.self_attn(x_input))
         x_input = x_input._replace(x=x)
-        x = x + self.norm_cross(self.cross_attn(x_input, ctx_input))
+        x = x + self.norm_cross(call_cross_attention(self.cross_attn, x_input, ctx_input))
         x = x + self.norm_ff(self.ff(x))
         return x_input._replace(x=x)
+
+    if TYPE_CHECKING:
+        __call__ = forward
 
 
 class Decoder(nn.Module):
@@ -178,8 +200,12 @@ class Decoder(nn.Module):
         self.layers = nn.ModuleList(layers)
         self.final_norm = final_norm
 
+    @override
     def forward(self, x_input: SequenceInput, ctx_input: SequenceInput) -> Tensor:
         """Decode the target sequence against a fixed context sequence."""
         for layer in self.layers:
             x_input = layer(x_input, ctx_input)
         return self.final_norm(x_input.x)
+
+    if TYPE_CHECKING:
+        __call__ = forward

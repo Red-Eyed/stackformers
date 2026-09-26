@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 import torch
 from pydantic import ValidationError
@@ -13,7 +15,6 @@ from stackformers.decoder import (
     ReorderedNormDecoderLayer,
     SandwichNormDecoderLayer,
 )
-from stackformers.norm.config import NormPlacement
 from stackformers.presets.decoder import (
     TransformerDecoder,
     TransformerDecoderConfig,
@@ -21,6 +22,9 @@ from stackformers.presets.decoder import (
 )
 from stackformers.sequence import PaddedInput, make_padded_input
 from tests.export_utils import ONNX_OPSET_CASES, ExportShapeMode, export_and_run
+
+if TYPE_CHECKING:
+    from stackformers.norm.config import NormPlacement
 
 B, N, S, D, H = 2, 8, 12, 64, 4  # N=target len, S=context len
 

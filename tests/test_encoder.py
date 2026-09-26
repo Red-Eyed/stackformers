@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 import torch
 
@@ -13,9 +15,11 @@ from stackformers.norm.config import RMSNormConfig
 from stackformers.norm.factory import build_norm
 from stackformers.positional.config import RoPE1DConfig
 from stackformers.positional.none import NoPosEncoding
-from stackformers.positional.protocols import PosEncoding
 from stackformers.positional.rope1d import RotaryEmbedding1D
 from stackformers.sequence import PaddedInput, make_padded_input
+
+if TYPE_CHECKING:
+    from stackformers.positional.protocols import PosEncoding
 
 B, N, D, H, DH = 2, 16, 64, 4, 16
 NUM_LAYERS = 3

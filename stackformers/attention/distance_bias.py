@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import torch
 import torch.nn as nn
 from einops import rearrange
-from jaxtyping import Float
 from torch import Tensor
+from typing_extensions import override
 
-from stackformers.attention.config import DistanceBiasConfig
-from stackformers.sequence import PaddedInput
+if TYPE_CHECKING:
+    from jaxtyping import Float
+
+    from stackformers.attention.config import DistanceBiasConfig
+    from stackformers.sequence import PaddedInput
 
 
 class RelativeDistanceBias(nn.Module):
@@ -27,6 +32,8 @@ class RelativeDistanceBias(nn.Module):
     (b, n, s, num_rbf) shell intermediate, not the bias, is what dominates activation memory.
     """
 
+    centres: Tensor
+
     def __init__(self, config: DistanceBiasConfig) -> None:
         super().__init__()
         centres = torch.linspace(0.0, config.r_max, config.num_rbf)
@@ -36,14 +43,19 @@ class RelativeDistanceBias(nn.Module):
         nn.init.zeros_(self.to_bias.weight)  # start at content-only attention, learn the profile
 
     def _shell_weights(self, dist: Float[Tensor, "b n s"]) -> Float[Tensor, "b n s k"]:
-        centres: Tensor = self.centres  # type: ignore[assignment]
+        centres: Tensor = self.centres
         return torch.exp(-(((dist.unsqueeze(-1) - centres) / self.width) ** 2))
 
+    @override
     def forward(self, input: PaddedInput) -> Float[Tensor, "b h n s"]:
         """float32 distances keep half-precision coordinates from collapsing nearby nodes."""
         pos = input.abs_positions.float()
         delta = pos.unsqueeze(2) - pos.unsqueeze(1)  # b n s c
         dist = torch.linalg.vector_norm(delta, dim=-1)  # b n s
         shells = self._shell_weights(dist).to(self.to_bias.weight.dtype)
-        bias = rearrange(self.to_bias(shells), "b n s h -> b h n s")
+        projected: Tensor = self.to_bias(shells)
+        bias = rearrange(projected, "b n s h -> b h n s")
         return bias.to(input.x.dtype)
+
+    if TYPE_CHECKING:
+        __call__ = forward

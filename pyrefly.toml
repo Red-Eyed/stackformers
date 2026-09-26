@@ -1,7 +1,31 @@
-python-version = "3.12.0"
+required-version = ">=1.3.1"
+python-version = "3.11"
+preset = "strict"
 # Point at the uv venv so pyrefly finds torch and other installed packages
 python-interpreter-path = ".venv/bin/python"
-# Include both source and tests so both are type-checked
-project-includes = ["stackformers", "tests"]
+# Check every maintained Python entry point alongside the library and tests.
+project-includes = ["stackformers", "tests", "examples"]
 # Do not infer types from first-use (stricter)
 infer-with-first-use = false
+ignore-missing-imports = []
+replace-imports-with-any = []
+replace-untyped-imports-with-any = []
+check-unannotated-defs = true
+strict-callable-subtyping = true
+strict-partial-subtyping = true
+permissive-ignores = false
+type-ignore-unknown-tag-behavior = "no-effect"
+
+[errors]
+explicit-any = "error"
+implicit-any = "error"
+no-any-return = "error"
+unannotated-return = "error"
+unannotated-parameter = "error"
+unannotated-protocol-member = "error"
+unused-ignore = "error"
+redundant-cast = "error"
+redundant-condition = "error"
+incompatible-comparison = "error"
+string-as-iterable = "error"
+empty-body = "error"

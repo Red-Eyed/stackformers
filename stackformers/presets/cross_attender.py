@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
-from typing import Generic, TypeVar
+from typing import TYPE_CHECKING, Generic, TypeVar
 
 import torch.nn as nn
 from pydantic import BaseModel, Field
 from torch import Tensor
+from typing_extensions import override
 
 from stackformers.attention.config import CrossAttentionConfig
 from stackformers.attention.cross_attn import CrossAttention
@@ -22,14 +22,18 @@ from stackformers.cross_attender import (
 )
 from stackformers.feedforward.config import FeedForwardConfig, SwiGLUConfig
 from stackformers.feedforward.factory import build_ff
-from stackformers.feedforward.protocols import FeedForward
 from stackformers.norm.config import NormPlacement, RMSNormConfig
 from stackformers.norm.factory import NormConfig, build_norm
-from stackformers.norm.protocols import Norm
 from stackformers.positional.config import NoPosEncodingConfig, PosEncodingConfig
 from stackformers.positional.factory import build_pos_encoding
-from stackformers.positional.protocols import PosEncoding
-from stackformers.sequence import SequenceInput
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from stackformers.feedforward.protocols import FeedForward
+    from stackformers.norm.protocols import Norm
+    from stackformers.positional.protocols import PosEncoding
+    from stackformers.sequence import SequenceInput
 
 C = TypeVar("C")
 
@@ -55,8 +59,12 @@ class CrossAttenderBase(nn.Module, Generic[C], ABC):
     @abstractmethod
     def build_norm(self, config: C) -> Norm: ...
 
+    @override
     def forward(self, x_input: SequenceInput, ctx_input: SequenceInput) -> Tensor:
         return self._stack(x_input, ctx_input)
+
+    if TYPE_CHECKING:
+        __call__ = forward
 
 
 class CrossAttenderConfig(BaseModel):

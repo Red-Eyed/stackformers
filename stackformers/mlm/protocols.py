@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from jaxtyping import Bool, Float
-from torch import Tensor
+if TYPE_CHECKING:
+    from jaxtyping import Bool, Float
+    from torch import Tensor
 
-from stackformers.sequence import SequenceInput
+    from stackformers.sequence import SequenceInput
 
 
 @runtime_checkable
@@ -32,7 +33,8 @@ class ReconstructionHead(Protocol):
     """Predict masked tokens from encoder output and score against the clean target.
 
     Both arguments are already gathered down to just the masked positions (m = number
-    of masked tokens across the batch or pack). Returns a scalar loss.
+    of masked tokens across the batch or pack). Returns a scalar loss, with a
+    differentiable zero when m is zero; independent masking may select no tokens.
     """
 
     def __call__(

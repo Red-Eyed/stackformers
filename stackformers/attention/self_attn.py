@@ -1,14 +1,14 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import torch.nn as nn
 from einops import rearrange, repeat
 from torch import Tensor
+from typing_extensions import override
 
 from stackformers.attention.bias import NoAttnBias
-from stackformers.attention.config import SelfAttentionConfig
 from stackformers.attention.ops import packed_attn_or_fallback, padded_sdpa
-from stackformers.attention.protocols import AttnBias
-from stackformers.positional.protocols import PosEncoding
 from stackformers.sequence import (
     PackedInput,
     PackedSequence,
@@ -16,6 +16,11 @@ from stackformers.sequence import (
     SequenceInput,
     packed_to_padded,
 )
+
+if TYPE_CHECKING:
+    from stackformers.attention.config import SelfAttentionConfig
+    from stackformers.attention.protocols import AttnBias
+    from stackformers.positional.protocols import PosEncoding
 
 
 class SelfAttention(nn.Module):
@@ -33,7 +38,7 @@ class SelfAttention(nn.Module):
         self,
         config: SelfAttentionConfig,
         pos_encoding: PosEncoding,
-        attn_bias: AttnBias = NoAttnBias(),
+        attn_bias: AttnBias | None = None,
     ) -> None:
         super().__init__()
         self.config = config
@@ -44,7 +49,7 @@ class SelfAttention(nn.Module):
         self.to_out = nn.Linear(h * dh, config.dim, bias=False)
         self.dropout = nn.Dropout(config.dropout)
         self.pos_encoding = pos_encoding
-        self.attn_bias = attn_bias
+        self.attn_bias = NoAttnBias() if attn_bias is None else attn_bias
         self.q_norm: nn.Module = nn.RMSNorm(dh) if config.qk_norm else nn.Identity()
         self.k_norm: nn.Module = nn.RMSNorm(dh) if config.qk_norm else nn.Identity()
         nn.init.normal_(self.to_out.weight, std=0.02)
@@ -62,7 +67,8 @@ class SelfAttention(nn.Module):
         q, k = self.pos_encoding.forward_padded(q, k, input.abs_positions, input.abs_positions)
         bias = self.attn_bias(input)
         out = padded_sdpa(q, k, v, input.mask, cfg.causal, cfg.window_size, bias)
-        return self.dropout(self.to_out(rearrange(out, "b h n d -> b n (h d)")))
+        projected: Tensor = self.dropout(self.to_out(rearrange(out, "b h n d -> b n (h d)")))
+        return projected
 
     def _forward_packed(self, input: PackedInput) -> Tensor:
         cfg = self.config
@@ -75,14 +81,23 @@ class SelfAttention(nn.Module):
             k = repeat(k, "nt h d -> nt (h g) d", g=groups)
             v = repeat(v, "nt h d -> nt (h g) d", g=groups)
         q, k = self.pos_encoding.forward_packed(q, k, input.abs_positions, input.abs_positions)
-        bias = self.attn_bias(packed_to_padded(input))
+        match self.attn_bias:
+            case NoAttnBias():
+                bias = None
+            case _:
+                bias = self.attn_bias(packed_to_padded(input))
         seq = PackedSequence(cu_seqlens=input.cu_seqlens, max_seqlen=input.max_seqlen)
         out = packed_attn_or_fallback(q, k, v, seq, seq, cfg.causal, cfg.window_size, bias)
-        return self.dropout(self.to_out(rearrange(out, "nt h d -> nt (h d)")))
+        projected: Tensor = self.dropout(self.to_out(rearrange(out, "nt h d -> nt (h d)")))
+        return projected
 
+    @override
     def forward(self, input: SequenceInput) -> Tensor:
         match input:
             case PaddedInput():
                 return self._forward_padded(input)
             case PackedInput():
                 return self._forward_packed(input)
+
+    if TYPE_CHECKING:
+        __call__ = forward

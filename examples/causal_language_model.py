@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
+from typing_extensions import override
 
 from stackformers import TransformerEncoder, make_padded_input, plain_encoder_config
 
@@ -36,11 +37,16 @@ class CausalLanguageModel(nn.Module):
         )
         self.lm_head = nn.Linear(DIM, VOCAB_SIZE, bias=False)
 
+    @override
     def forward(self, token_ids: Tensor, mask: Tensor) -> Tensor:
         """Return next-token logits while preventing attention to future positions."""
         embeddings = self.token_embedding(token_ids)
         hidden = self.backbone(make_padded_input(embeddings, mask))
-        return self.lm_head(hidden)
+        output: Tensor = self.lm_head(hidden)
+        return output
+
+    if TYPE_CHECKING:
+        __call__ = forward
 
 
 def _next_token_loss(logits: Tensor, token_ids: Tensor) -> Tensor:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from stackformers.feedforward.config import (
     FeedForwardConfig,
     GEGLUConfig,
@@ -13,9 +15,11 @@ from stackformers.feedforward.config import (
 from stackformers.feedforward.geglu import GEGLU
 from stackformers.feedforward.gelu import GELUFFN
 from stackformers.feedforward.hardswish_glu import HardSwishGLU
-from stackformers.feedforward.protocols import FeedForward
 from stackformers.feedforward.relu_squared import ReluSquaredFF
 from stackformers.feedforward.swiglu import SwiGLU
+
+if TYPE_CHECKING:
+    from stackformers.feedforward.protocols import FeedForward
 
 
 def build_ff(config: FeedForwardConfig) -> FeedForward:

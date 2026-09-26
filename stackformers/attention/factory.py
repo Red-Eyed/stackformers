@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from stackformers.attention.bias import NoAttnBias
 from stackformers.attention.config import (
     AttnBiasConfig,
@@ -7,7 +9,9 @@ from stackformers.attention.config import (
     NoAttnBiasConfig,
 )
 from stackformers.attention.distance_bias import RelativeDistanceBias
-from stackformers.attention.protocols import AttnBias
+
+if TYPE_CHECKING:
+    from stackformers.attention.protocols import AttnBias
 
 
 def build_attn_bias(config: AttnBiasConfig) -> AttnBias:

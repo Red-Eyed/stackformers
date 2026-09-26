@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
 
 import torch.nn as nn
+from typing_extensions import override
 
-from stackformers.attention.protocols import SelfAttn
-from stackformers.feedforward.protocols import FeedForward
 from stackformers.norm.config import NormPlacement as NormPlacement
-from stackformers.norm.protocols import Norm
-from stackformers.sequence import SequenceInput
+
+if TYPE_CHECKING:
+    from stackformers.attention.protocols import SelfAttn
+    from stackformers.feedforward.protocols import FeedForward
+    from stackformers.norm.protocols import Norm
+    from stackformers.sequence import SequenceInput
 
 
 class TransformerLayerBase(nn.Module, ABC):
@@ -23,8 +27,12 @@ class TransformerLayerBase(nn.Module, ABC):
         self.ff = ff
 
     @abstractmethod
+    @override
     def forward(self, input: SequenceInput) -> SequenceInput:
         """Apply one transformer layer while preserving sequence metadata."""
+
+    if TYPE_CHECKING:
+        __call__ = forward
 
 
 class TransformerLayer(TransformerLayerBase):
@@ -53,6 +61,9 @@ class TransformerLayer(TransformerLayerBase):
         x = x + self.ff(self.norm_ff(x))
         return input._replace(x=x)
 
+    if TYPE_CHECKING:
+        __call__ = forward
+
 
 class PostNormTransformerLayer(TransformerLayerBase):
     """Post-norm layer that normalizes each completed residual sum.
@@ -78,6 +89,9 @@ class PostNormTransformerLayer(TransformerLayerBase):
         x = self.norm_attn(input.x + self.self_attn(input))
         x = self.norm_ff(x + self.ff(x))
         return input._replace(x=x)
+
+    if TYPE_CHECKING:
+        __call__ = forward
 
 
 class SandwichNormTransformerLayer(TransformerLayerBase):
@@ -110,6 +124,9 @@ class SandwichNormTransformerLayer(TransformerLayerBase):
         x = x + self.norm_ff_post(self.ff(self.norm_ff_pre(x)))
         return input._replace(x=x)
 
+    if TYPE_CHECKING:
+        __call__ = forward
+
 
 class ReorderedNormTransformerLayer(TransformerLayerBase):
     """OLMo 2-style layer that normalizes branch outputs before residual addition.
@@ -136,3 +153,6 @@ class ReorderedNormTransformerLayer(TransformerLayerBase):
         x = input.x + self.norm_attn(self.self_attn(input))
         x = x + self.norm_ff(self.ff(x))
         return input._replace(x=x)
+
+    if TYPE_CHECKING:
+        __call__ = forward

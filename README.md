@@ -232,6 +232,19 @@ just test     # test
 just check    # full CI gate
 ```
 
+The quality gate checks the library, tests, and examples against Python 3.11. Ruff enforces
+annotations, common bug patterns, typing imports, and qualified, current suppressions.
+Pyrefly uses the strict preset with explicit/implicit `Any`, untyped returns, missing
+annotations, and stale suppressions treated as errors. Tool minimums are recorded in both
+the development dependencies and checker configs.
+
+Module classes expose `__call__ = forward` only under `TYPE_CHECKING`. This gives callers the
+declared input/output contract while leaving PyTorch's hooks and runtime dispatch intact.
+Local `Tensor` annotations at built-in PyTorch projection boundaries rely on those modules'
+tensor-return contracts; they do not validate tensor shapes. Experimental kernel results remain
+`object` until runtime validation. Export shape trees use opaque `object` leaves because
+PyTorch validates their module-dependent structure.
+
 ---
 
 ## License

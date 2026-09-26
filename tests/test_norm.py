@@ -13,13 +13,17 @@ DIM = 32
 @pytest.fixture
 def rms_norm(device_dtype: tuple[torch.device, torch.dtype]) -> nn.RMSNorm:
     device, dtype = device_dtype
-    return build_norm(RMSNormConfig(dim=DIM)).to(device=device, dtype=dtype)  # type: ignore[return-value]
+    norm = build_norm(RMSNormConfig(dim=DIM))
+    assert isinstance(norm, nn.RMSNorm)
+    return norm.to(device=device, dtype=dtype)
 
 
 @pytest.fixture
 def layer_norm(device_dtype: tuple[torch.device, torch.dtype]) -> nn.LayerNorm:
     device, dtype = device_dtype
-    return build_norm(LayerNormConfig(dim=DIM)).to(device=device, dtype=dtype)  # type: ignore[return-value]
+    norm = build_norm(LayerNormConfig(dim=DIM))
+    assert isinstance(norm, nn.LayerNorm)
+    return norm.to(device=device, dtype=dtype)
 
 
 @pytest.fixture

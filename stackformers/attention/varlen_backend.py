@@ -9,16 +9,38 @@ package depends only on :func:`try_varlen_attn` and never on the volatile import
 from __future__ import annotations
 
 import warnings
+from typing import TYPE_CHECKING, Protocol
 
 import torch
 from torch import Tensor
 
-from stackformers.sequence import PackedSequence
+if TYPE_CHECKING:
+    from stackformers.sequence import PackedSequence
 
 _FALLBACK_NOTE = " Falling back to padded SDPA; performance may be lower."
 
 
-def _load():
+class _VarlenKernel(Protocol):
+    """Keyword interface consumed from the experimental backend; validate its result."""
+
+    def __call__(
+        self,
+        *,
+        query: Tensor,
+        key: Tensor,
+        value: Tensor,
+        cu_seq_q: Tensor,
+        cu_seq_k: Tensor,
+        max_q: int,
+        max_k: int,
+        window_size: tuple[int, int],
+    ) -> object:
+        """Invoke the kernel without trusting its experimental return schema."""
+        ...
+
+
+def _load() -> tuple[_VarlenKernel | None, str | None]:
+    """Load the optional kernel and preserve its import failure for fallback diagnostics."""
     try:
         from torch.nn.attention.varlen import varlen_attn
     except ImportError as exc:

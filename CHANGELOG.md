@@ -8,13 +8,35 @@ MINOR for backwards-compatible features, PATCH for bug fixes and internal change
 
 ## [Unreleased]
 
+### Backwards Incompatible Changes
+
+- Make `SelfAttentionConfig` and `CrossAttentionConfig` immutable so changing a shared config
+  cannot reinterpret an existing model's projections. Construct a new config and model for
+  different architecture settings instead of assigning config fields.
+- Require matching padded or packed layouts in the cross-attention type contract; mixed layouts
+  now raise `ValueError` at runtime instead of failing inside tensor reshaping. Narrow both
+  inputs together when calling through the `CrossAttn` protocol.
+- Define empty reconstruction selections as a differentiable zero loss. Custom reconstruction
+  heads must also handle zero selected tokens; the sampling policy remains independent.
+
 ### Bug Fixes
 
+- Return finite zero losses from both built-in MLM heads when no tokens are selected.
+- Exclude masked keys completely and return zero attention contributions and gradients when
+  padding, windows, or additive bias exclude every key, including exported ONNX execution.
 - Fix ONNX Runtime attention-mask shape errors for opsets 23–25 by explicitly expanding
   the query dimension, including dynamic batch and sequence lengths.
 
+### Performance
+
+- Avoid repadding input features on the packed self-attention path when using `NoAttnBias`.
+
 ### Developers
 
+- Apply rustic-python's strict Pyrefly and Ruff profile to the library, tests, and examples;
+  require Pyrefly 1.3.1 and Ruff 0.16.9 or newer and check Python 3.11 compatibility.
+- Expose typed module-call signatures without replacing PyTorch's runtime hook dispatch,
+  type the experimental attention-kernel boundary, and replace stale type suppressions.
 - Require ONNX Runtime parity at opsets 23–25 instead of accepting opset-23 failures or
   excluding newer dynamo exports using PyTorch's legacy exporter limit.
 

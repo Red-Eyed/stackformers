@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 import torch
 
@@ -13,12 +15,14 @@ from stackformers.decoder_cache import (
     CachedDecoderWrapper,
     DecoderCrossAttentionCacheBuilder,
 )
-from stackformers.norm.config import NormPlacement
 from stackformers.positional.config import RoPE1DConfig
 from stackformers.positional.rope1d import RotaryEmbedding1D
 from stackformers.presets.decoder import TransformerDecoder, plain_decoder_config
 from stackformers.sequence import PaddedInput, make_padded_input
 from tests.export_utils import ONNX_OPSET_CASES, ExportShapeMode, export_and_run
+
+if TYPE_CHECKING:
+    from stackformers.norm.config import NormPlacement
 
 B, N, S, D, H = 2, 4, 6, 64, 1
 

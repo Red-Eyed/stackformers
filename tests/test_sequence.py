@@ -4,6 +4,7 @@ import pytest
 import torch
 import torch.export
 import torch.nn as nn
+from typing_extensions import override
 
 from stackformers.sequence import (
     PackedInput,
@@ -33,8 +34,9 @@ def test_padded_sequence_mask_shape() -> None:
 def test_padded_sequence_frozen() -> None:
     mask = torch.ones(2, 8, dtype=torch.bool)
     seq = PaddedSequence(mask=mask)
-    with pytest.raises(Exception):
-        seq.mask = torch.zeros(2, 8, dtype=torch.bool)  # type: ignore[misc]
+    with pytest.raises(AttributeError, match="can't set attribute"):
+        # NamedTuple immutability must also hold for untyped runtime callers.
+        seq.mask = torch.zeros(2, 8, dtype=torch.bool)  # pyrefly: ignore[read-only]
 
 
 def test_packed_sequence_fields() -> None:
@@ -134,6 +136,7 @@ class _PosIdsWrapper(nn.Module):
     max_seqlen is not used in the computation; pass any integer constant.
     """
 
+    @override
     def forward(self, cu: torch.Tensor) -> torch.Tensor:
         return position_ids_from_packed(PackedSequence(cu_seqlens=cu, max_seqlen=0))
 

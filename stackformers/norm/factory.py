@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import torch.nn as nn
 
 from stackformers.norm.config import LayerNormConfig, NormConfig, RMSNormConfig
-from stackformers.norm.protocols import Norm
+
+if TYPE_CHECKING:
+    from stackformers.norm.protocols import Norm
 
 __all__ = ["NormConfig", "build_norm"]
 

@@ -1,6 +1,6 @@
 set dotenv-load := false
 
-python_sources := "stackformers/ tests/"
+python_sources := "stackformers/ tests/ examples/"
 
 # List repository commands
 default:

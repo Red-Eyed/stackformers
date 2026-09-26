@@ -35,7 +35,9 @@ def _validate_attn_dims(dim: int, heads: int, dim_head: int, kv_heads: int | Non
         )
 
 
-class SelfAttentionConfig(BaseModel):
+class SelfAttentionConfig(BaseModel, frozen=True):
+    """Immutable attention geometry and execution settings fixed at construction."""
+
     dim: int = Field(
         gt=0,
         description="Model (embedding) dimension — input and output width of the attention sublayer.",  # noqa: E501
@@ -139,7 +141,9 @@ AttnBiasConfig = Annotated[
 ]
 
 
-class CrossAttentionConfig(BaseModel):
+class CrossAttentionConfig(BaseModel, frozen=True):
+    """Immutable cross-attention settings shared with the constructed projections."""
+
     dim: int = Field(
         gt=0,
         description="Model (embedding) dimension — input and output width of the attention sublayer.",  # noqa: E501

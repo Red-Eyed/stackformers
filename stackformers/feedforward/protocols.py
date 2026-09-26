@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from jaxtyping import Float
-from torch import Tensor
+if TYPE_CHECKING:
+    from jaxtyping import Float
+    from torch import Tensor
 
 
 @runtime_checkable

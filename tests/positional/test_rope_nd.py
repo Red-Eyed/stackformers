@@ -47,7 +47,10 @@ def qk(
     )
 
 
-def logits(rope: RotaryEmbeddingND, qk_pair: tuple[torch.Tensor, torch.Tensor], pos: torch.Tensor):
+def logits(
+    rope: RotaryEmbeddingND, qk_pair: tuple[torch.Tensor, torch.Tensor], pos: torch.Tensor
+) -> torch.Tensor:
+    """Compute positioned attention logits for relative-coordinate assertions."""
     q, k = rope.forward_padded(*qk_pair, pos, pos)
     return q @ k.transpose(-2, -1)
 
@@ -68,7 +71,7 @@ def test_ladder_spans_nyquist_to_domain(config: RoPENDConfig) -> None:
     Both ends are a half turn over the scale they name — r_min at the fast end, and the full
     signed offset width 2*r_max at the slow end — so both are stated here as half-periods.
     """
-    inv_freq: torch.Tensor = RotaryEmbeddingND(config).inv_freq  # type: ignore[assignment]
+    inv_freq: torch.Tensor = RotaryEmbeddingND(config).inv_freq
     fastest_half_period = math.pi / float(inv_freq.max())
     slowest_half_period = math.pi / float(inv_freq.min())
     assert fastest_half_period == pytest.approx(R_MIN, rel=1e-4)  # Nyquist on the finest gap
@@ -84,7 +87,7 @@ def test_slowest_band_never_wraps(config: RoPENDConfig) -> None:
     offsets in the domain collide on the same rotation, in the one band whose entire job is to
     tell the coarse end apart.
     """
-    inv_freq: torch.Tensor = RotaryEmbeddingND(config).inv_freq  # type: ignore[assignment]
+    inv_freq: torch.Tensor = RotaryEmbeddingND(config).inv_freq
     sweep = float(inv_freq.min()) * 2 * R_MAX
     assert sweep == pytest.approx(math.pi, rel=1e-4)
 

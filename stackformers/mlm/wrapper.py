@@ -1,17 +1,21 @@
 from __future__ import annotations
 
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 import torch
 import torch.nn as nn
-from jaxtyping import Float
 from torch import Tensor
+from typing_extensions import override
 
-from stackformers.mlm.config import MLMWrapperConfig
 from stackformers.mlm.head_cosine import CosineHead
 from stackformers.mlm.masking import RandomMasking
-from stackformers.mlm.protocols import EncoderLike, MaskingStrategy, ReconstructionHead
-from stackformers.sequence import SequenceInput
+
+if TYPE_CHECKING:
+    from jaxtyping import Float
+
+    from stackformers.mlm.config import MLMWrapperConfig
+    from stackformers.mlm.protocols import EncoderLike, MaskingStrategy, ReconstructionHead
+    from stackformers.sequence import SequenceInput
 
 
 class MLMOutput(NamedTuple):
@@ -37,6 +41,8 @@ class MLMWrapper(nn.Module):
     only the one clean pass runs and `mlm_loss` reports a constant zero, so callers can
     invoke this unconditionally in both modes without an if-training branch of their
     own — the same role self.training already plays in nn.Dropout or nn.BatchNorm.
+    When masking selects no tokens, the reconstruction head returns a differentiable
+    zero loss without changing the independent token-sampling policy.
 
     The masked pass detaches input.x once, up front — both the unmasked context fed to
     the encoder and the reconstruction target come from that same detached copy — so
@@ -77,9 +83,13 @@ class MLMWrapper(nn.Module):
         masked_output = encoder(input._replace(x=corrupted_x))
         return self.head(masked_output[should_mask], target[should_mask])
 
+    @override
     def forward(self, input: SequenceInput, encoder: EncoderLike) -> MLMOutput:
         clean_output = encoder(input)
         if self.training:
             mlm_loss = self._masked_loss(input, encoder)
             return MLMOutput(out=clean_output, mlm_loss=mlm_loss)
         return MLMOutput(out=clean_output, mlm_loss=clean_output.new_zeros(()))
+
+    if TYPE_CHECKING:
+        __call__ = forward

@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 import torch
 import torch.nn as nn
+from typing_extensions import override
 
 from stackformers.attention.config import SelfAttentionConfig
 from stackformers.attention.self_attn import SelfAttention
@@ -33,6 +34,7 @@ NT = 10  # two packed seqs: 6 + 4
 class AllMasking(nn.Module):
     """Test double: marks every valid position for masking."""
 
+    @override
     def forward(self, input: SequenceInput) -> torch.Tensor:
         match input:
             case PaddedInput(mask=mask):

@@ -17,7 +17,7 @@ from stackformers.feedforward.config import SwiGLUConfig
 from stackformers.norm.config import NormPlacement, RMSNormConfig
 from stackformers.positional.config import NoPosEncodingConfig, RoPE1DConfig
 from stackformers.presets.decoder import TransformerDecoder, TransformerDecoderConfig
-from stackformers.sequence import make_padded_input
+from stackformers.sequence import PaddedInput, make_padded_input
 from tests.export_utils import ONNX_OPSET_CASES, ExportShapeMode, export_and_run
 from tests.norm_topology_helpers import (
     AffineNorm,
@@ -130,7 +130,7 @@ def decoder(
 @pytest.fixture
 def x_context_inp(
     device_dtype: tuple[torch.device, torch.dtype],
-) -> tuple[object, object]:
+) -> tuple[PaddedInput, PaddedInput]:
     device, dtype = device_dtype
     x = torch.randn(B, N, D, device=device, dtype=dtype)
     context = torch.randn(B, S, D, device=device, dtype=dtype)
@@ -141,15 +141,15 @@ def x_context_inp(
 
 def test_decoder_output_shape(
     decoder: TransformerDecoder,
-    x_context_inp: tuple[object, object],
+    x_context_inp: tuple[PaddedInput, PaddedInput],
 ) -> None:
     x_inp, ctx_inp = x_context_inp
-    assert decoder(x_inp, ctx_inp).shape == (B, N, D)  # type: ignore[arg-type]
+    assert decoder(x_inp, ctx_inp).shape == (B, N, D)
 
 
 def test_decoder_with_ctx_padding(
     decoder: TransformerDecoder,
-    x_context_inp: tuple[object, object],
+    x_context_inp: tuple[PaddedInput, PaddedInput],
     device_dtype: tuple[torch.device, torch.dtype],
 ) -> None:
     device, dtype = device_dtype
@@ -158,7 +158,7 @@ def test_decoder_with_ctx_padding(
     mask = torch.ones(B, S, dtype=torch.bool, device=device)
     mask[1, 8:] = False
     ctx_inp = make_padded_input(context, mask)
-    assert decoder(x_inp, ctx_inp).shape == (B, N, D)  # type: ignore[arg-type]
+    assert decoder(x_inp, ctx_inp).shape == (B, N, D)
 
 
 def test_decoder_with_tgt_padding(

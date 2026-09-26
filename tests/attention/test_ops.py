@@ -13,6 +13,7 @@ import pytest
 import torch
 import torch.export
 import torch.nn as nn
+from typing_extensions import override
 
 from stackformers.attention.ops import (
     _cu_to_indices,
@@ -98,6 +99,7 @@ class _CuToIndicesWrapper(nn.Module):
     dimension stays fully dynamic.
     """
 
+    @override
     def forward(self, cu: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         b = cu.shape[0] - 1  # SymInt when traced; avoids specialising the batch size
         return _cu_to_indices(cu, b)

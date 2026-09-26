@@ -5,6 +5,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 from torch import Tensor
+from typing_extensions import override
 
 from stackformers.sequence import PaddedInput, SequenceInput, make_padded_input
 
@@ -17,6 +18,7 @@ class ScaleSelfAttention(nn.Module):
         super().__init__()
         self.scale = nn.Parameter(torch.tensor(scale))
 
+    @override
     def forward(self, input: SequenceInput) -> Tensor:
         """Scale the embedding tensor carried by the sequence input."""
         return input.x * self.scale
@@ -31,6 +33,7 @@ class ScaleCrossAttention(nn.Module):
         self.query_scale = nn.Parameter(torch.tensor(query_scale))
         self.context_scale = nn.Parameter(torch.tensor(context_scale))
 
+    @override
     def forward(self, x_input: SequenceInput, ctx_input: SequenceInput) -> Tensor:
         """Add the mean context feature vector to every scaled query token."""
         context = ctx_input.x.mean(dim=-2, keepdim=True)
@@ -45,6 +48,7 @@ class ScaleFeedForward(nn.Module):
         super().__init__()
         self.scale = nn.Parameter(torch.tensor(scale))
 
+    @override
     def forward(self, x: Tensor) -> Tensor:
         """Scale every token feature uniformly."""
         return x * self.scale
@@ -59,6 +63,7 @@ class AffineNorm(nn.Module):
         self.scale = nn.Parameter(torch.tensor(scale))
         self.offset = nn.Parameter(torch.tensor(offset))
 
+    @override
     def forward(self, x: Tensor) -> Tensor:
         """Apply the configured affine transform to every feature."""
         return x * self.scale + self.offset

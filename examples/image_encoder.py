@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 import torch
 import torch.nn as nn
 from einops import rearrange
 from torch import Tensor
+from typing_extensions import override
 
 from stackformers import (
     PaddedInput,
@@ -56,10 +57,15 @@ class ImagePatchEncoder(nn.Module):
         mask = torch.ones(batch, rows * columns, dtype=torch.bool, device=images.device)
         return PaddedInput(x=tokens, mask=mask, abs_positions=positions)
 
+    @override
     def forward(self, images: Tensor) -> Tensor:
         """Return one class-logit vector per image."""
         encoded = self.encoder(self._patch_input(images))
-        return self.classifier(encoded.mean(dim=1))
+        output: Tensor = self.classifier(encoded.mean(dim=1))
+        return output
+
+    if TYPE_CHECKING:
+        __call__ = forward
 
 
 def run_example() -> ImageEncoderResult:

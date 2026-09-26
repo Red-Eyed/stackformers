@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import torch.nn as nn
 
-from stackformers.sequence import PaddedInput
+if TYPE_CHECKING:
+    from stackformers.sequence import PaddedInput
 
 
 class NoAttnBias(nn.Module):

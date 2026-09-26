@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING
 
 import torch
 import torch.nn as nn
-from jaxtyping import Float
 from torch import Tensor
 
-from stackformers.positional.config import RoPENDConfig
 from stackformers.positional.rope1d import _apply_rope
+
+if TYPE_CHECKING:
+    from jaxtyping import Float
+
+    from stackformers.positional.config import RoPENDConfig
 
 
 def _frequency_ladder(config: RoPENDConfig) -> Tensor:
@@ -59,6 +63,8 @@ class RotaryEmbeddingND(nn.Module):
     Unlike RoPE1DConfig/RoPE2DConfig this takes no ``base`` — see :func:`_frequency_ladder`.
     """
 
+    inv_freq: Tensor
+
     def __init__(self, config: RoPENDConfig) -> None:
         super().__init__()
         self.coords = config.coords
@@ -76,7 +82,7 @@ class RotaryEmbeddingND(nn.Module):
 
         float32 keeps half-precision coordinates from losing the outer product's precision.
         """
-        inv: Tensor = self.inv_freq  # type: ignore[assignment]
+        inv: Tensor = self.inv_freq
         pos = positions.to(dtype=torch.float32)
         per_axis = [pos[..., i].unsqueeze(-1) * inv.float() for i in range(self.coords)]
         half = torch.cat(per_axis, dim=-1)  # (..., dh//2)

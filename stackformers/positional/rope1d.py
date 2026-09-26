@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING
 
 import torch
 import torch.nn as nn
-from jaxtyping import Float
 from torch import Tensor
 
-from stackformers.positional.config import RoPE1DConfig, YaRNConfig
+if TYPE_CHECKING:
+    from jaxtyping import Float
+
+    from stackformers.positional.config import RoPE1DConfig, YaRNConfig
 
 
 def _rotate_half(x: Tensor) -> Tensor:
@@ -59,6 +62,8 @@ class RotaryEmbedding1D(nn.Module):
     Optionally accepts YaRNConfig for extended context via NTK-by-parts scaling.
     """
 
+    inv_freq: Tensor
+
     def __init__(self, config: RoPE1DConfig) -> None:
         super().__init__()
         assert config.dim_head % 2 == 0, "dim_head must be even for RoPE"
@@ -75,7 +80,7 @@ class RotaryEmbedding1D(nn.Module):
 
         float32 cast ensures half-precision inputs don't lose precision in the outer product.
         """
-        inv: Tensor = self.inv_freq  # type: ignore[assignment]
+        inv: Tensor = self.inv_freq
         pos = positions[..., 0].to(dtype=torch.float32)
         freqs = pos.unsqueeze(-1) * inv.float()
         return torch.cat([freqs, freqs], dim=-1)

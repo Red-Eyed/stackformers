@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
-from jaxtyping import Float
-from torch import Tensor
+if TYPE_CHECKING:
+    from jaxtyping import Float
+    from torch import Tensor
 
-from stackformers.sequence import PaddedSequence
+    from stackformers.sequence import PaddedSequence
 
 
 class CrossAttentionKVCache(NamedTuple):

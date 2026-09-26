@@ -1,16 +1,21 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import torch.nn as nn
-from jaxtyping import Float
 from torch import Tensor
 
-from stackformers.positional.config import NoPosEncodingConfig
+if TYPE_CHECKING:
+    from jaxtyping import Float
+
+    from stackformers.positional.config import NoPosEncodingConfig
 
 
 class NoPosEncoding(nn.Module):
     """Null object for PosEncoding — passes q, k unchanged regardless of layout."""
 
-    def __init__(self, _config: NoPosEncodingConfig = NoPosEncodingConfig()) -> None:
+    def __init__(self, _config: NoPosEncodingConfig | None = None) -> None:
+        """Construct a parameter-free identity encoding."""
         super().__init__()
 
     def forward_padded(

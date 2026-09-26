@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import torch.nn as nn
 from pydantic import BaseModel, Field, model_validator
 from torch import Tensor
+from typing_extensions import override
 
 from stackformers.attention.config import (
     AttnBiasConfig,
@@ -27,7 +30,9 @@ from stackformers.norm.config import NormConfig, NormPlacement, RMSNormConfig
 from stackformers.norm.factory import build_norm
 from stackformers.positional.config import NoPosEncodingConfig, PosEncodingConfig, RoPE1DConfig
 from stackformers.positional.factory import build_pos_encoding
-from stackformers.sequence import SequenceInput
+
+if TYPE_CHECKING:
+    from stackformers.sequence import SequenceInput
 
 
 class VariableWidthEncoderLayerConfig(BaseModel):
@@ -162,10 +167,14 @@ class _VariableWidthLayer(nn.Module):
         self.projection = projection
         self.layer = layer
 
+    @override
     def forward(self, input: SequenceInput) -> SequenceInput:
         """Project only the feature tensor while preserving all sequence metadata."""
         projected = input._replace(x=self.projection(input.x))
         return self.layer(projected)
+
+    if TYPE_CHECKING:
+        __call__ = forward
 
 
 class VariableWidthTransformerEncoder(nn.Module):
@@ -253,8 +262,12 @@ class VariableWidthTransformerEncoder(nn.Module):
                     norm_ff=build_norm(config=config.norm),
                 )
 
+    @override
     def forward(self, input: SequenceInput) -> Tensor:
         """Encode a padded or packed sequence into the configured final width."""
         for layer in self.layers:
             input = layer(input)
         return self.final_norm(input.x)
+
+    if TYPE_CHECKING:
+        __call__ = forward

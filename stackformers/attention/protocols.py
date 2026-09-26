@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, overload, runtime_checkable
 
-from jaxtyping import Float
-from torch import Tensor
+if TYPE_CHECKING:
+    from jaxtyping import Float
+    from torch import Tensor
 
-from stackformers.sequence import PaddedInput, SequenceInput
+    from stackformers.sequence import PackedInput, PaddedInput, SequenceInput
 
 
 @runtime_checkable
@@ -32,6 +33,14 @@ class SelfAttn(Protocol):
 
 @runtime_checkable
 class CrossAttn(Protocol):
-    """Cross-attention from x to context: maps (x_input, ctx_input) → x."""
+    """Map queries and context of the same layout to query-shaped embeddings."""
 
-    def __call__(self, x_input: SequenceInput, ctx_input: SequenceInput) -> Tensor: ...
+    @overload
+    def __call__(self, x_input: PaddedInput, ctx_input: PaddedInput) -> Tensor:
+        """Attend between padded batches with the same batch size."""
+        ...
+
+    @overload
+    def __call__(self, x_input: PackedInput, ctx_input: PackedInput) -> Tensor:
+        """Attend between packed batches with the same document count."""
+        ...

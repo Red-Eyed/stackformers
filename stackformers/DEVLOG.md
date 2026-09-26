@@ -1,5 +1,46 @@
 # Transformer model development log
 
+## 2026-09-26 — Empty-input contracts and strict Python checks (4.7.0b8)
+
+### Observation
+
+The rustic-python review reproduced NaN MLM losses when independent masking selected no
+tokens, and attention averaging masked values when a document had no valid context. Packed
+self-attention also repadded input features for a no-op bias. Cross-attention accepted mixed
+layouts in its annotations but failed during reshaping, and mutable attention configs could
+silently reinterpret existing projections.
+
+### Decision
+
+Keep independent MLM sampling and define empty reconstruction selections as differentiable
+zero losses. Use negative infinity for excluded keys, temporarily unmask fully excluded rows
+for backend-safe softmax, and zero those outputs and gradients. Keep padding-only masks compact
+until the export-required query expansion. Skip feature repadding for the built-in no-op bias.
+Freeze attention configs and express matching cross-attention layouts with overloads and
+explicit runtime pair validation.
+
+Adopt the rustic-python strict checker profile for source, tests, and examples at the package's
+Python 3.11 minimum. Expose module-call signatures only under `TYPE_CHECKING`, preserving runtime
+hooks. Annotate known PyTorch tensor-return boundaries and registered buffers, keep experimental
+kernel returns opaque until validation, and remove unqualified or obsolete suppressions.
+The remaining two Pyrefly suppressions deliberately mutate immutable values in runtime tests.
+
+### Verified
+
+Focused empty-selection, masked-output/gradient, and static/dynamic ONNX tests passed on CPU,
+including required opsets 18–25. Ruff and strict Pyrefly pass for the library, tests, and examples.
+The final `just check` passes on Python 3.11: 1118 passed, 21 skipped, 162 expected failures,
+and 87 optional-case unexpected passes. The locked environment uses Pyrefly 1.3.1 and Ruff 0.16.9.
+A negative type-check probe rejects both mixed-layout orders, a mixed-layout protocol call,
+an invalid module argument, an explicit Any leak, and missing function annotations; matching
+layout calls retain Tensor return types.
+
+### Unproven
+
+CUDA kernels and GPU/mobile ONNX execution providers were not exercised. The avoided packed
+feature allocation is checked at its conversion boundary; end-to-end memory and throughput
+effects have not been benchmarked. Static Tensor annotations do not establish numerical shapes.
+
 ## 2026-09-25 — ONNX Runtime attention-mask compatibility
 
 ### Observation

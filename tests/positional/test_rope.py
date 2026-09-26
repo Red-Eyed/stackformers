@@ -1,18 +1,23 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 import torch
 import torch.export
 import torch.nn as nn
+from typing_extensions import override
 
 from stackformers.positional.config import RoPE1DConfig, RoPE2DConfig, RoPENDConfig, YaRNConfig
 from stackformers.positional.none import NoPosEncoding
-from stackformers.positional.protocols import PosEncoding
 from stackformers.positional.rope1d import RotaryEmbedding1D
 from stackformers.positional.rope2d import RotaryEmbedding2D
 from stackformers.positional.rope_nd import RotaryEmbeddingND
 from tests.conftest import atol
 from tests.export_utils import ONNX_OPSET_CASES, ExportShapeMode, export_and_run
+
+if TYPE_CHECKING:
+    from stackformers.positional.protocols import PosEncoding
 
 B, H, N, DH = 2, 4, 8, 32
 
@@ -361,6 +366,7 @@ class _PaddedRopeWrapper(nn.Module):
         super().__init__()
         self.enc = enc
 
+    @override
     def forward(
         self,
         q: torch.Tensor,

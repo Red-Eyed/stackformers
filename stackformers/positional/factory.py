@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from stackformers.positional.config import (
     LearnedPosEncodingConfig,
     NoPosEncodingConfig,
@@ -10,10 +12,12 @@ from stackformers.positional.config import (
 )
 from stackformers.positional.learned import LearnedPosEncoding
 from stackformers.positional.none import NoPosEncoding
-from stackformers.positional.protocols import PosEncoding
 from stackformers.positional.rope1d import RotaryEmbedding1D
 from stackformers.positional.rope2d import RotaryEmbedding2D
 from stackformers.positional.rope_nd import RotaryEmbeddingND
+
+if TYPE_CHECKING:
+    from stackformers.positional.protocols import PosEncoding
 
 
 def build_pos_encoding(config: PosEncodingConfig) -> PosEncoding:

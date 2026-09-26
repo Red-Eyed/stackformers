@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any, TypeAlias
+from typing import TYPE_CHECKING, TypeAlias
 
 import pytest
 import torch
 import torch.nn as nn
-from _pytest.mark.structures import ParameterSet
 from onnx import defs
 from onnxscript import ir
 from torch.utils import _pytree
 
-DynamicShapes: TypeAlias = dict[str, Any] | tuple[Any, ...] | list[Any] | None
+if TYPE_CHECKING:
+    from _pytest.mark.structures import ParameterSet
+
+# Export shape trees mirror arbitrary module inputs; torch.export validates their leaves.
+DynamicShapes: TypeAlias = dict[str, object] | tuple[object, ...] | list[object] | None
 # The dynamo exporter supports opsets beyond the legacy exporter's ONNX_MAX_OPSET.
 # Cap coverage at the highest verified target; newer requests may silently retain
 # an older opset, which _assert_onnx_opset_version deliberately rejects.
@@ -84,7 +87,7 @@ def _assert_onnx_opset_version(
     assert program.model.opset_imports[""] == opset_version
 
 
-def _flatten_tensor_output(output: Any) -> tuple[torch.Tensor, ...]:
+def _flatten_tensor_output(output: object) -> tuple[torch.Tensor, ...]:
     """Flatten an exported output tree and require tensor-only leaves."""
     leaves, _ = _pytree.tree_flatten(output)
     assert all(isinstance(leaf, torch.Tensor) for leaf in leaves)
@@ -93,12 +96,12 @@ def _flatten_tensor_output(output: Any) -> tuple[torch.Tensor, ...]:
 
 def export_and_run(
     model: nn.Module,
-    example_args: tuple[Any, ...],
+    example_args: tuple[object, ...],
     mode: ExportShapeMode,
     opset_version: int,
     *,
     dynamic_shapes: DynamicShapes = None,
-    runtime_args: tuple[Any, ...] | None = None,
+    runtime_args: tuple[object, ...] | None = None,
 ) -> tuple[torch.Tensor, ...]:
     """Run PyTorch and one requested ONNX export, then verify both against eager PyTorch.
 

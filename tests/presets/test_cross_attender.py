@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 import torch
 from pydantic import ValidationError
@@ -13,7 +15,6 @@ from stackformers.cross_attender import (
     ReorderedNormCrossAttenderLayer,
     SandwichNormCrossAttenderLayer,
 )
-from stackformers.norm.config import NormPlacement
 from stackformers.presets.cross_attender import (
     CrossAttender,
     CrossAttenderConfig,
@@ -21,6 +22,9 @@ from stackformers.presets.cross_attender import (
 )
 from stackformers.sequence import PaddedInput, make_padded_input
 from tests.export_utils import ONNX_OPSET_CASES, ExportShapeMode, export_and_run
+
+if TYPE_CHECKING:
+    from stackformers.norm.config import NormPlacement
 
 B, Nq, S, D, H = 2, 8, 12, 64, 4  # Nq=query len, S=context len
 

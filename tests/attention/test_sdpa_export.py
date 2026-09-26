@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
+from typing_extensions import override
 
 from stackformers.attention.ops import padded_sdpa, padding_mask
 from tests.export_utils import ONNX_OPSET_CASES, ExportShapeMode, export_and_run
@@ -24,6 +25,7 @@ class AttentionInputs(NamedTuple):
 class PaddedAttention(nn.Module):
     """Expose the shared padding-only attention path without projection layers."""
 
+    @override
     def forward(self, q: Tensor, k: Tensor, v: Tensor, mask: Tensor) -> Tensor:
         """Attend to valid context tokens with multiple query heads."""
         return padded_sdpa(q, k, v, mask, causal=False, window_size=None, bias=None)
@@ -43,16 +45,29 @@ def _attention_inputs(batch: int, queries: int, keys: int) -> AttentionInputs:
     )
 
 
+@pytest.fixture(params=[False, True], ids=["partial-padding", "empty-context"])
+def empty_context(request: pytest.FixtureRequest) -> bool:
+    """Include an empty document alongside nonempty documents in each export mode."""
+    assert isinstance(request.param, bool)
+    return request.param
+
+
 @pytest.fixture
-def example_inputs() -> AttentionInputs:
+def example_inputs(empty_context: bool) -> AttentionInputs:
     """Use non-singleton dimensions so dynamic export can retain each axis."""
-    return _attention_inputs(2, 3, 5)
+    inputs = _attention_inputs(2, 3, 5)
+    if empty_context:
+        inputs.mask[0] = False
+    return inputs
 
 
 @pytest.fixture(params=[1, 4], ids=["single-query", "multiple-queries"])
-def runtime_inputs(request: pytest.FixtureRequest) -> AttentionInputs:
+def runtime_inputs(request: pytest.FixtureRequest, empty_context: bool) -> AttentionInputs:
     """Change batch, query, and context lengths independently of the export example."""
-    return _attention_inputs(3, request.param, 6)
+    inputs = _attention_inputs(3, request.param, 6)
+    if empty_context:
+        inputs.mask[0] = False
+    return inputs
 
 
 @pytest.mark.parametrize("shape_mode", tuple(ExportShapeMode), ids=lambda mode: mode.value)

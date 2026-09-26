@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import torch
 import torch.nn as nn
-from jaxtyping import Float
 from torch import Tensor
 
-from stackformers.positional.config import RoPE2DConfig
 from stackformers.positional.rope1d import _apply_rope
+
+if TYPE_CHECKING:
+    from jaxtyping import Float
+
+    from stackformers.positional.config import RoPE2DConfig
 
 
 class RotaryEmbedding2D(nn.Module):
@@ -15,6 +20,8 @@ class RotaryEmbedding2D(nn.Module):
     Conforms to PosEncoding: positions must have c=2 (row, col per token).
     Splits dim_head evenly: first half encodes row, second half column.
     """
+
+    inv_freq: Tensor
 
     def __init__(self, config: RoPE2DConfig) -> None:
         super().__init__()
@@ -35,7 +42,7 @@ class RotaryEmbedding2D(nn.Module):
 
         float32 cast ensures half-precision inputs don't lose precision in the outer product.
         """
-        inv: Tensor = self.inv_freq  # type: ignore[assignment]
+        inv: Tensor = self.inv_freq
         pos = positions.to(dtype=torch.float32)
         row = pos[..., 0].unsqueeze(-1) * inv.float()  # (..., dh//4)
         col = pos[..., 1].unsqueeze(-1) * inv.float()  # (..., dh//4)

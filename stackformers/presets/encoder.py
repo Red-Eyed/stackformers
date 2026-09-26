@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
-from typing import Generic, TypeVar
+from typing import TYPE_CHECKING, Generic, TypeVar
 
 import torch.nn as nn
 from pydantic import BaseModel, Field, model_validator
 from torch import Tensor
+from typing_extensions import override
 
 from stackformers.attention.config import (
     AttnBiasConfig,
@@ -17,12 +17,10 @@ from stackformers.attention.config import (
     SelfAttentionConfig,
 )
 from stackformers.attention.factory import build_attn_bias
-from stackformers.attention.protocols import AttnBias
 from stackformers.attention.self_attn import SelfAttention
 from stackformers.encoder import Encoder
 from stackformers.feedforward.config import FeedForwardConfig, SwiGLUConfig
 from stackformers.feedforward.factory import build_ff
-from stackformers.feedforward.protocols import FeedForward
 from stackformers.layers import (
     PostNormTransformerLayer,
     ReorderedNormTransformerLayer,
@@ -32,15 +30,21 @@ from stackformers.layers import (
 )
 from stackformers.norm.config import NormPlacement, RMSNormConfig
 from stackformers.norm.factory import NormConfig, build_norm
-from stackformers.norm.protocols import Norm
 from stackformers.positional.config import (
     NoPosEncodingConfig,
     PosEncodingConfig,
     RoPE1DConfig,
 )
 from stackformers.positional.factory import build_pos_encoding
-from stackformers.positional.protocols import PosEncoding
-from stackformers.sequence import SequenceInput
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from stackformers.attention.protocols import AttnBias
+    from stackformers.feedforward.protocols import FeedForward
+    from stackformers.norm.protocols import Norm
+    from stackformers.positional.protocols import PosEncoding
+    from stackformers.sequence import SequenceInput
 
 C = TypeVar("C")
 
@@ -66,8 +70,12 @@ class TransformerEncoderBase(nn.Module, Generic[C], ABC):
     @abstractmethod
     def build_norm(self, config: C) -> Norm: ...
 
+    @override
     def forward(self, input: SequenceInput) -> Tensor:
         return self._encoder(input)
+
+    if TYPE_CHECKING:
+        __call__ = forward
 
 
 class TransformerEncoderConfig(BaseModel):

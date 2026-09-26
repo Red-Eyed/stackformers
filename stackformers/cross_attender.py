@@ -3,15 +3,21 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 import torch.nn as nn
 from torch import Tensor
+from typing_extensions import override
 
-from stackformers.attention.protocols import CrossAttn
-from stackformers.feedforward.protocols import FeedForward
-from stackformers.norm.protocols import Norm
-from stackformers.sequence import SequenceInput
+from stackformers.attention.layout import call_cross_attention
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from stackformers.attention.protocols import CrossAttn
+    from stackformers.feedforward.protocols import FeedForward
+    from stackformers.norm.protocols import Norm
+    from stackformers.sequence import SequenceInput
 
 
 class CrossAttenderLayerBase(nn.Module, ABC):
@@ -24,8 +30,12 @@ class CrossAttenderLayerBase(nn.Module, ABC):
         self.ff = ff
 
     @abstractmethod
+    @override
     def forward(self, x_input: SequenceInput, ctx_input: SequenceInput) -> SequenceInput:
         """Apply one cross-attender layer while preserving query metadata."""
+
+    if TYPE_CHECKING:
+        __call__ = forward
 
 
 class CrossAttenderLayer(CrossAttenderLayerBase):
@@ -50,9 +60,12 @@ class CrossAttenderLayer(CrossAttenderLayerBase):
     def forward(self, x_input: SequenceInput, ctx_input: SequenceInput) -> SequenceInput:
         """Apply pre-norm cross-attention and feed-forward residual branches."""
         normed = x_input._replace(x=self.norm_cross(x_input.x))
-        x = x_input.x + self.cross_attn(normed, ctx_input)
+        x = x_input.x + call_cross_attention(self.cross_attn, normed, ctx_input)
         x = x + self.ff(self.norm_ff(x))
         return x_input._replace(x=x)
+
+    if TYPE_CHECKING:
+        __call__ = forward
 
 
 class PostNormCrossAttenderLayer(CrossAttenderLayerBase):
@@ -76,9 +89,12 @@ class PostNormCrossAttenderLayer(CrossAttenderLayerBase):
 
     def forward(self, x_input: SequenceInput, ctx_input: SequenceInput) -> SequenceInput:
         """Normalize each residual sum before evaluating the next branch."""
-        x = self.norm_cross(x_input.x + self.cross_attn(x_input, ctx_input))
+        x = self.norm_cross(x_input.x + call_cross_attention(self.cross_attn, x_input, ctx_input))
         x = self.norm_ff(x + self.ff(x))
         return x_input._replace(x=x)
+
+    if TYPE_CHECKING:
+        __call__ = forward
 
 
 class SandwichNormCrossAttenderLayer(CrossAttenderLayerBase):
@@ -107,9 +123,14 @@ class SandwichNormCrossAttenderLayer(CrossAttenderLayerBase):
     def forward(self, x_input: SequenceInput, ctx_input: SequenceInput) -> SequenceInput:
         """Normalize the input and output of both residual branches."""
         normed = x_input._replace(x=self.norm_cross_pre(x_input.x))
-        x = x_input.x + self.norm_cross_post(self.cross_attn(normed, ctx_input))
+        x = x_input.x + self.norm_cross_post(
+            call_cross_attention(self.cross_attn, normed, ctx_input)
+        )
         x = x + self.norm_ff_post(self.ff(self.norm_ff_pre(x)))
         return x_input._replace(x=x)
+
+    if TYPE_CHECKING:
+        __call__ = forward
 
 
 class ReorderedNormCrossAttenderLayer(CrossAttenderLayerBase):
@@ -134,9 +155,12 @@ class ReorderedNormCrossAttenderLayer(CrossAttenderLayerBase):
 
     def forward(self, x_input: SequenceInput, ctx_input: SequenceInput) -> SequenceInput:
         """Normalize each branch result immediately before residual addition."""
-        x = x_input.x + self.norm_cross(self.cross_attn(x_input, ctx_input))
+        x = x_input.x + self.norm_cross(call_cross_attention(self.cross_attn, x_input, ctx_input))
         x = x + self.norm_ff(self.ff(x))
         return x_input._replace(x=x)
+
+    if TYPE_CHECKING:
+        __call__ = forward
 
 
 class CrossAttenderStack(nn.Module):
@@ -148,8 +172,12 @@ class CrossAttenderStack(nn.Module):
         self.layers = nn.ModuleList(layers)
         self.final_norm = final_norm
 
+    @override
     def forward(self, x_input: SequenceInput, ctx_input: SequenceInput) -> Tensor:
         """Transform a query sequence against a fixed context sequence."""
         for layer in self.layers:
             x_input = layer(x_input, ctx_input)
         return self.final_norm(x_input.x)
+
+    if TYPE_CHECKING:
+        __call__ = forward

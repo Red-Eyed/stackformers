@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import torch.nn as nn
 import torch.nn.functional as F
-from jaxtyping import Float
 from torch import Tensor
+from typing_extensions import override
+
+if TYPE_CHECKING:
+    from jaxtyping import Float
 
 
 class CosineHead(nn.Module):
@@ -18,10 +23,17 @@ class CosineHead(nn.Module):
         super().__init__()
         self.proj = nn.Linear(dim, dim)
 
+    @override
     def forward(
         self,
         encoder_output_at_masked: Float[Tensor, "m d"],
         target_at_masked: Float[Tensor, "m d"],
     ) -> Float[Tensor, ""]:
-        prediction = self.proj(encoder_output_at_masked)
+        """Return mean cosine distance, or a differentiable zero for an empty selection."""
+        prediction: Tensor = self.proj(encoder_output_at_masked)
+        if prediction.shape[0] == 0:
+            return prediction.sum()
         return (1 - F.cosine_similarity(prediction, target_at_masked, dim=-1)).mean()
+
+    if TYPE_CHECKING:
+        __call__ = forward

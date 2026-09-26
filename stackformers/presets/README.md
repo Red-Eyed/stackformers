@@ -41,14 +41,16 @@ class MyConfig(BaseModel):
     heads: int
     num_layers: int
 
+
 class MyEncoder(TransformerEncoderBase[MyConfig]):
     def build_layers(self, config: MyConfig) -> list[TransformerLayer]:
         pos = MyRoPE(config.dim // config.heads)
         return [
             TransformerLayer(
                 self_attn=SelfAttention(
-                    SelfAttentionConfig(dim=config.dim, heads=config.heads,
-                                        dim_head=config.dim // config.heads),
+                    SelfAttentionConfig(
+                        dim=config.dim, heads=config.heads, dim_head=config.dim // config.heads
+                    ),
                     pos_encoding=pos,
                 ),
                 ff=SwiGLU(SwiGLUConfig(dim=config.dim, mult=4)),

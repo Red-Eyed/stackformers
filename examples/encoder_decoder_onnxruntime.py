@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 import onnxruntime as ort
 import torch
 import torch.nn as nn
 from torch import Tensor
+from typing_extensions import override
 
 from stackformers import (
     CachedDecoderWrapper,
@@ -24,6 +24,9 @@ from stackformers import (
     plain_decoder_config,
     plain_encoder_config,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 DIM = 128
 HEADS = 2
@@ -52,10 +55,14 @@ class EncoderModel(nn.Module):
         super().__init__()
         self.encoder = TransformerEncoder(plain_encoder_config(DIM, HEADS, LAYERS, ff_mult=3.0))
 
+    @override
     def forward(self, source_input: PaddedInput) -> PaddedInput:
         """Encode source features while retaining their mask and absolute positions."""
         context = self.encoder(source_input)
         return source_input._replace(x=context)
+
+    if TYPE_CHECKING:
+        __call__ = forward
 
 
 class EncoderDecoderModel(nn.Module):
@@ -67,10 +74,14 @@ class EncoderDecoderModel(nn.Module):
         self.encoder = EncoderModel()
         self.decoder = TransformerDecoder(plain_decoder_config(DIM, HEADS, LAYERS, ff_mult=3.0))
 
+    @override
     def forward(self, source_input: PaddedInput, target_input: PaddedInput) -> Tensor:
         """Run the ordinary uncached encoder-decoder path."""
         memory = self.encoder(source_input)
         return self.decoder(target_input, memory)
+
+    if TYPE_CHECKING:
+        __call__ = forward
 
 
 def _make_input(batch: int, tokens: int, *, seed: int) -> PaddedInput:
@@ -86,14 +97,15 @@ def _padded_input_dynamic_shapes(
     input: PaddedInput,
     *,
     token_dim_name: str,
-) -> Any:
+) -> dict[str, object]:
     """Describe dynamic batch and token dimensions for one padded-input graph."""
     batch = torch.export.Dim("batch", min=1, max=EXAMPLE_BATCH)
     tokens = torch.export.Dim(token_dim_name, min=1, max=MAX_SOURCE_TOKENS)
     shapes = torch.export.ShapesCollection()
     for tensor in input:
         shapes[tensor] = {0: batch, 1: tokens}
-    return shapes.dynamic_shapes(module, (input,))
+    dynamic_shapes: dict[str, object] = shapes.dynamic_shapes(module, (input,))
+    return dynamic_shapes
 
 
 def _cached_decoder_dynamic_shapes(
@@ -102,7 +114,7 @@ def _cached_decoder_dynamic_shapes(
     cross_cache: DecoderCrossAttentionCache,
     self_kv_cache: Tensor,
     step_i: Tensor,
-) -> Any:
+) -> dict[str, object]:
     """Describe dynamic batch, context, and past dimensions for one-token decoding."""
     batch = torch.export.Dim("batch", min=1, max=EXAMPLE_BATCH)
     source_tokens = torch.export.Dim("source_tokens", min=1, max=MAX_SOURCE_TOKENS)
@@ -113,10 +125,11 @@ def _cached_decoder_dynamic_shapes(
     shapes[cross_cache.kv] = {2: batch, 4: source_tokens}
     shapes[cross_cache.context.mask] = {0: batch, 1: source_tokens}
     shapes[self_kv_cache] = {2: batch, 4: past_tokens}
-    return shapes.dynamic_shapes(
+    dynamic_shapes: dict[str, object] = shapes.dynamic_shapes(
         module,
         (target_input, cross_cache, self_kv_cache, step_i),
     )
+    return dynamic_shapes
 
 
 def _export_models(

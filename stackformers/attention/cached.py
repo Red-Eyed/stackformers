@@ -2,18 +2,23 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import torch
 import torch.nn as nn
 from einops import rearrange, repeat
 from torch import Tensor
+from typing_extensions import override
 
 from stackformers.attention.bias import NoAttnBias
 from stackformers.attention.cache import CrossAttentionKVCache
-from stackformers.attention.cross_attn import CrossAttention
 from stackformers.attention.ops import padded_sdpa
-from stackformers.attention.self_attn import SelfAttention
-from stackformers.positional.protocols import PosEncoding
-from stackformers.sequence import PaddedInput, PaddedSequence
+
+if TYPE_CHECKING:
+    from stackformers.attention.cross_attn import CrossAttention
+    from stackformers.attention.self_attn import SelfAttention
+    from stackformers.positional.protocols import PosEncoding
+    from stackformers.sequence import PaddedInput, PaddedSequence
 
 
 def _position_query(encoding: PosEncoding, q: Tensor, positions: Tensor) -> Tensor:
@@ -65,6 +70,7 @@ class CachedSelfAttentionWrapper(nn.Module):
         self.attention = attention
         self.train(attention.training)
 
+    @override
     def forward(
         self,
         input: PaddedInput,
@@ -114,6 +120,9 @@ class CachedSelfAttentionWrapper(nn.Module):
         updated_cache = torch.stack((updated_k, updated_v), dim=0)
         return out * input.mask.unsqueeze(-1), updated_cache
 
+    if TYPE_CHECKING:
+        __call__ = forward
+
 
 class CachedCrossAttentionWrapper(nn.Module):
     """Add reusable-context execution around an existing cross-attention module.
@@ -142,6 +151,7 @@ class CachedCrossAttentionWrapper(nn.Module):
         k = _position_key(attention.pos_encoding, k, context.abs_positions)
         return CrossAttentionKVCache(k=k, v=v)
 
+    @override
     def forward(
         self,
         input: PaddedInput,
@@ -168,5 +178,10 @@ class CachedCrossAttentionWrapper(nn.Module):
             window_size=None,
             bias=None,
         )
-        out = attention.dropout(attention.to_out(rearrange(out, "b h n d -> b n (h d)")))
-        return out * input.mask.unsqueeze(-1)
+        projected: Tensor = attention.dropout(
+            attention.to_out(rearrange(out, "b h n d -> b n (h d)"))
+        )
+        return projected * input.mask.unsqueeze(-1)
+
+    if TYPE_CHECKING:
+        __call__ = forward

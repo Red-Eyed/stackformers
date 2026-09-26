@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import torch.nn as nn
-from jaxtyping import Float
 from torch import Tensor
 
-from stackformers.positional.config import LearnedPosEncodingConfig
+if TYPE_CHECKING:
+    from jaxtyping import Float
+
+    from stackformers.positional.config import LearnedPosEncodingConfig
 
 
 class LearnedPosEncoding(nn.Module):
