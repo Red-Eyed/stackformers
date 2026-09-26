@@ -2,6 +2,8 @@
 
 ## 2026-09-26 — Shared Result core with compatible public adapters
 
+Commit: `738a3ad`
+
 ### Observation
 
 Expected layout, geometry, cache-admission, and experimental backend failures were implicit

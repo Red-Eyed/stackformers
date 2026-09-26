@@ -1056,7 +1056,7 @@ wheels = [
 
 [[package]]
 name = "stackformers"
-version = "4.7.0b8"
+version = "5.0.0rc1"
 source = { editable = "." }
 dependencies = [
     { name = "beartype" },

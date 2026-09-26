@@ -8,16 +8,30 @@ MINOR for backwards-compatible features, PATCH for bug fixes and internal change
 
 ## [Unreleased]
 
+## [5.0.0rc1] — 2026-09-26
+
 ### Backwards Incompatible Changes
 
-- Make `SelfAttentionConfig` and `CrossAttentionConfig` immutable so changing a shared config
-  cannot reinterpret an existing model's projections. Construct a new config and model for
-  different architecture settings instead of assigning config fields.
-- Require matching padded or packed layouts in the cross-attention type contract; mixed layouts
-  now raise `ValueError` at runtime instead of failing inside tensor reshaping. Narrow both
-  inputs together when calling through the `CrossAttn` protocol.
-- Define empty reconstruction selections as a differentiable zero loss. Custom reconstruction
-  heads must also handle zero selected tokens; the sampling policy remains independent.
+#### Immutable attention configuration
+
+`SelfAttentionConfig` and `CrossAttentionConfig` previously allowed field assignment after
+construction. They are now immutable, preventing a shared config from reinterpreting an
+existing model's projections. Construct a new config and model for different architecture
+settings instead of assigning config fields.
+
+#### Matching cross-attention layouts
+
+Cross-attention previously accepted mixed padded/packed layouts in its annotations and failed
+during tensor reshaping. Its type contract now requires matching layouts, and mixed layouts
+raise `ValueError` at runtime. Narrow both inputs together when calling through the `CrossAttn`
+protocol, or convert them to the same layout before calling.
+
+#### Empty reconstruction selections
+
+Custom reconstruction heads must now return a differentiable zero loss for zero selected
+tokens; earlier head contracts left empty-input behavior unspecified. Add an empty-input guard
+that returns `prediction.sum()` to custom heads. Independent sampling is unchanged, so callers
+must continue to support batches in which no tokens are selected.
 
 ### Bug Fixes
 
@@ -33,6 +47,7 @@ MINOR for backwards-compatible features, PATCH for bug fixes and internal change
 
 ### Developers
 
+- Include the `py.typed` marker so type checkers recognize annotations in installed wheels.
 - Use shared `returns` Result values for core layout, geometry, cache, and backend checks.
   Preserve public tensor/configuration returns, validation exceptions, and fallback warnings;
   retain original backend failure detail for callers that handle outcomes directly.
