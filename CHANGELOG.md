@@ -8,6 +8,15 @@ MINOR for backwards-compatible features, PATCH for bug fixes and internal change
 
 ## [Unreleased]
 
+## [5.0.0rc5] — 2026-09-26
+
+### Developers
+
+- Consolidate repository guidance in `AGENTS.md` and remove `CLAUDE.md`.
+- Reduce the Justfile to eight recipes. Replace `fmt-check`, `lint-fix`, `test-only`, and
+  `test-cov` with arguments to `fmt`, `lint`, and `test`; remove `fix` and `clean`.
+  Keep `check` as the full quality gate and preserve argument boundaries when forwarding flags.
+
 ## [5.0.0rc4] — 2026-09-26
 
 ### Developers
