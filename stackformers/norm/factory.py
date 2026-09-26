@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, assert_never
 
 import torch.nn as nn
 
@@ -19,4 +19,4 @@ def build_norm(config: NormConfig) -> Norm:
         case LayerNormConfig():
             return nn.LayerNorm(config.dim, eps=config.eps)
         case _:
-            raise AssertionError(f"Unhandled norm config: {type(config)}")
+            assert_never(config)

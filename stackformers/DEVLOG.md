@@ -1,6 +1,46 @@
 # Transformer model development log
 
+## 2026-09-26 — Shared Result core with compatible public adapters
+
+### Observation
+
+Expected layout, geometry, cache-admission, and experimental backend failures were implicit
+in core signatures. Local success/error records would also differ from the Result types used
+by other libraries, requiring callers to recognize and translate each project's variants.
+
+### Decision
+
+Use `returns.result.Result`, `Success`, and `Failure` directly. Keep pure admission checks
+separate from public exception and warning policy. Carry existing exceptions as failure data;
+the public adapter raises the original object so its type, message, and cause survive. Preserve
+Pydantic validation errors, native tensor signatures, and the existing tensor-or-None backend
+fallback contract. Inject the optional backend kernel into the Result attempt and preserve a
+typed fallback kind plus original failure detail. Keep impossible factory branches checked
+with `assert_never`.
+
+Use returns' ordinary constructor and matching API under strict Pyrefly. An isolated dependency
+comparison passed strict PyTorch export with returns 0.28.0; Expression 5.7.0 failed during
+tagged Result construction in strict export. The project uses no custom Result variants.
+
+### Verified
+
+Shared-library success identity/autograd and exception identity/cause tests pass. Dynamic
+`torch.export` passes in both tracing modes and `torch.compile` passes with `fullgraph=True`
+using the eager backend. The public experimental backend's warning/fallback tests pass.
+`just check` passes on Python 3.11: 1155 passed, 21 skipped, 162 expected failures, and
+87 optional-case unexpected passes. All 37 added regression cases pass. Ruff and strict
+Pyrefly pass without additional suppressions. A negative checker probe rejects wrong success
+and error types plus incompatible mapping callbacks while accepting typed ordinary mapping.
+
+### Unproven
+
+GPU kernel execution and accelerator compilation were not exercised. Result annotations make
+expected outcomes visible but do not prove freedom from unexpected Python or PyTorch exceptions.
+Returns' advanced composition and decorator APIs have not been checked with Pyrefly.
+
 ## 2026-09-26 — Empty-input contracts and strict Python checks (4.7.0b8)
+
+Commit: `4fe2960`
 
 ### Observation
 

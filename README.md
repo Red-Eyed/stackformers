@@ -245,6 +245,16 @@ tensor-return contracts; they do not validate tensor shapes. Experimental kernel
 `object` until runtime validation. Export shape trees use opaque `object` leaves because
 PyTorch validates their module-dependent structure.
 
+Core admission checks return the shared `returns.result.Result[T, E]` type using `Success`
+and `Failure`, so other libraries can inspect the same outcomes without converting custom
+records. Public adapters preserve tensor returns and raise the stored exception with its
+original type, message, and cause. Pydantic still presents configuration failures as
+`ValidationError`. The experimental backend returns a typed fallback reason internally;
+its existing adapter retains tensor-or-`None` returns and warning behavior. Expected failures
+are explicit in these core signatures; unexpected Python or PyTorch exceptions can still
+propagate. This path uses ordinary constructors, matching, and typed access supported by
+Pyrefly; it requires no mypy plugin.
+
 ---
 
 ## License

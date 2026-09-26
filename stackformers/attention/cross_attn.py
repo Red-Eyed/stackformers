@@ -7,6 +7,8 @@ from einops import rearrange, repeat
 from torch import Tensor
 from typing_extensions import override
 
+from stackformers._result import unwrap_or_raise
+from stackformers.attention.layout import matching_layouts
 from stackformers.attention.ops import packed_attn_or_fallback, padded_sdpa
 from stackformers.sequence import PackedInput, PackedSequence, PaddedInput, SequenceInput
 
@@ -88,13 +90,11 @@ class CrossAttention(nn.Module):
     @override
     def forward(self, x_input: SequenceInput, ctx_input: SequenceInput) -> Tensor:
         """Attend within one shared layout; raise ValueError for mixed layouts."""
-        match x_input, ctx_input:
-            case PaddedInput(), PaddedInput():
-                return self._forward_padded(x_input, ctx_input)
-            case PackedInput(), PackedInput():
-                return self._forward_packed(x_input, ctx_input)
-            case _:
-                raise ValueError("cross-attention inputs must have matching layouts")
+        match unwrap_or_raise(matching_layouts(x_input, ctx_input)):
+            case PaddedInput() as queries, PaddedInput() as context:
+                return self._forward_padded(queries, context)
+            case PackedInput() as queries, PackedInput() as context:
+                return self._forward_packed(queries, context)
 
     if TYPE_CHECKING:
         # Preserve nn.Module's hook machinery at runtime while exposing the

@@ -33,6 +33,9 @@ MINOR for backwards-compatible features, PATCH for bug fixes and internal change
 
 ### Developers
 
+- Use shared `returns` Result values for core layout, geometry, cache, and backend checks.
+  Preserve public tensor/configuration returns, validation exceptions, and fallback warnings;
+  retain original backend failure detail for callers that handle outcomes directly.
 - Apply rustic-python's strict Pyrefly and Ruff profile to the library, tests, and examples;
   require Pyrefly 1.3.1 and Ruff 0.16.9 or newer and check Python 3.11 compatibility.
 - Expose typed module-call signatures without replacing PyTorch's runtime hook dispatch,

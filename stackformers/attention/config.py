@@ -1,19 +1,32 @@
+"""Attention settings with Result-based geometry checks and Pydantic admission."""
+
 from __future__ import annotations
 
 import warnings
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, model_validator
+from returns.result import Failure, Result, Success
+
+from stackformers._result import unwrap_or_raise
 
 _ALIGN = 64  # tensor-core alignment for FP16/BF16
 
 
-def _validate_attn_dims(dim: int, heads: int, dim_head: int, kv_heads: int | None) -> None:
+def _validate_attn_dims(
+    dim: int, heads: int, kv_heads: int | None
+) -> Result[tuple[()], ValueError]:
+    """Check head grouping without emitting warnings or raising validation failures."""
     if dim % heads != 0:
-        raise ValueError(f"dim ({dim}) must be divisible by heads ({heads})")
+        return Failure(ValueError(f"dim ({dim}) must be divisible by heads ({heads})"))
     kv_h = kv_heads if kv_heads is not None else heads
     if heads % kv_h != 0:
-        raise ValueError(f"heads ({heads}) must be divisible by kv_heads ({kv_h})")
+        return Failure(ValueError(f"heads ({heads}) must be divisible by kv_heads ({kv_h})"))
+    return Success(())
+
+
+def _warn_attn_dims(dim: int, heads: int, dim_head: int) -> None:
+    """Emit construction-time throughput and non-square projection diagnostics."""
     if dim_head % _ALIGN != 0:
         warnings.warn(
             f"dim_head={dim_head} is not a multiple of {_ALIGN}. "
@@ -87,7 +100,9 @@ class SelfAttentionConfig(BaseModel, frozen=True):
 
     @model_validator(mode="after")
     def _validate(self) -> "SelfAttentionConfig":
-        _validate_attn_dims(self.dim, self.heads, self.dim_head, self.kv_heads)
+        """Translate core validation failures into the existing Pydantic error contract."""
+        unwrap_or_raise(_validate_attn_dims(self.dim, self.heads, self.kv_heads))
+        _warn_attn_dims(self.dim, self.heads, self.dim_head)
         return self
 
     @property
@@ -180,7 +195,9 @@ class CrossAttentionConfig(BaseModel, frozen=True):
 
     @model_validator(mode="after")
     def _validate(self) -> "CrossAttentionConfig":
-        _validate_attn_dims(self.dim, self.heads, self.dim_head, self.kv_heads)
+        """Translate core validation failures into the existing Pydantic error contract."""
+        unwrap_or_raise(_validate_attn_dims(self.dim, self.heads, self.kv_heads))
+        _warn_attn_dims(self.dim, self.heads, self.dim_head)
         return self
 
     @property

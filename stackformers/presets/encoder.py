@@ -7,9 +7,11 @@ from typing import TYPE_CHECKING, Generic, TypeVar
 
 import torch.nn as nn
 from pydantic import BaseModel, Field, model_validator
+from returns.result import Failure, Result, Success
 from torch import Tensor
 from typing_extensions import override
 
+from stackformers._result import unwrap_or_raise
 from stackformers.attention.config import (
     AttnBiasConfig,
     DistanceBiasConfig,
@@ -90,15 +92,22 @@ class TransformerEncoderConfig(BaseModel):
     @model_validator(mode="after")
     def _check_bias_heads(self) -> TransformerEncoderConfig:
         """A head-count mismatch would otherwise surface as a broadcast error inside SDPA."""
+        return unwrap_or_raise(self._bias_heads_result())
+
+    def _bias_heads_result(self) -> Result[TransformerEncoderConfig, ValueError]:
+        """Return mismatched bias heads as data before they reach SDPA broadcasting."""
         if (
             isinstance(self.attn_bias, DistanceBiasConfig)
             and self.attn_bias.heads != self.attn.heads
         ):
-            raise ValueError(
-                f"attn_bias.heads ({self.attn_bias.heads}) must equal attn.heads"
-                f" ({self.attn.heads}) — the bias contributes one logit per query head."
+            return Failure(
+                ValueError(
+                    f"attn_bias.heads ({self.attn_bias.heads}) must equal"
+                    f" attn.heads ({self.attn.heads})"
+                    " — the bias contributes one logit per query head."
+                )
             )
-        return self
+        return Success(self)
 
 
 def plain_encoder_config(

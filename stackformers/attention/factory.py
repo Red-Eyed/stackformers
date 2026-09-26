@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, assert_never
 
 from stackformers.attention.bias import NoAttnBias
 from stackformers.attention.config import (
@@ -21,4 +21,4 @@ def build_attn_bias(config: AttnBiasConfig) -> AttnBias:
         case DistanceBiasConfig():
             return RelativeDistanceBias(config)
         case _:
-            raise AssertionError(f"Unhandled attn bias config: {type(config)}")
+            assert_never(config)

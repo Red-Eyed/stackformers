@@ -7,14 +7,17 @@ from typing import TYPE_CHECKING, cast
 
 import torch
 import torch.nn as nn
+from returns.result import Failure, Result, Success
 from torch import Tensor
 from typing_extensions import override
 
+from stackformers._result import unwrap_or_raise
 from stackformers.attention.cache import (
     CrossAttentionKVCache,
     DecoderCrossAttentionCache,
     DecoderStepOutput,
 )
+from stackformers.attention.cache_validation import matching_layer_counts
 from stackformers.attention.cached import (
     CachedCrossAttentionWrapper,
     CachedSelfAttentionWrapper,
@@ -32,26 +35,32 @@ from stackformers.decoder import (
 from stackformers.sequence import PaddedInput, PaddedSequence
 
 
-def _unwrap_decoder(module: nn.Module) -> Decoder:
+def _unwrap_decoder(module: nn.Module) -> Result[Decoder, TypeError]:
     """Resolve a low-level decoder from either a stack or its existing preset wrapper."""
     candidate = module if isinstance(module, Decoder) else getattr(module, "_decoder", module)
     if not isinstance(candidate, Decoder):
-        raise TypeError(f"{type(module).__name__} does not contain a Stackformers Decoder")
-    return candidate
+        return Failure(
+            TypeError(f"{type(module).__name__} does not contain a Stackformers Decoder")
+        )
+    return Success(candidate)
 
 
-def _self_attention(module: object) -> SelfAttention:
+def _self_attention(module: object) -> Result[SelfAttention, TypeError]:
     """Require the standard self-attention whose projections the cache executor reuses."""
     if not isinstance(module, SelfAttention):
-        raise TypeError(f"cached decoding does not support {type(module).__name__} self-attention")
-    return module
+        return Failure(
+            TypeError(f"cached decoding does not support {type(module).__name__} self-attention")
+        )
+    return Success(module)
 
 
-def _cross_attention(module: object) -> CrossAttention:
+def _cross_attention(module: object) -> Result[CrossAttention, TypeError]:
     """Require the standard cross-attention whose projections the cache executor reuses."""
     if not isinstance(module, CrossAttention):
-        raise TypeError(f"cached decoding does not support {type(module).__name__} cross-attention")
-    return module
+        return Failure(
+            TypeError(f"cached decoding does not support {type(module).__name__} cross-attention")
+        )
+    return Success(module)
 
 
 def _layer_cross_cache(cache: Tensor) -> CrossAttentionKVCache:
@@ -65,8 +74,12 @@ class CachedDecoderLayerBase(nn.Module, ABC):
     def __init__(self, layer: DecoderLayerBase) -> None:
         """Wrap the layer attentions while sharing its feed-forward parameters."""
         super().__init__()
-        self.self_attn = CachedSelfAttentionWrapper(_self_attention(layer.self_attn))
-        self.cross_attn = CachedCrossAttentionWrapper(_cross_attention(layer.cross_attn))
+        self.self_attn = CachedSelfAttentionWrapper(
+            unwrap_or_raise(_self_attention(layer.self_attn))
+        )
+        self.cross_attn = CachedCrossAttentionWrapper(
+            unwrap_or_raise(_cross_attention(layer.cross_attn))
+        )
         self.ff = layer.ff
 
     @abstractmethod
@@ -214,29 +227,36 @@ class CachedReorderedNormDecoderLayer(CachedDecoderLayerBase):
         __call__ = forward
 
 
-def _cached_layer(layer: DecoderLayerBase) -> CachedDecoderLayerBase:
-    """Build the cache executor matching one existing normalization topology."""
-    match layer:
-        case DecoderLayer():
-            return CachedDecoderLayer(layer)
-        case PostNormDecoderLayer():
-            return CachedPostNormDecoderLayer(layer)
-        case SandwichNormDecoderLayer():
-            return CachedSandwichNormDecoderLayer(layer)
-        case ReorderedNormDecoderLayer():
-            return CachedReorderedNormDecoderLayer(layer)
-        case _:
-            raise TypeError(f"cached decoding does not support {type(layer).__name__}")
+def _cached_layer(
+    layer: DecoderLayerBase,
+) -> Result[CachedDecoderLayerBase, TypeError | NotImplementedError]:
+    """Adapt supported public constructors into typed cache-construction outcomes."""
+    try:
+        match layer:
+            case DecoderLayer():
+                return Success(CachedDecoderLayer(layer))
+            case PostNormDecoderLayer():
+                return Success(CachedPostNormDecoderLayer(layer))
+            case SandwichNormDecoderLayer():
+                return Success(CachedSandwichNormDecoderLayer(layer))
+            case ReorderedNormDecoderLayer():
+                return Success(CachedReorderedNormDecoderLayer(layer))
+            case _:
+                return Failure(
+                    TypeError(f"cached decoding does not support {type(layer).__name__}")
+                )
+    except (TypeError, NotImplementedError) as error:
+        return Failure(error)
 
 
-def _decoder_layers(decoder: Decoder) -> tuple[DecoderLayerBase, ...]:
+def _decoder_layers(decoder: Decoder) -> Result[tuple[DecoderLayerBase, ...], TypeError]:
     """Validate and expose the ordinary decoder's registered layer sequence."""
     layers: list[DecoderLayerBase] = []
     for layer in decoder.layers:
         if not isinstance(layer, DecoderLayerBase):
-            raise TypeError(f"expected DecoderLayerBase, received {type(layer).__name__}")
+            return Failure(TypeError(f"expected DecoderLayerBase, received {type(layer).__name__}"))
         layers.append(layer)
-    return tuple(layers)
+    return Success(tuple(layers))
 
 
 class DecoderCrossAttentionCacheBuilder(nn.Module):
@@ -248,10 +268,10 @@ class DecoderCrossAttentionCacheBuilder(nn.Module):
     def __init__(self, decoder: nn.Module) -> None:
         """Wrap only each decoder layer's cross-attention module and share its weights."""
         super().__init__()
-        source = _unwrap_decoder(decoder)
+        source = unwrap_or_raise(_unwrap_decoder(decoder))
         self.layers = nn.ModuleList(
-            CachedCrossAttentionWrapper(_cross_attention(layer.cross_attn))
-            for layer in _decoder_layers(source)
+            CachedCrossAttentionWrapper(unwrap_or_raise(_cross_attention(layer.cross_attn)))
+            for layer in unwrap_or_raise(_decoder_layers(source))
         )
         self.train(source.training)
 
@@ -289,8 +309,11 @@ class CachedDecoderWrapper(nn.Module):
     def __init__(self, decoder: nn.Module) -> None:
         """Build topology-specific executors that share the ordinary decoder's parameters."""
         super().__init__()
-        source = _unwrap_decoder(decoder)
-        self.layers = nn.ModuleList(_cached_layer(layer) for layer in _decoder_layers(source))
+        source = unwrap_or_raise(_unwrap_decoder(decoder))
+        self.layers = nn.ModuleList(
+            unwrap_or_raise(_cached_layer(layer))
+            for layer in unwrap_or_raise(_decoder_layers(source))
+        )
         self.final_norm = source.final_norm
         self.train(source.training)
 
@@ -303,14 +326,9 @@ class CachedDecoderWrapper(nn.Module):
         step_i: Tensor,
     ) -> DecoderStepOutput:
         """Decode one token and return its output plus the one-position-longer self cache."""
-        if cross_cache.kv.shape[0] != len(self.layers):
-            raise ValueError(
-                f"cross cache has {cross_cache.kv.shape[0]} layers, decoder has {len(self.layers)}"
-            )
-        if self_kv_cache.shape[0] != len(self.layers):
-            raise ValueError(
-                f"self cache has {self_kv_cache.shape[0]} layers, decoder has {len(self.layers)}"
-            )
+        unwrap_or_raise(
+            matching_layer_counts(cross_cache.kv.shape[0], self_kv_cache.shape[0], len(self.layers))
+        )
 
         updated_layer_caches: list[Tensor] = []
         for layer_i, layer in enumerate(self.layers):

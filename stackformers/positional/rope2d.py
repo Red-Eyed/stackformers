@@ -6,7 +6,9 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
+from stackformers._result import unwrap_or_raise
 from stackformers.positional.rope1d import _apply_rope
+from stackformers.positional.validation import rotary_head_width
 
 if TYPE_CHECKING:
     from jaxtyping import Float
@@ -24,8 +26,11 @@ class RotaryEmbedding2D(nn.Module):
     inv_freq: Tensor
 
     def __init__(self, config: RoPE2DConfig) -> None:
+        """Build both rotary axes; raise AssertionError for widths not divisible by four."""
         super().__init__()
-        assert config.dim_head % 4 == 0, "dim_head must be divisible by 4 for 2-D RoPE"
+        unwrap_or_raise(
+            rotary_head_width(config.dim_head, 4, "dim_head must be divisible by 4 for 2-D RoPE")
+        )
         half_dh = config.dim_head // 2
         inv_freq = 1.0 / (config.base ** (torch.arange(0, half_dh, 2).float() / half_dh))
         self.register_buffer("inv_freq", inv_freq, persistent=False)

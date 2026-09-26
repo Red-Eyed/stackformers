@@ -1,8 +1,13 @@
+"""Positional settings with pure Result checks behind Pydantic validation."""
+
 from __future__ import annotations
 
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, model_validator
+from returns.result import Failure, Result, Success
+
+from stackformers._result import unwrap_or_raise
 
 
 class YaRNConfig(BaseModel):
@@ -26,12 +31,20 @@ class YaRNConfig(BaseModel):
 
     @model_validator(mode="after")
     def _check_beta_ordering(self) -> YaRNConfig:
+        """Preserve Pydantic validation behavior at the public configuration boundary."""
+        return unwrap_or_raise(self._beta_ordering_result())
+
+    def _beta_ordering_result(self) -> Result[YaRNConfig, ValueError]:
+        """Return an inverted frequency partition as data for boundary validation."""
         if self.beta_slow >= self.beta_fast:
-            raise ValueError(
-                f"beta_slow ({self.beta_slow}) must be less than beta_fast ({self.beta_fast}). "
-                "Swapped values invert the high/low-frequency partition and silently break scaling."
+            return Failure(
+                ValueError(
+                    f"beta_slow ({self.beta_slow}) must be less than beta_fast ({self.beta_fast})."
+                    " Swapped values invert the high/low-frequency partition and silently"
+                    " break scaling."
+                )
             )
-        return self
+        return Success(self)
 
 
 class RoPE1DConfig(BaseModel):
@@ -86,24 +99,33 @@ class RoPENDConfig(BaseModel):
 
     @model_validator(mode="after")
     def _check(self) -> RoPENDConfig:
+        """Preserve Pydantic validation behavior at the public configuration boundary."""
+        return unwrap_or_raise(self._geometry_result())
+
+    def _geometry_result(self) -> Result[RoPENDConfig, ValueError]:
+        """Return invalid rotary geometry as data without invoking Pydantic."""
         pairs = 2 * self.coords
         if self.dim_head % pairs != 0:
-            raise ValueError(
-                f"dim_head ({self.dim_head}) must be divisible by 2 * coords ({pairs}):"
-                f" dim_head is split into {self.coords} per-axis blocks, and each block is"
-                " rotated in pairs of channels."
+            return Failure(
+                ValueError(
+                    f"dim_head ({self.dim_head}) must be divisible by 2 * coords ({pairs}):"
+                    f" dim_head is split into {self.coords} per-axis blocks, and each block"
+                    " is rotated in pairs of channels."
+                )
             )
         if self.bands_per_axis < 2:
-            raise ValueError(
-                f"dim_head ({self.dim_head}) leaves {self.bands_per_axis} band per axis; at"
-                f" least 2 bands are needed, so dim_head must be at least {4 * self.coords}."
-                " A lone band lands on the fast end of the ladder and r_max is never reached,"
-                " leaving the encoding periodic with period 2 * r_min across the whole domain:"
-                " every offset an integer number of periods apart becomes indistinguishable."
+            return Failure(
+                ValueError(
+                    f"dim_head ({self.dim_head}) leaves {self.bands_per_axis} band per axis;"
+                    f" at least 2 bands are needed, so dim_head must be at least {4 * self.coords}."
+                    " A lone band lands on the fast end of the ladder and r_max is never reached,"
+                    " leaving the encoding periodic with period 2 * r_min across the whole domain:"
+                    " every offset an integer number of periods apart becomes indistinguishable."
+                )
             )
         if self.r_max <= self.r_min:
-            raise ValueError(f"r_max ({self.r_max}) must exceed r_min ({self.r_min}).")
-        return self
+            return Failure(ValueError(f"r_max ({self.r_max}) must exceed r_min ({self.r_min})."))
+        return Success(self)
 
     @property
     def bands_per_axis(self) -> int:

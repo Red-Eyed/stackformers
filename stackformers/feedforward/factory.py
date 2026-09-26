@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, assert_never
 
 from stackformers.feedforward.config import (
     FeedForwardConfig,
@@ -36,4 +36,4 @@ def build_ff(config: FeedForwardConfig) -> FeedForward:
         case ReluSquaredConfig():
             return ReluSquaredFF(config)
         case _:
-            raise AssertionError(f"Unhandled feedforward config: {type(config)}")
+            assert_never(config)

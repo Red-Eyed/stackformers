@@ -6,9 +6,11 @@ from typing import TYPE_CHECKING
 
 import torch.nn as nn
 from pydantic import BaseModel, Field, model_validator
+from returns.result import Failure, Result, Success
 from torch import Tensor
 from typing_extensions import override
 
+from stackformers._result import unwrap_or_raise
 from stackformers.attention.config import (
     AttnBiasConfig,
     DistanceBiasConfig,
@@ -47,27 +49,39 @@ class VariableWidthEncoderLayerConfig(BaseModel):
     @model_validator(mode="after")
     def _check_dimensions(self) -> VariableWidthEncoderLayerConfig:
         """Reject collaborators whose residual-stream dimensions do not agree."""
+        return unwrap_or_raise(self._dimensions_result())
+
+    def _dimensions_result(self) -> Result[VariableWidthEncoderLayerConfig, ValueError]:
+        """Return inconsistent collaborator dimensions as data for boundary validation."""
         if self.ff.dim != self.attn.dim:
-            raise ValueError(f"ff.dim ({self.ff.dim}) must equal attn.dim ({self.attn.dim})")
+            return Failure(
+                ValueError(f"ff.dim ({self.ff.dim}) must equal attn.dim ({self.attn.dim})")
+            )
         if self.norm.dim != self.attn.dim:
-            raise ValueError(f"norm.dim ({self.norm.dim}) must equal attn.dim ({self.attn.dim})")
+            return Failure(
+                ValueError(f"norm.dim ({self.norm.dim}) must equal attn.dim ({self.attn.dim})")
+            )
         if (
             not isinstance(self.pos_encoding, NoPosEncodingConfig)
             and self.pos_encoding.dim_head != self.attn.dim_head
         ):
-            raise ValueError(
-                f"pos_encoding.dim_head ({self.pos_encoding.dim_head}) must equal"
-                f" attn.dim_head ({self.attn.dim_head})"
+            return Failure(
+                ValueError(
+                    f"pos_encoding.dim_head ({self.pos_encoding.dim_head}) must equal"
+                    f" attn.dim_head ({self.attn.dim_head})"
+                )
             )
         if (
             isinstance(self.attn_bias, DistanceBiasConfig)
             and self.attn_bias.heads != self.attn.heads
         ):
-            raise ValueError(
-                f"attn_bias.heads ({self.attn_bias.heads}) must equal attn.heads"
-                f" ({self.attn.heads})"
+            return Failure(
+                ValueError(
+                    f"attn_bias.heads ({self.attn_bias.heads}) must equal"
+                    f" attn.heads ({self.attn.heads})"
+                )
             )
-        return self
+        return Success(self)
 
 
 class VariableWidthTransformerEncoderConfig(BaseModel):
@@ -93,7 +107,7 @@ def variable_width_encoder_config(
     Construct ``VariableWidthTransformerEncoderConfig`` directly to configure every
     attention, feed-forward, norm, positional, and attention-bias component per block.
     """
-    _validate_width_schedule(d_models, dim_heads)
+    unwrap_or_raise(_validate_width_schedule(d_models, dim_heads))
     layers = [
         _plain_layer_config(
             d_model,
@@ -110,26 +124,35 @@ def variable_width_encoder_config(
     )
 
 
-def _validate_width_schedule(d_models: list[int], dim_heads: list[int]) -> None:
+def _validate_width_schedule(
+    d_models: list[int], dim_heads: list[int]
+) -> Result[tuple[()], ValueError]:
     """Ensure the two per-block schedules define valid attention geometries."""
     if not d_models:
-        raise ValueError("d_models must contain at least one block width")
+        return Failure(ValueError("d_models must contain at least one block width"))
     if len(d_models) != len(dim_heads):
-        raise ValueError(
-            f"d_models and dim_heads must have equal lengths; got {len(d_models)} and"
-            f" {len(dim_heads)}"
+        return Failure(
+            ValueError(
+                "d_models and dim_heads must have equal lengths;"
+                f" got {len(d_models)} and {len(dim_heads)}"
+            )
         )
     for index, (d_model, dim_head) in enumerate(zip(d_models, dim_heads, strict=True)):
         if d_model <= 0 or dim_head <= 0:
-            raise ValueError(
-                f"d_models[{index}] and dim_heads[{index}] must be positive;"
-                f" got {d_model} and {dim_head}"
+            return Failure(
+                ValueError(
+                    f"d_models[{index}] and dim_heads[{index}] must be positive;"
+                    f" got {d_model} and {dim_head}"
+                )
             )
         if d_model % dim_head != 0:
-            raise ValueError(
-                f"d_models[{index}] ({d_model}) must be divisible by dim_heads[{index}]"
-                f" ({dim_head})"
+            return Failure(
+                ValueError(
+                    f"d_models[{index}] ({d_model}) must be divisible by"
+                    f" dim_heads[{index}] ({dim_head})"
+                )
             )
+    return Success(())
 
 
 def _plain_layer_config(

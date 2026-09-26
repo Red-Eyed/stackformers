@@ -10,8 +10,9 @@ from einops import rearrange, repeat
 from torch import Tensor
 from typing_extensions import override
 
-from stackformers.attention.bias import NoAttnBias
+from stackformers._result import unwrap_or_raise
 from stackformers.attention.cache import CrossAttentionKVCache
+from stackformers.attention.cache_validation import single_token, supported_self_attention
 from stackformers.attention.ops import padded_sdpa
 
 if TYPE_CHECKING:
@@ -61,13 +62,7 @@ class CachedSelfAttentionWrapper(nn.Module):
     def __init__(self, attention: SelfAttention) -> None:
         """Validate the supported cached equation and retain the original attention weights."""
         super().__init__()
-        if not attention.config.causal or attention.config.window_size is not None:
-            raise NotImplementedError(
-                "cached self-attention currently supports global causal attention only"
-            )
-        if not isinstance(attention.attn_bias, NoAttnBias):
-            raise NotImplementedError("cached self-attention currently supports NoAttnBias only")
-        self.attention = attention
+        self.attention = unwrap_or_raise(supported_self_attention(attention))
         self.train(attention.training)
 
     @override
@@ -78,8 +73,7 @@ class CachedSelfAttentionWrapper(nn.Module):
         step_i: Tensor,
     ) -> tuple[Tensor, Tensor]:
         """Decode exactly one token and return output plus the one-position-longer cache."""
-        if input.x.shape[1] != 1:
-            raise ValueError("cached self-attention requires exactly one target token")
+        unwrap_or_raise(single_token(input.x.shape[1]))
 
         attention = self.attention
         config = attention.config

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, assert_never
 
 from stackformers.positional.config import (
     LearnedPosEncodingConfig,
@@ -33,4 +33,4 @@ def build_pos_encoding(config: PosEncodingConfig) -> PosEncoding:
         case LearnedPosEncodingConfig():
             return LearnedPosEncoding(config)
         case _:
-            raise AssertionError(f"Unhandled pos encoding config: {type(config)}")
+            assert_never(config)

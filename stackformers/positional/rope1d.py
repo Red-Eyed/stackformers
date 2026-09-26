@@ -7,6 +7,9 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
+from stackformers._result import unwrap_or_raise
+from stackformers.positional.validation import rotary_head_width
+
 if TYPE_CHECKING:
     from jaxtyping import Float
 
@@ -65,8 +68,9 @@ class RotaryEmbedding1D(nn.Module):
     inv_freq: Tensor
 
     def __init__(self, config: RoPE1DConfig) -> None:
+        """Build paired rotary frequencies; raise AssertionError for an odd head width."""
         super().__init__()
-        assert config.dim_head % 2 == 0, "dim_head must be even for RoPE"
+        unwrap_or_raise(rotary_head_width(config.dim_head, 2, "dim_head must be even for RoPE"))
         inv_freq = 1.0 / (
             config.base ** (torch.arange(0, config.dim_head, 2).float() / config.dim_head)
         )
