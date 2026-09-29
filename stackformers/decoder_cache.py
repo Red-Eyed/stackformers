@@ -34,6 +34,9 @@ from stackformers.decoder import (
 from stackformers.result import Err, Ok, Result
 from stackformers.sequence import PaddedInput, PaddedSequence
 
+if TYPE_CHECKING:
+    from stackformers.attention.protocols import CrossAttn, SelfAttn
+
 
 def _unwrap_decoder(module: nn.Module) -> Result[Decoder, TypeError]:
     """Resolve a low-level decoder from either a stack or its existing preset wrapper."""
@@ -43,7 +46,7 @@ def _unwrap_decoder(module: nn.Module) -> Result[Decoder, TypeError]:
     return Ok(candidate)
 
 
-def _self_attention(module: object) -> Result[SelfAttention, TypeError]:
+def _self_attention(module: SelfAttn) -> Result[SelfAttention, TypeError]:
     """Require the standard self-attention whose projections the cache executor reuses."""
     if not isinstance(module, SelfAttention):
         return Err(
@@ -52,7 +55,7 @@ def _self_attention(module: object) -> Result[SelfAttention, TypeError]:
     return Ok(module)
 
 
-def _cross_attention(module: object) -> Result[CrossAttention, TypeError]:
+def _cross_attention(module: CrossAttn) -> Result[CrossAttention, TypeError]:
     """Require the standard cross-attention whose projections the cache executor reuses."""
     if not isinstance(module, CrossAttention):
         return Err(

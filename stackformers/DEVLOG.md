@@ -1,5 +1,34 @@
 # Transformer model development log
 
+## 2026-09-26 — Precise cache and vendor input contracts (5.0.0rc7)
+
+### Observation
+
+Cache admission accepted `object` despite receiving typed attention collaborators. The vendor
+wrapper widened a callable's declared return type to `object`, and fake kernels hid their
+known keyword request schema behind the same annotation.
+
+### Decision
+
+Reuse `SelfAttn` and `CrossAttn` for admission inputs. Capture the vendor callable's return type
+with a type parameter alongside its ParamSpec, while still validating the actual response into
+`Result[Tensor, VarlenFallback]`. Describe fake kernel keyword arguments with a TypedDict.
+Keep broad annotations confined to genuinely arbitrary export/SDK values pending validation.
+No tensor computations, error policy, or public model APIs change.
+
+### Verified
+
+Ruff and strict Pyrefly pass. Backend, core admission, and cached-decoder regressions pass:
+86 passed, 6 expected failures, and 6 optional-case unexpected passes. These checks include
+cached/eager output parity, export, invalid vendor payloads, fallback warnings, and error
+identity. Production Python signatures contain no `object` annotations.
+Negative checker probes reject unrelated collaborators, incorrect tensor arguments, missing
+required arguments, and unexpected vendor keywords.
+
+### Unproven
+
+The experimental vendor kernel itself is faked on CPU; CUDA execution has not been measured.
+
 ## 2026-09-26 — Native NamedTuple Result records (5.0.0rc6)
 
 ### Observation

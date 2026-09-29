@@ -244,8 +244,9 @@ the development dependencies and checker configs.
 Module classes expose `__call__ = forward` only under `TYPE_CHECKING`. This gives callers the
 declared input/output contract while leaving PyTorch's hooks and runtime dispatch intact.
 Local `Tensor` annotations at built-in PyTorch projection boundaries rely on those modules'
-tensor-return contracts; they do not validate tensor shapes. Experimental kernel results remain
-`object` until runtime validation. Export shape trees use opaque `object` leaves because
+tensor-return contracts; they do not validate tensor shapes. Experimental kernel adapters
+capture the vendor's declared return type and validate the actual response before exposing
+`Result[Tensor, VarlenFallback]`. Export shape trees use opaque `object` leaves because
 PyTorch validates their module-dependent structure.
 
 Core admission checks return `Result[T, E]` from `stackformers.result`, the closed union

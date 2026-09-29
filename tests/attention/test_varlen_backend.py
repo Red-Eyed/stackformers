@@ -10,6 +10,7 @@ so the logic is exercised without CUDA or the real (possibly-absent) ``varlen_at
 from __future__ import annotations
 
 import warnings
+from typing import TypedDict, Unpack
 
 import pytest
 import torch
@@ -21,6 +22,19 @@ from stackformers.sequence import PackedSequence
 NT, H, DH = 5, 2, 8
 
 Packed = tuple[torch.Tensor, torch.Tensor, torch.Tensor, PackedSequence]
+
+
+class KernelArguments(TypedDict):
+    """Describe the exact keyword request passed to the experimental vendor."""
+
+    query: torch.Tensor
+    key: torch.Tensor
+    value: torch.Tensor
+    cu_seq_q: torch.Tensor
+    cu_seq_k: torch.Tensor
+    max_q: int
+    max_k: int
+    window_size: tuple[int, int]
 
 
 @pytest.fixture
@@ -72,7 +86,7 @@ def test_attention_bias_warns(
 ) -> None:
     """varlen_attn has no bias slot: an eligible query with a bias falls back with a warning."""
 
-    def kernel(**kw: object) -> torch.Tensor:
+    def kernel(**kw: Unpack[KernelArguments]) -> torch.Tensor:
         """Provide a callable backend while bias eligibility is checked."""
         return torch.zeros(NT, H, DH)
 
@@ -103,7 +117,7 @@ def test_runtime_error_warns(
 ) -> None:
     """An unsupported-GPU RuntimeError from the call is caught and falls back."""
 
-    def unsupported(**kw: object) -> torch.Tensor:
+    def unsupported(**kw: Unpack[KernelArguments]) -> torch.Tensor:
         """Simulate an unsupported device at the vendor call boundary."""
         raise RuntimeError("varlen_attn requires compute capability >= 8.0")
 
@@ -118,7 +132,7 @@ def test_non_tensor_return_warns(
 ) -> None:
     """A changed return contract (non-Tensor) falls back rather than propagating bad data."""
 
-    def kernel(**kw: object) -> tuple[str, ...]:
+    def kernel(**kw: Unpack[KernelArguments]) -> tuple[str, ...]:
         """Return an invalid payload to exercise response validation."""
         return ("not", "a", "tensor")
 
@@ -134,7 +148,7 @@ def test_success_returns_kernel_tensor(
     """The happy path returns the kernel's tensor unchanged and emits no warning."""
     expected = torch.randn(NT, H, DH)
 
-    def kernel(**kw: object) -> torch.Tensor:
+    def kernel(**kw: Unpack[KernelArguments]) -> torch.Tensor:
         """Return the known tensor to check that the adapter preserves identity."""
         return expected
 
@@ -169,7 +183,7 @@ def test_core_rejects_auxiliary_return_without_auxiliary_request(
     """A vendor-compatible tuple remains unexpected for this adapter's tensor-only calls."""
     q, k, v, seq = packed
 
-    def kernel(**kwargs: object) -> tuple[torch.Tensor, torch.Tensor]:
+    def kernel(**kwargs: Unpack[KernelArguments]) -> tuple[torch.Tensor, torch.Tensor]:
         """Return the vendor's auxiliary schema despite no auxiliary request."""
         return torch.zeros_like(q), torch.zeros(NT, H)
 
@@ -193,7 +207,7 @@ def test_core_call_failure_preserves_kernel_exception(
     q, k, v, seq = packed
     error = error_type("kernel failure")
 
-    def kernel(**kwargs: object) -> torch.Tensor:
+    def kernel(**kwargs: Unpack[KernelArguments]) -> torch.Tensor:
         """Inject an expected experimental failure without needing a CUDA device."""
         raise error
 
@@ -212,7 +226,7 @@ def test_core_does_not_hide_unexpected_kernel_errors(packed: Packed, force_eligi
     q, k, v, seq = packed
     error = ValueError("unexpected kernel bug")
 
-    def kernel(**kwargs: object) -> torch.Tensor:
+    def kernel(**kwargs: Unpack[KernelArguments]) -> torch.Tensor:
         """Inject a failure outside the existing backend catch policy."""
         raise error
 
@@ -238,7 +252,7 @@ def test_core_preserves_normalized_kernel_outcome(
     else:
         expected = Err(vb.VarlenFallback(vb.FallbackKind.CALL_FAILED, RuntimeError("failed")))
 
-    def kernel(**kwargs: object) -> Result[torch.Tensor, vb.VarlenFallback]:
+    def kernel(**kwargs: Unpack[KernelArguments]) -> Result[torch.Tensor, vb.VarlenFallback]:
         """Supply an already normalized outcome directly to the core."""
         return expected
 
@@ -258,7 +272,9 @@ def test_loader_normalizes_vendor_response(
     vendor = pytest.importorskip("torch.nn.attention.varlen")
     q, k, v, seq = packed
 
-    def kernel(**kwargs: object) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+    def kernel(
+        **kwargs: Unpack[KernelArguments],
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
         """Simulate both tensor and auxiliary payloads from the imported vendor symbol."""
         return q if valid_response else (q, torch.zeros(NT, H))
 

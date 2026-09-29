@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import warnings
 from enum import Enum, auto
-from typing import TYPE_CHECKING, NamedTuple, ParamSpec, Protocol, assert_never
+from typing import TYPE_CHECKING, NamedTuple, ParamSpec, Protocol, TypeVar, assert_never
 
 import torch
 from torch import Tensor
@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 
 _FALLBACK_NOTE = " Falling back to padded SDPA; performance may be lower."
 _P = ParamSpec("_P")
+_R = TypeVar("_R")
 
 
 class FallbackKind(Enum):
@@ -62,13 +63,13 @@ class _VarlenKernel(Protocol):
         ...
 
 
-def _checked_kernel(call: Callable[_P, object]) -> Callable[_P, Result[Tensor, VarlenFallback]]:
+def _checked_kernel(call: Callable[_P, _R]) -> Callable[_P, Result[Tensor, VarlenFallback]]:
     """Normalize vendor responses and failures while retaining its parameter signature."""
 
     def invoke(*args: _P.args, **kwargs: _P.kwargs) -> Result[Tensor, VarlenFallback]:
         """Translate expected vendor failures and validate its untrusted response."""
         try:
-            response: object = call(*args, **kwargs)
+            response = call(*args, **kwargs)
         except (RuntimeError, TypeError) as exc:
             return Err(VarlenFallback(FallbackKind.CALL_FAILED, exc))
         match response:

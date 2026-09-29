@@ -8,6 +8,14 @@ MINOR for backwards-compatible features, PATCH for bug fixes and internal change
 
 ## [Unreleased]
 
+## [5.0.0rc7] — 2026-09-28
+
+### Developers
+
+- Tighten cached attention admission to the existing attention protocols and retain vendor
+  callable parameter/return types during response validation. Give fake kernel requests an
+  explicit TypedDict schema instead of broad `object` annotations.
+
 ## [5.0.0rc6] — 2026-09-26
 
 ### Backwards Incompatible Changes
