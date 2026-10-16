@@ -88,9 +88,9 @@ class CachedDecoderLayerBase(nn.Module, ABC):
     def forward(
         self,
         input: PaddedInput,
-        cross_cache: Tensor,
+        cross_cache: Tensor | None,
         self_cache: Tensor,
-        context: PaddedSequence,
+        context: PaddedSequence | None,
         step_i: Tensor,
     ) -> tuple[PaddedInput, Tensor]:
         """Decode one token and return this layer's extended self cache."""
@@ -112,9 +112,9 @@ class CachedDecoderLayer(CachedDecoderLayerBase):
     def forward(
         self,
         input: PaddedInput,
-        cross_cache: Tensor,
+        cross_cache: Tensor | None,
         self_cache: Tensor,
-        context: PaddedSequence,
+        context: PaddedSequence | None,
         step_i: Tensor,
     ) -> tuple[PaddedInput, Tensor]:
         """Mirror the ordinary pre-norm residual equation using cached attention."""
@@ -122,8 +122,9 @@ class CachedDecoderLayer(CachedDecoderLayerBase):
         self_out, updated_self_cache = self.self_attn(normed_self, self_cache, step_i)
         x = input.x + self_out
         input = input._replace(x=x)
-        normed_cross = input._replace(x=self.norm_cross(input.x))
-        x = input.x + self.cross_attn(normed_cross, _layer_cross_cache(cross_cache), context)
+        if cross_cache is not None and context is not None:
+            normed_cross = input._replace(x=self.norm_cross(input.x))
+            x = input.x + self.cross_attn(normed_cross, _layer_cross_cache(cross_cache), context)
         x = x + self.ff(self.norm_ff(x))
         return input._replace(x=x), updated_self_cache
 
@@ -144,16 +145,19 @@ class CachedPostNormDecoderLayer(CachedDecoderLayerBase):
     def forward(
         self,
         input: PaddedInput,
-        cross_cache: Tensor,
+        cross_cache: Tensor | None,
         self_cache: Tensor,
-        context: PaddedSequence,
+        context: PaddedSequence | None,
         step_i: Tensor,
     ) -> tuple[PaddedInput, Tensor]:
         """Mirror the ordinary post-norm residual equation using cached attention."""
         self_out, updated_self_cache = self.self_attn(input, self_cache, step_i)
         x = self.norm_self(input.x + self_out)
         input = input._replace(x=x)
-        x = self.norm_cross(x + self.cross_attn(input, _layer_cross_cache(cross_cache), context))
+        if cross_cache is not None and context is not None:
+            x = self.norm_cross(
+                x + self.cross_attn(input, _layer_cross_cache(cross_cache), context)
+            )
         x = self.norm_ff(x + self.ff(x))
         return input._replace(x=x), updated_self_cache
 
@@ -177,9 +181,9 @@ class CachedSandwichNormDecoderLayer(CachedDecoderLayerBase):
     def forward(
         self,
         input: PaddedInput,
-        cross_cache: Tensor,
+        cross_cache: Tensor | None,
         self_cache: Tensor,
-        context: PaddedSequence,
+        context: PaddedSequence | None,
         step_i: Tensor,
     ) -> tuple[PaddedInput, Tensor]:
         """Mirror the ordinary sandwich-norm residual equation using cached attention."""
@@ -187,10 +191,11 @@ class CachedSandwichNormDecoderLayer(CachedDecoderLayerBase):
         self_out, updated_self_cache = self.self_attn(normed_self, self_cache, step_i)
         x = input.x + self.norm_self_post(self_out)
         input = input._replace(x=x)
-        normed_cross = input._replace(x=self.norm_cross_pre(input.x))
-        x = x + self.norm_cross_post(
-            self.cross_attn(normed_cross, _layer_cross_cache(cross_cache), context)
-        )
+        if cross_cache is not None and context is not None:
+            normed_cross = input._replace(x=self.norm_cross_pre(input.x))
+            x = x + self.norm_cross_post(
+                self.cross_attn(normed_cross, _layer_cross_cache(cross_cache), context)
+            )
         x = x + self.norm_ff_post(self.ff(self.norm_ff_pre(x)))
         return input._replace(x=x), updated_self_cache
 
@@ -211,16 +216,19 @@ class CachedReorderedNormDecoderLayer(CachedDecoderLayerBase):
     def forward(
         self,
         input: PaddedInput,
-        cross_cache: Tensor,
+        cross_cache: Tensor | None,
         self_cache: Tensor,
-        context: PaddedSequence,
+        context: PaddedSequence | None,
         step_i: Tensor,
     ) -> tuple[PaddedInput, Tensor]:
         """Mirror the ordinary reordered residual equation using cached attention."""
         self_out, updated_self_cache = self.self_attn(input, self_cache, step_i)
         x = input.x + self.norm_self(self_out)
         input = input._replace(x=x)
-        x = x + self.norm_cross(self.cross_attn(input, _layer_cross_cache(cross_cache), context))
+        if cross_cache is not None and context is not None:
+            x = x + self.norm_cross(
+                self.cross_attn(input, _layer_cross_cache(cross_cache), context)
+            )
         x = x + self.norm_ff(self.ff(x))
         return input._replace(x=x), updated_self_cache
 
@@ -365,22 +373,26 @@ class CachedDecoderWrapper(nn.Module):
     def forward(
         self,
         input: PaddedInput,
-        cross_cache: DecoderCrossAttentionCache,
+        cross_cache: DecoderCrossAttentionCache | None,
         self_kv_cache: Tensor,
         step_i: Tensor,
     ) -> DecoderStepOutput:
-        """Decode one token and return its output plus the one-position-longer self cache."""
+        """Decode one token; a None cross cache skips cross-attention and its norms."""
         unwrap_or_raise(
-            matching_layer_counts(cross_cache.kv.shape[0], self_kv_cache.shape[0], len(self.layers))
+            matching_layer_counts(
+                len(self.layers) if cross_cache is None else cross_cache.kv.shape[0],
+                self_kv_cache.shape[0],
+                len(self.layers),
+            )
         )
 
         updated_layer_caches: list[Tensor] = []
         for layer_i, layer in enumerate(self.layers):
             input, updated_layer_cache = layer(
                 input,
-                cross_cache.kv[layer_i],
+                None if cross_cache is None else cross_cache.kv[layer_i],
                 self_kv_cache[layer_i],
-                cross_cache.context,
+                None if cross_cache is None else cross_cache.context,
                 step_i,
             )
             updated_layer_caches.append(updated_layer_cache)

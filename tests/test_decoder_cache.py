@@ -59,23 +59,25 @@ def decoder_inputs() -> tuple[PaddedInput, PaddedInput]:
 
 
 @pytest.mark.parametrize("norm_placement", ["pre", "post", "sandwich", "reordered"])
+@pytest.mark.parametrize("with_context", [False, True])
 def test_decoder_cached_forward_matches_existing_forward(
     decoder_inputs: tuple[PaddedInput, PaddedInput],
     norm_placement: NormPlacement,
+    with_context: bool,
 ) -> None:
     """Every normalization topology has exact full-prefix/one-token output parity."""
     target, context = decoder_inputs
     decoder = _build_decoder(norm_placement).eval()
     cache_builder = DecoderCrossAttentionCacheBuilder(decoder)
     cached_decoder = CachedDecoderWrapper(decoder)
-    cross_cache = cache_builder(context)
+    cross_cache = cache_builder(context) if with_context else None
     self_cache = _empty_self_cache(decoder, target)
 
     with torch.no_grad():
         for step in range(N):
             prefix = PaddedInput(*(tensor[:, : step + 1] for tensor in target))
             token = PaddedInput(*(tensor[:, step : step + 1] for tensor in target))
-            expected = decoder(prefix, context)[:, -1:]
+            expected = decoder(prefix, context if with_context else None)[:, -1:]
             result = cached_decoder(
                 token,
                 cross_cache,
@@ -231,17 +233,19 @@ def test_decoder_cache_builder_exports_to_onnx(
 
 @pytest.mark.parametrize("shape_mode", tuple(ExportShapeMode), ids=lambda mode: mode.value)
 @pytest.mark.parametrize("opset_version", ONNX_OPSET_CASES)
+@pytest.mark.parametrize("with_context", [False, True])
 def test_cached_decoder_exports_to_onnx(
     decoder_inputs: tuple[PaddedInput, PaddedInput],
     shape_mode: ExportShapeMode,
     opset_version: int,
+    with_context: bool,
 ) -> None:
     """Required dense caches export with dynamic batch and context length."""
     target, context = decoder_inputs
     decoder = _build_decoder()
     cached_decoder = CachedDecoderWrapper(decoder)
     cache_builder = DecoderCrossAttentionCacheBuilder(decoder)
-    cross_cache = cache_builder(context)
+    cross_cache = cache_builder(context) if with_context else None
     self_cache = target.x.new_zeros(2, 2, B, H, 2, D // H)
     target_token = PaddedInput(*(tensor[:, :1] for tensor in target))
     step_i = torch.tensor([2], dtype=torch.int64)
@@ -250,7 +254,7 @@ def test_cached_decoder_exports_to_onnx(
         torch.randn(1, S - 2, D),
         torch.ones(1, S - 2, dtype=torch.bool),
     )
-    resized_cross_cache = cache_builder(resized_context)
+    resized_cross_cache = cache_builder(resized_context) if with_context else None
     resized_self_cache = resized_target.x.new_zeros(2, 2, 1, H, 0, D // H)
     resized_step_i = torch.tensor([0], dtype=torch.int64)
     batch = torch.export.Dim("batch", min=1, max=B)
@@ -259,8 +263,9 @@ def test_cached_decoder_exports_to_onnx(
     shapes = torch.export.ShapesCollection()
     for tensor in target_token:
         shapes[tensor] = {0: batch}
-    shapes[cross_cache.kv] = {2: batch, 4: context_tokens}
-    shapes[cross_cache.context.mask] = {0: batch, 1: context_tokens}
+    if cross_cache is not None:
+        shapes[cross_cache.kv] = {2: batch, 4: context_tokens}
+        shapes[cross_cache.context.mask] = {0: batch, 1: context_tokens}
     shapes[self_cache] = {2: batch, 4: past_tokens}
 
     export_and_run(
@@ -279,3 +284,38 @@ def test_cached_decoder_exports_to_onnx(
             resized_step_i,
         ),
     )
+
+
+@pytest.mark.parametrize("norm_placement", ["pre", "post", "sandwich", "reordered"])
+def test_context_free_cached_decoder_compiles_and_exports(
+    decoder_inputs: tuple[PaddedInput, PaddedInput],
+    norm_placement: NormPlacement,
+) -> None:
+    """Cached execution exports without context inputs or cross projections."""
+    target, _ = decoder_inputs
+    decoder = _build_decoder(norm_placement).eval()
+    cached = CachedDecoderWrapper(decoder)
+    token = PaddedInput(*(tensor[:, :1] for tensor in target))
+    cache = _empty_self_cache(decoder, target)
+    args = (token, None, cache, torch.tensor([0], dtype=torch.int64))
+    expected = cached(*args)
+    compiled = torch.compile(cached, backend="eager", fullgraph=True)
+    actual = compiled(*args)
+    torch.testing.assert_close(actual.x, expected.x)
+    torch.testing.assert_close(actual.self_kv_cache, expected.self_kv_cache)
+    exported = torch.export.export(cached, args).module()
+    actual = exported(*args)
+    torch.testing.assert_close(actual.x, expected.x)
+    torch.testing.assert_close(actual.self_kv_cache, expected.self_kv_cache)
+
+
+def test_context_free_decoder_rejects_wrong_self_cache_layer_count(
+    decoder_inputs: tuple[PaddedInput, PaddedInput],
+) -> None:
+    """Skipping cross-cache validation retains self-cache admission checks."""
+    target, _ = decoder_inputs
+    decoder = _build_decoder()
+    cached = CachedDecoderWrapper(decoder)
+    token = PaddedInput(*(tensor[:, :1] for tensor in target))
+    with pytest.raises(ValueError, match="self cache has 1 layers, decoder has 2"):
+        cached(token, None, _empty_self_cache(decoder, target)[:-1], torch.tensor([0]))

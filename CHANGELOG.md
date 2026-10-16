@@ -6,7 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/): MAJOR for breaking public API changes,
 MINOR for backwards-compatible features, PATCH for bug fixes and internal changes.
 
-## [Unreleased]
+## [5.0.0rc8]
+
+### New Features
+
+- Allow decoder context to be omitted or passed as `None`, skipping cross-attention and
+  its normalization across all four layer topologies. Cached decoding accepts a `None`
+  cross cache without requiring context projections. Existing configs and checkpoints
+  remain compatible.
 
 ## [5.0.0rc7] — 2026-09-28
 

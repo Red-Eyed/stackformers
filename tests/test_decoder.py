@@ -7,6 +7,7 @@ import torch
 
 from stackformers.attention.config import CrossAttentionConfig, SelfAttentionConfig
 from stackformers.decoder import (
+    Decoder,
     DecoderLayer,
     DecoderLayerBase,
     PostNormDecoderLayer,
@@ -104,6 +105,23 @@ def _expected_decoder_output(
             after_self = x + expected_norm(2.0 * x)
             after_cross = after_self + expected_norm(expected_cross_attention(after_self, context))
             return after_cross + expected_norm(4.0 * after_cross)
+
+
+def _expected_context_free_output(norm_placement: NormPlacement, x: torch.Tensor) -> torch.Tensor:
+    """Evaluate only the self-attention and feed-forward residual branches."""
+    match norm_placement:
+        case "pre":
+            x = x + 2.0 * expected_norm(x)
+            return x + 4.0 * expected_norm(x)
+        case "post":
+            x = expected_norm(x + 2.0 * x)
+            return expected_norm(x + 4.0 * x)
+        case "sandwich":
+            x = x + expected_norm(2.0 * expected_norm(x))
+            return x + expected_norm(4.0 * expected_norm(x))
+        case "reordered":
+            x = x + expected_norm(2.0 * x)
+            return x + expected_norm(4.0 * x)
 
 
 @pytest.fixture
@@ -297,10 +315,12 @@ def test_decoder_norm_placement_gradients(norm_placement: NormPlacement) -> None
 @pytest.mark.parametrize("norm_placement", ["pre", "post", "sandwich", "reordered"])
 @pytest.mark.parametrize("shape_mode", tuple(ExportShapeMode), ids=lambda mode: mode.value)
 @pytest.mark.parametrize("opset_version", ONNX_OPSET_CASES)
+@pytest.mark.parametrize("with_context", [False, True])
 def test_decoder_norm_placement_is_export_compatible(
     norm_placement: NormPlacement,
     shape_mode: ExportShapeMode,
     opset_version: int,
+    with_context: bool,
 ) -> None:
     """Every decoder topology supports static and dynamic export."""
     x_input = make_topology_input()
@@ -319,14 +339,54 @@ def test_decoder_norm_placement_is_export_compatible(
     shapes = torch.export.ShapesCollection()
     for tensor in x_input:
         shapes[tensor] = {1: query_tokens}
-    for tensor in ctx_input:
-        shapes[tensor] = {1: context_tokens}
+    if with_context:
+        for tensor in ctx_input:
+            shapes[tensor] = {1: context_tokens}
+    args = (x_input, ctx_input) if with_context else (x_input,)
+    runtime_args = (resized_x_input, resized_ctx_input) if with_context else (resized_x_input,)
 
     export_and_run(
         layer,
-        (x_input, ctx_input),
+        args,
         shape_mode,
         opset_version,
-        dynamic_shapes=shapes.dynamic_shapes(layer, (x_input, ctx_input)),
-        runtime_args=(resized_x_input, resized_ctx_input),
+        dynamic_shapes=shapes.dynamic_shapes(layer, args),
+        runtime_args=runtime_args,
     )
+
+
+@pytest.mark.parametrize("norm_placement", ["pre", "post", "sandwich", "reordered"])
+def test_decoder_without_context_skips_cross_branch(norm_placement: NormPlacement) -> None:
+    """Omission skips cross norms and parameters, including their affine offsets."""
+    layer = _decoder_layer(norm_placement)
+    input = make_topology_input(requires_grad=True)
+    expected = _expected_context_free_output(norm_placement, input.x)
+    actual = layer(input)
+    assert torch.equal(actual.x, expected)
+    assert torch.equal(layer(input, None).x, expected)
+    actual.x.sum().backward()
+    assert input.x.grad is not None
+    for name, parameter in layer.named_parameters():
+        assert (parameter.grad is None) == ("cross" in name)
+
+
+def test_decoder_preset_without_context(
+    decoder: TransformerDecoder,
+    x_context_inp: tuple[PaddedInput, PaddedInput],
+) -> None:
+    """The public preset defaults to context-free decoding."""
+    input, _ = x_context_inp
+    assert decoder(input).shape == (B, N, D)
+    assert torch.equal(decoder(input), decoder(input, None))
+
+
+@pytest.mark.parametrize("norm_placement", ["pre", "post", "sandwich", "reordered"])
+def test_context_free_decoder_compiles_and_exports(norm_placement: NormPlacement) -> None:
+    """Context absence specializes a full graph without tensor-dependent control flow."""
+    decoder = Decoder([_decoder_layer(norm_placement)], torch.nn.Identity())
+    input = make_topology_input()
+    expected = decoder(input)
+    compiled = torch.compile(decoder, backend="eager", fullgraph=True)
+    assert torch.equal(compiled(input), expected)
+    exported = torch.export.export(decoder, (input,)).module()
+    assert torch.equal(exported(input), expected)

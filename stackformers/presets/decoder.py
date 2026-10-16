@@ -64,7 +64,7 @@ class TransformerDecoderBase(nn.Module, Generic[C], ABC):
     def build_norm(self, config: C) -> Norm: ...
 
     @override
-    def forward(self, x_input: SequenceInput, ctx_input: SequenceInput) -> Tensor:
+    def forward(self, x_input: SequenceInput, ctx_input: SequenceInput | None = None) -> Tensor:
         return self._decoder(x_input, ctx_input)
 
     if TYPE_CHECKING:

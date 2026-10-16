@@ -15,7 +15,16 @@ Each preset is split into two levels:
 
 **`TransformerEncoder`** — self-attn → ff per layer. Set `causal=True` in `attn` for GPT-style autoregressive decoding. Set `window_size` for sliding-window (O(n·w)) attention.
 
-**`TransformerDecoder`** — causal self-attn → cross-attn → ff per layer. Cross-attention always uses no positional encoding.
+**`TransformerDecoder`** — causal self-attn → cross-attn → ff per layer. Cross-attention always uses no positional encoding. Call `decoder(target, context)` for
+conditioned decoding, or `decoder(target)` / `decoder(target, None)` to skip the complete
+cross-attention branch, including its normalization, in every layer. Cross-attention
+parameters remain registered so the same model supports either call.
+
+For cached decoding, pass `None` as the cross cache:
+`cached_decoder(token, None, self_kv_cache, step_i)`. No context cache builder is needed.
+Keep context fixed throughout a cached sequence; when changing between conditioned and
+unconditioned decoding, rebuild the self cache from the prefix.
+Compilation and export specialize to the context presence used when tracing.
 
 **`CrossAttender`** — cross-attn → ff per layer. `x` is a fixed set of queries with no self-attention. Useful for Perceiver-style or slot-attention architectures.
 
