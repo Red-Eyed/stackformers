@@ -72,11 +72,19 @@ class CrossAttenderLayer(CrossAttenderLayerBase):
         cross_attn_mask: CrossAttentionMask = None,
     ) -> SequenceInput:
         """Apply pre-norm cross-attention and feed-forward residual branches."""
-        normed = x_input._replace(x=self.norm_cross(x_input.x))
-        x = x_input.x + call_cross_attention(
-            self.cross_attn, normed, ctx_input, cross_attn_mask=cross_attn_mask
+        normalized_cross = self.norm_cross(x_input.x)
+        cross_input = x_input._replace(x=normalized_cross)
+        cross_out = call_cross_attention(
+            self.cross_attn,
+            cross_input,
+            ctx_input,
+            cross_attn_mask=cross_attn_mask,
         )
-        x = x + self.ff(self.norm_ff(x))
+        x = x_input.x + cross_out
+
+        normalized_ff = self.norm_ff(x)
+        ff_out = self.ff(normalized_ff)
+        x = x + ff_out
         return x_input._replace(x=x)
 
     if TYPE_CHECKING:
@@ -110,13 +118,15 @@ class PostNormCrossAttenderLayer(CrossAttenderLayerBase):
         cross_attn_mask: CrossAttentionMask = None,
     ) -> SequenceInput:
         """Normalize each residual sum before evaluating the next branch."""
-        x = self.norm_cross(
-            x_input.x
-            + call_cross_attention(
-                self.cross_attn, x_input, ctx_input, cross_attn_mask=cross_attn_mask
-            )
+        cross_out = call_cross_attention(
+            self.cross_attn, x_input, ctx_input, cross_attn_mask=cross_attn_mask
         )
-        x = self.norm_ff(x + self.ff(x))
+        x = x_input.x + cross_out
+        x = self.norm_cross(x)
+
+        ff_out = self.ff(x)
+        x = x + ff_out
+        x = self.norm_ff(x)
         return x_input._replace(x=x)
 
     if TYPE_CHECKING:
@@ -154,13 +164,18 @@ class SandwichNormCrossAttenderLayer(CrossAttenderLayerBase):
         cross_attn_mask: CrossAttentionMask = None,
     ) -> SequenceInput:
         """Normalize the input and output of both residual branches."""
-        normed = x_input._replace(x=self.norm_cross_pre(x_input.x))
-        x = x_input.x + self.norm_cross_post(
-            call_cross_attention(
-                self.cross_attn, normed, ctx_input, cross_attn_mask=cross_attn_mask
-            )
+        normalized_cross = self.norm_cross_pre(x_input.x)
+        cross_input = x_input._replace(x=normalized_cross)
+        cross_out = call_cross_attention(
+            self.cross_attn, cross_input, ctx_input, cross_attn_mask=cross_attn_mask
         )
-        x = x + self.norm_ff_post(self.ff(self.norm_ff_pre(x)))
+        cross_branch = self.norm_cross_post(cross_out)
+        x = x_input.x + cross_branch
+
+        normalized_ff = self.norm_ff_pre(x)
+        ff_out = self.ff(normalized_ff)
+        ff_branch = self.norm_ff_post(ff_out)
+        x = x + ff_branch
         return x_input._replace(x=x)
 
     if TYPE_CHECKING:
@@ -195,12 +210,15 @@ class ReorderedNormCrossAttenderLayer(CrossAttenderLayerBase):
         cross_attn_mask: CrossAttentionMask = None,
     ) -> SequenceInput:
         """Normalize each branch result immediately before residual addition."""
-        x = x_input.x + self.norm_cross(
-            call_cross_attention(
-                self.cross_attn, x_input, ctx_input, cross_attn_mask=cross_attn_mask
-            )
+        cross_out = call_cross_attention(
+            self.cross_attn, x_input, ctx_input, cross_attn_mask=cross_attn_mask
         )
-        x = x + self.norm_ff(self.ff(x))
+        cross_branch = self.norm_cross(cross_out)
+        x = x_input.x + cross_branch
+
+        ff_out = self.ff(x)
+        ff_branch = self.norm_ff(ff_out)
+        x = x + ff_branch
         return x_input._replace(x=x)
 
     if TYPE_CHECKING:

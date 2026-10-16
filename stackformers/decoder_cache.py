@@ -118,14 +118,22 @@ class CachedDecoderLayer(CachedDecoderLayerBase):
         step_i: Tensor,
     ) -> tuple[PaddedInput, Tensor]:
         """Mirror the ordinary pre-norm residual equation using cached attention."""
-        normed_self = input._replace(x=self.norm_self(input.x))
-        self_out, updated_self_cache = self.self_attn(normed_self, self_cache, step_i)
+        normalized_self = self.norm_self(input.x)
+        self_input = input._replace(x=normalized_self)
+        self_out, updated_self_cache = self.self_attn(self_input, self_cache, step_i)
         x = input.x + self_out
+
         input = input._replace(x=x)
         if cross_cache is not None and context is not None:
-            normed_cross = input._replace(x=self.norm_cross(input.x))
-            x = input.x + self.cross_attn(normed_cross, _layer_cross_cache(cross_cache), context)
-        x = x + self.ff(self.norm_ff(x))
+            normalized_cross = self.norm_cross(input.x)
+            cross_input = input._replace(x=normalized_cross)
+            cross_kv = _layer_cross_cache(cross_cache)
+            cross_out = self.cross_attn(cross_input, cross_kv, context)
+            x = x + cross_out
+
+        normalized_ff = self.norm_ff(x)
+        ff_out = self.ff(normalized_ff)
+        x = x + ff_out
         return input._replace(x=x), updated_self_cache
 
     if TYPE_CHECKING:
@@ -152,13 +160,19 @@ class CachedPostNormDecoderLayer(CachedDecoderLayerBase):
     ) -> tuple[PaddedInput, Tensor]:
         """Mirror the ordinary post-norm residual equation using cached attention."""
         self_out, updated_self_cache = self.self_attn(input, self_cache, step_i)
-        x = self.norm_self(input.x + self_out)
+        x = input.x + self_out
+        x = self.norm_self(x)
+
         input = input._replace(x=x)
         if cross_cache is not None and context is not None:
-            x = self.norm_cross(
-                x + self.cross_attn(input, _layer_cross_cache(cross_cache), context)
-            )
-        x = self.norm_ff(x + self.ff(x))
+            cross_kv = _layer_cross_cache(cross_cache)
+            cross_out = self.cross_attn(input, cross_kv, context)
+            x = x + cross_out
+            x = self.norm_cross(x)
+
+        ff_out = self.ff(x)
+        x = x + ff_out
+        x = self.norm_ff(x)
         return input._replace(x=x), updated_self_cache
 
     if TYPE_CHECKING:
@@ -187,16 +201,25 @@ class CachedSandwichNormDecoderLayer(CachedDecoderLayerBase):
         step_i: Tensor,
     ) -> tuple[PaddedInput, Tensor]:
         """Mirror the ordinary sandwich-norm residual equation using cached attention."""
-        normed_self = input._replace(x=self.norm_self_pre(input.x))
-        self_out, updated_self_cache = self.self_attn(normed_self, self_cache, step_i)
-        x = input.x + self.norm_self_post(self_out)
+        normalized_self = self.norm_self_pre(input.x)
+        self_input = input._replace(x=normalized_self)
+        self_out, updated_self_cache = self.self_attn(self_input, self_cache, step_i)
+        self_branch = self.norm_self_post(self_out)
+        x = input.x + self_branch
+
         input = input._replace(x=x)
         if cross_cache is not None and context is not None:
-            normed_cross = input._replace(x=self.norm_cross_pre(input.x))
-            x = x + self.norm_cross_post(
-                self.cross_attn(normed_cross, _layer_cross_cache(cross_cache), context)
-            )
-        x = x + self.norm_ff_post(self.ff(self.norm_ff_pre(x)))
+            normalized_cross = self.norm_cross_pre(input.x)
+            cross_input = input._replace(x=normalized_cross)
+            cross_kv = _layer_cross_cache(cross_cache)
+            cross_out = self.cross_attn(cross_input, cross_kv, context)
+            cross_branch = self.norm_cross_post(cross_out)
+            x = x + cross_branch
+
+        normalized_ff = self.norm_ff_pre(x)
+        ff_out = self.ff(normalized_ff)
+        ff_branch = self.norm_ff_post(ff_out)
+        x = x + ff_branch
         return input._replace(x=x), updated_self_cache
 
     if TYPE_CHECKING:
@@ -223,13 +246,19 @@ class CachedReorderedNormDecoderLayer(CachedDecoderLayerBase):
     ) -> tuple[PaddedInput, Tensor]:
         """Mirror the ordinary reordered residual equation using cached attention."""
         self_out, updated_self_cache = self.self_attn(input, self_cache, step_i)
-        x = input.x + self.norm_self(self_out)
+        self_branch = self.norm_self(self_out)
+        x = input.x + self_branch
+
         input = input._replace(x=x)
         if cross_cache is not None and context is not None:
-            x = x + self.norm_cross(
-                self.cross_attn(input, _layer_cross_cache(cross_cache), context)
-            )
-        x = x + self.norm_ff(self.ff(x))
+            cross_kv = _layer_cross_cache(cross_cache)
+            cross_out = self.cross_attn(input, cross_kv, context)
+            cross_branch = self.norm_cross(cross_out)
+            x = x + cross_branch
+
+        ff_out = self.ff(x)
+        ff_branch = self.norm_ff(ff_out)
+        x = x + ff_branch
         return input._replace(x=x), updated_self_cache
 
     if TYPE_CHECKING:

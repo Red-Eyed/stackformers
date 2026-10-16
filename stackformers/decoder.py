@@ -84,17 +84,23 @@ class DecoderLayer(DecoderLayerBase):
     ) -> SequenceInput:
         """Apply pre-norm self-attention, cross-attention, and FFN branches."""
         require_context(ctx_input is not None, cross_attn_mask)
-        normed_self = x_input._replace(x=self.norm_self(x_input.x))
-        x = x_input.x + call_self_attention(
-            self.self_attn, normed_self, self_attn_mask=self_attn_mask
-        )
+        normalized_self = self.norm_self(x_input.x)
+        self_input = x_input._replace(x=normalized_self)
+        self_out = call_self_attention(self.self_attn, self_input, self_attn_mask=self_attn_mask)
+        x = x_input.x + self_out
+
         x_input = x_input._replace(x=x)
         if ctx_input is not None:
-            normed_cross = x_input._replace(x=self.norm_cross(x_input.x))
-            x = x_input.x + call_cross_attention(
-                self.cross_attn, normed_cross, ctx_input, cross_attn_mask=cross_attn_mask
+            normalized_cross = self.norm_cross(x_input.x)
+            cross_input = x_input._replace(x=normalized_cross)
+            cross_out = call_cross_attention(
+                self.cross_attn, cross_input, ctx_input, cross_attn_mask=cross_attn_mask
             )
-        x = x + self.ff(self.norm_ff(x))
+            x = x + cross_out
+
+        normalized_ff = self.norm_ff(x)
+        ff_out = self.ff(normalized_ff)
+        x = x + ff_out
         return x_input._replace(x=x)
 
     if TYPE_CHECKING:
@@ -133,18 +139,21 @@ class PostNormDecoderLayer(DecoderLayerBase):
     ) -> SequenceInput:
         """Normalize each residual sum before evaluating the next branch."""
         require_context(ctx_input is not None, cross_attn_mask)
-        x = self.norm_self(
-            x_input.x + call_self_attention(self.self_attn, x_input, self_attn_mask=self_attn_mask)
-        )
+        self_out = call_self_attention(self.self_attn, x_input, self_attn_mask=self_attn_mask)
+        x = x_input.x + self_out
+        x = self.norm_self(x)
+
         x_input = x_input._replace(x=x)
         if ctx_input is not None:
-            x = self.norm_cross(
-                x
-                + call_cross_attention(
-                    self.cross_attn, x_input, ctx_input, cross_attn_mask=cross_attn_mask
-                )
+            cross_out = call_cross_attention(
+                self.cross_attn, x_input, ctx_input, cross_attn_mask=cross_attn_mask
             )
-        x = self.norm_ff(x + self.ff(x))
+            x = x + cross_out
+            x = self.norm_cross(x)
+
+        ff_out = self.ff(x)
+        x = x + ff_out
+        x = self.norm_ff(x)
         return x_input._replace(x=x)
 
     if TYPE_CHECKING:
@@ -189,19 +198,26 @@ class SandwichNormDecoderLayer(DecoderLayerBase):
     ) -> SequenceInput:
         """Normalize the input and output of every decoder residual branch."""
         require_context(ctx_input is not None, cross_attn_mask)
-        normed_self = x_input._replace(x=self.norm_self_pre(x_input.x))
-        x = x_input.x + self.norm_self_post(
-            call_self_attention(self.self_attn, normed_self, self_attn_mask=self_attn_mask)
-        )
+        normalized_self = self.norm_self_pre(x_input.x)
+        self_input = x_input._replace(x=normalized_self)
+        self_out = call_self_attention(self.self_attn, self_input, self_attn_mask=self_attn_mask)
+        self_branch = self.norm_self_post(self_out)
+        x = x_input.x + self_branch
+
         x_input = x_input._replace(x=x)
         if ctx_input is not None:
-            normed_cross = x_input._replace(x=self.norm_cross_pre(x_input.x))
-            x = x + self.norm_cross_post(
-                call_cross_attention(
-                    self.cross_attn, normed_cross, ctx_input, cross_attn_mask=cross_attn_mask
-                )
+            normalized_cross = self.norm_cross_pre(x_input.x)
+            cross_input = x_input._replace(x=normalized_cross)
+            cross_out = call_cross_attention(
+                self.cross_attn, cross_input, ctx_input, cross_attn_mask=cross_attn_mask
             )
-        x = x + self.norm_ff_post(self.ff(self.norm_ff_pre(x)))
+            cross_branch = self.norm_cross_post(cross_out)
+            x = x + cross_branch
+
+        normalized_ff = self.norm_ff_pre(x)
+        ff_out = self.ff(normalized_ff)
+        ff_branch = self.norm_ff_post(ff_out)
+        x = x + ff_branch
         return x_input._replace(x=x)
 
     if TYPE_CHECKING:
@@ -241,17 +257,21 @@ class ReorderedNormDecoderLayer(DecoderLayerBase):
     ) -> SequenceInput:
         """Normalize each decoder branch result immediately before residual addition."""
         require_context(ctx_input is not None, cross_attn_mask)
-        x = x_input.x + self.norm_self(
-            call_self_attention(self.self_attn, x_input, self_attn_mask=self_attn_mask)
-        )
+        self_out = call_self_attention(self.self_attn, x_input, self_attn_mask=self_attn_mask)
+        self_branch = self.norm_self(self_out)
+        x = x_input.x + self_branch
+
         x_input = x_input._replace(x=x)
         if ctx_input is not None:
-            x = x + self.norm_cross(
-                call_cross_attention(
-                    self.cross_attn, x_input, ctx_input, cross_attn_mask=cross_attn_mask
-                )
+            cross_out = call_cross_attention(
+                self.cross_attn, x_input, ctx_input, cross_attn_mask=cross_attn_mask
             )
-        x = x + self.norm_ff(self.ff(x))
+            cross_branch = self.norm_cross(cross_out)
+            x = x + cross_branch
+
+        ff_out = self.ff(x)
+        ff_branch = self.norm_ff(ff_out)
+        x = x + ff_branch
         return x_input._replace(x=x)
 
     if TYPE_CHECKING:

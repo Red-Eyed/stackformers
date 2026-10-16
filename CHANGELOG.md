@@ -6,6 +6,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/): MAJOR for breaking public API changes,
 MINOR for backwards-compatible features, PATCH for bug fixes and internal changes.
 
+## [5.0.0rc10]
+
+### Developers
+
+- Expand normalization, attention, feed-forward, and residual branches into named intermediate
+  values across transformer layers, decoders, cross-attenders, and cached decoder executors.
+  Preserve operation order while making intermediate values easier to inspect when debugging.
+- Record the preference for named transformation steps in repository guidance.
+
 ## [5.0.0rc9]
 
 ### New Features

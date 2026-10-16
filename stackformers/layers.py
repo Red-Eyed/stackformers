@@ -62,9 +62,14 @@ class TransformerLayer(TransformerLayerBase):
         self, input: SequenceInput, *, self_attn_mask: SelfAttentionMask = "default"
     ) -> SequenceInput:
         """Apply pre-norm attention and feed-forward residual branches."""
-        normed = input._replace(x=self.norm_attn(input.x))
-        x = input.x + call_self_attention(self.self_attn, normed, self_attn_mask=self_attn_mask)
-        x = x + self.ff(self.norm_ff(x))
+        normalized_self = self.norm_attn(input.x)
+        self_input = input._replace(x=normalized_self)
+        self_out = call_self_attention(self.self_attn, self_input, self_attn_mask=self_attn_mask)
+        x = input.x + self_out
+
+        normalized_ff = self.norm_ff(x)
+        ff_out = self.ff(normalized_ff)
+        x = x + ff_out
         return input._replace(x=x)
 
     if TYPE_CHECKING:
@@ -94,10 +99,13 @@ class PostNormTransformerLayer(TransformerLayerBase):
         self, input: SequenceInput, *, self_attn_mask: SelfAttentionMask = "default"
     ) -> SequenceInput:
         """Apply each norm after its branch has been added to the residual."""
-        x = self.norm_attn(
-            input.x + call_self_attention(self.self_attn, input, self_attn_mask=self_attn_mask)
-        )
-        x = self.norm_ff(x + self.ff(x))
+        self_out = call_self_attention(self.self_attn, input, self_attn_mask=self_attn_mask)
+        x = input.x + self_out
+        x = self.norm_attn(x)
+
+        ff_out = self.ff(x)
+        x = x + ff_out
+        x = self.norm_ff(x)
         return input._replace(x=x)
 
     if TYPE_CHECKING:
@@ -131,11 +139,16 @@ class SandwichNormTransformerLayer(TransformerLayerBase):
         self, input: SequenceInput, *, self_attn_mask: SelfAttentionMask = "default"
     ) -> SequenceInput:
         """Normalize the input and output of each residual branch."""
-        normed = input._replace(x=self.norm_attn_pre(input.x))
-        x = input.x + self.norm_attn_post(
-            call_self_attention(self.self_attn, normed, self_attn_mask=self_attn_mask)
-        )
-        x = x + self.norm_ff_post(self.ff(self.norm_ff_pre(x)))
+        normalized_self = self.norm_attn_pre(input.x)
+        self_input = input._replace(x=normalized_self)
+        self_out = call_self_attention(self.self_attn, self_input, self_attn_mask=self_attn_mask)
+        self_branch = self.norm_attn_post(self_out)
+        x = input.x + self_branch
+
+        normalized_ff = self.norm_ff_pre(x)
+        ff_out = self.ff(normalized_ff)
+        ff_branch = self.norm_ff_post(ff_out)
+        x = x + ff_branch
         return input._replace(x=x)
 
     if TYPE_CHECKING:
@@ -166,10 +179,13 @@ class ReorderedNormTransformerLayer(TransformerLayerBase):
         self, input: SequenceInput, *, self_attn_mask: SelfAttentionMask = "default"
     ) -> SequenceInput:
         """Normalize each branch result immediately before adding its residual."""
-        x = input.x + self.norm_attn(
-            call_self_attention(self.self_attn, input, self_attn_mask=self_attn_mask)
-        )
-        x = x + self.norm_ff(self.ff(x))
+        self_out = call_self_attention(self.self_attn, input, self_attn_mask=self_attn_mask)
+        self_branch = self.norm_attn(self_out)
+        x = input.x + self_branch
+
+        ff_out = self.ff(x)
+        ff_branch = self.norm_ff(ff_out)
+        x = x + ff_branch
         return input._replace(x=x)
 
     if TYPE_CHECKING:

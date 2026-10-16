@@ -31,6 +31,10 @@ just check        # formatting check, lint, types, and tests
 - Keep one concept per file; split files that cannot be described in one sentence.
 - Annotate tensor arguments with jaxtyping shape strings using the dimension vocabulary below.
 - Type collaborators accepted by `__init__` as protocols rather than concrete implementations.
+- Prefer named intermediate values over nested transformation calls or functional pipelines.
+  Separate normalization, attention/feed-forward computation, output normalization, and residual
+  addition into readable steps so intermediate values are easy to inspect while debugging.
+  Keep trivial expressions inline when naming them would add no meaning.
 
 ## Python structured records
 
