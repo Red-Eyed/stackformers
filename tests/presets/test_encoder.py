@@ -273,3 +273,25 @@ def test_encoder_variant_is_export_compatible(
         dynamic_shapes=shapes.dynamic_shapes(case.model, (case.example,)),
         runtime_args=(case.resized,),
     )
+
+
+@pytest.fixture
+def visibility_encoder(
+    norm_placement: NormPlacement,
+    device_dtype: tuple[torch.device, torch.dtype],
+) -> TransformerEncoder:
+    """Exercise mask forwarding through all preset-selected layer topologies."""
+    device, dtype = device_dtype
+    config = plain_encoder_config(D, H, 2, norm_placement=norm_placement)
+    return TransformerEncoder(config).to(device=device, dtype=dtype).eval()
+
+
+@pytest.mark.parametrize("norm_placement", ["pre", "post", "sandwich", "reordered"])
+def test_encoder_preset_runtime_mask(
+    visibility_encoder: TransformerEncoder,
+    padded_input: PaddedInput,
+) -> None:
+    """A causal override is equivalent to an explicit lower-triangular matrix."""
+    allowed = torch.ones(N, N, dtype=torch.bool, device=padded_input.x.device).tril()
+    expected = visibility_encoder(padded_input, self_attn_mask="causal")
+    torch.testing.assert_close(visibility_encoder(padded_input, self_attn_mask=allowed), expected)

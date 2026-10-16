@@ -9,6 +9,7 @@ from typing_extensions import override
 
 from stackformers._result import unwrap_or_raise
 from stackformers.attention.layout import matching_layouts
+from stackformers.attention.masking import CrossAttentionMask, validate_cross_mask
 from stackformers.attention.ops import packed_attn_or_fallback, padded_sdpa
 from stackformers.sequence import PackedInput, PackedSequence, PaddedInput, SequenceInput
 
@@ -39,7 +40,13 @@ class CrossAttention(nn.Module):
         self.k_norm: nn.Module = nn.RMSNorm(dh) if config.qk_norm else nn.Identity()
         nn.init.normal_(self.to_out.weight, std=0.02)
 
-    def _forward_padded(self, x_input: PaddedInput, ctx_input: PaddedInput) -> Tensor:
+    def _forward_padded(
+        self,
+        x_input: PaddedInput,
+        ctx_input: PaddedInput,
+        *,
+        cross_attn_mask: CrossAttentionMask = None,
+    ) -> Tensor:
         cfg = self.config
         h, kv_h, groups = cfg.heads, cfg.effective_kv_heads, cfg.groups
         x, context = x_input.x, ctx_input.x
@@ -52,11 +59,29 @@ class CrossAttention(nn.Module):
         q, k = self.pos_encoding.forward_padded(
             q, k, x_input.abs_positions, ctx_input.abs_positions
         )
-        out = padded_sdpa(q, k, v, ctx_input.mask, causal=False, window_size=None, bias=None)
+        allowed = unwrap_or_raise(
+            validate_cross_mask(cross_attn_mask, x.shape[1], context.shape[1], x.device)
+        )
+        out = padded_sdpa(
+            q,
+            k,
+            v,
+            ctx_input.mask,
+            causal=False,
+            window_size=None,
+            bias=None,
+            allowed_pairs=allowed,
+        )
         projected: Tensor = self.dropout(self.to_out(rearrange(out, "b h n d -> b n (h d)")))
         return projected * x_input.mask.unsqueeze(-1)
 
-    def _forward_packed(self, x_input: PackedInput, ctx_input: PackedInput) -> Tensor:
+    def _forward_packed(
+        self,
+        x_input: PackedInput,
+        ctx_input: PackedInput,
+        *,
+        cross_attn_mask: CrossAttentionMask = None,
+    ) -> Tensor:
         cfg = self.config
         h, kv_h, groups = cfg.heads, cfg.effective_kv_heads, cfg.groups
         x, context = x_input.x, ctx_input.x
@@ -71,30 +96,59 @@ class CrossAttention(nn.Module):
         )
         x_seq = PackedSequence(cu_seqlens=x_input.cu_seqlens, max_seqlen=x_input.max_seqlen)
         ctx_seq = PackedSequence(cu_seqlens=ctx_input.cu_seqlens, max_seqlen=ctx_input.max_seqlen)
+        allowed = unwrap_or_raise(
+            validate_cross_mask(cross_attn_mask, x_input.max_seqlen, ctx_input.max_seqlen, x.device)
+        )
         out = packed_attn_or_fallback(
-            q, k, v, x_seq, ctx_seq, causal=False, window_size=None, bias=None
+            q,
+            k,
+            v,
+            x_seq,
+            ctx_seq,
+            causal=False,
+            window_size=None,
+            bias=None,
+            allowed_pairs=allowed,
         )
         projected: Tensor = self.dropout(self.to_out(rearrange(out, "nt h d -> nt (h d)")))
         return projected
 
     @overload
-    def forward(self, x_input: PaddedInput, ctx_input: PaddedInput) -> Tensor:
+    def forward(
+        self,
+        x_input: PaddedInput,
+        ctx_input: PaddedInput,
+        *,
+        cross_attn_mask: CrossAttentionMask = None,
+    ) -> Tensor:
         """Attend between padded inputs with independently sized sequence axes."""
         ...
 
     @overload
-    def forward(self, x_input: PackedInput, ctx_input: PackedInput) -> Tensor:
+    def forward(
+        self,
+        x_input: PackedInput,
+        ctx_input: PackedInput,
+        *,
+        cross_attn_mask: CrossAttentionMask = None,
+    ) -> Tensor:
         """Attend between packed inputs with matching document counts."""
         ...
 
     @override
-    def forward(self, x_input: SequenceInput, ctx_input: SequenceInput) -> Tensor:
+    def forward(
+        self,
+        x_input: SequenceInput,
+        ctx_input: SequenceInput,
+        *,
+        cross_attn_mask: CrossAttentionMask = None,
+    ) -> Tensor:
         """Attend within one shared layout; raise ValueError for mixed layouts."""
         match unwrap_or_raise(matching_layouts(x_input, ctx_input)):
             case PaddedInput() as queries, PaddedInput() as context:
-                return self._forward_padded(queries, context)
+                return self._forward_padded(queries, context, cross_attn_mask=cross_attn_mask)
             case PackedInput() as queries, PackedInput() as context:
-                return self._forward_packed(queries, context)
+                return self._forward_packed(queries, context, cross_attn_mask=cross_attn_mask)
 
     if TYPE_CHECKING:
         # Preserve nn.Module's hook machinery at runtime while exposing the

@@ -92,3 +92,23 @@ def test_encoder_gradients(device: torch.device) -> None:
     mask = torch.ones(B, N, dtype=torch.bool, device=device)
     enc(make_padded_input(x, mask)).sum().backward()
     assert x.grad is not None
+
+
+def test_encoder_runtime_masks(encoder: Encoder, x_pad: PaddedInput) -> None:
+    """The encoder forwards causal and explicit visibility through every layer."""
+    from tests.conftest import atol
+
+    causal = torch.ones(N, N, device=x_pad.x.device, dtype=torch.bool).tril()
+    actual = encoder(x_pad, self_attn_mask="causal")
+    torch.testing.assert_close(
+        actual, encoder(x_pad, self_attn_mask=causal), atol=atol(actual.dtype), rtol=0
+    )
+    changed = x_pad.x.clone()
+    changed[:, 1:] += 100
+    torch.testing.assert_close(
+        actual[:, :1],
+        encoder(x_pad._replace(x=changed), self_attn_mask="causal")[:, :1],
+        atol=atol(actual.dtype),
+        rtol=0,
+    )
+    torch.testing.assert_close(encoder(x_pad), encoder(x_pad, self_attn_mask="bidirectional"))

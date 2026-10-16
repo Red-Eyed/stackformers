@@ -30,6 +30,7 @@ from stackformers.positional.factory import build_pos_encoding
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from stackformers.attention.masking import CrossAttentionMask
     from stackformers.feedforward.protocols import FeedForward
     from stackformers.norm.protocols import Norm
     from stackformers.positional.protocols import PosEncoding
@@ -60,8 +61,15 @@ class CrossAttenderBase(nn.Module, Generic[C], ABC):
     def build_norm(self, config: C) -> Norm: ...
 
     @override
-    def forward(self, x_input: SequenceInput, ctx_input: SequenceInput) -> Tensor:
-        return self._stack(x_input, ctx_input)
+    def forward(
+        self,
+        x_input: SequenceInput,
+        ctx_input: SequenceInput,
+        *,
+        cross_attn_mask: CrossAttentionMask = None,
+    ) -> Tensor:
+        """Attend to context with optional shared query/key visibility."""
+        return self._stack(x_input, ctx_input, cross_attn_mask=cross_attn_mask)
 
     if TYPE_CHECKING:
         __call__ = forward

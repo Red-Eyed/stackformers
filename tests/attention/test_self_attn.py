@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 import pytest
 import torch
 import torch.nn as nn
@@ -238,3 +240,70 @@ def test_attn_bias_changes_output(
         out_biased = biased(inp)
 
     assert not torch.allclose(out_base, out_biased)
+
+
+@pytest.fixture
+def mean_attention(device_dtype: tuple[torch.device, torch.dtype]) -> SelfAttention:
+    """Make output equal the mean of visible values for transparent numerical checks."""
+    device, dtype = device_dtype
+    attention = SelfAttention(
+        SelfAttentionConfig(dim=4, heads=1, dim_head=4, causal=True, window_size=1),
+        NoPosEncoding(),
+    ).to(device=device, dtype=dtype)
+    with torch.no_grad():
+        attention.to_q.weight.zero_()
+        attention.to_k.weight.zero_()
+        attention.to_v.weight.copy_(torch.eye(4, device=device, dtype=dtype))
+        attention.to_out.weight.copy_(torch.eye(4, device=device, dtype=dtype))
+    return attention
+
+
+@pytest.fixture
+def mean_input(device_dtype: tuple[torch.device, torch.dtype]) -> PaddedInput:
+    """Use distinct document values and conspicuous padding to expose visibility leaks."""
+    device, dtype = device_dtype
+    values = torch.tensor([[1, 3, 9], [10, 20, 999]], device=device, dtype=dtype)
+    valid = torch.tensor([[True, True, True], [True, True, False]], device=device)
+    return make_padded_input(values[..., None].expand(-1, -1, 4), valid)
+
+
+@pytest.mark.parametrize("packed", [False, True])
+@pytest.mark.parametrize(
+    ("mode", "expected_values"),
+    [
+        ("default", [[1, 2, 6], [10, 15, 20]]),
+        ("causal", [[1, 2, 13 / 3], [10, 15, 15]]),
+        ("bidirectional", [[13 / 3] * 3, [15] * 3]),
+        ("custom", [[3, 1, 0], [20, 10, 0]]),
+    ],
+)
+def test_runtime_self_visibility(
+    mean_attention: SelfAttention,
+    mean_input: PaddedInput,
+    mode: Literal["default", "causal", "bidirectional", "custom"],
+    expected_values: list[list[float]],
+    packed: bool,
+) -> None:
+    """Every mode has known means, excludes padding, and keeps packed documents separate."""
+    from stackformers.sequence import padded_to_packed
+    from tests.conftest import atol
+
+    mask = (
+        torch.tensor(
+            [[False, True, False], [True, False, False], [False, False, False]],
+            device=mean_input.x.device,
+        )
+        if mode == "custom"
+        else mode
+    )
+    input = padded_to_packed(mean_input) if packed else mean_input
+    expected = mean_input.x.new_tensor(expected_values)[..., None].expand(-1, -1, 4)
+    if packed:
+        expected = expected[mean_input.mask]
+    actual = mean_attention(input, self_attn_mask=mask)
+    torch.testing.assert_close(actual, expected, atol=atol(actual.dtype), rtol=0)
+    assert mean_attention.config.causal
+    assert mean_attention.config.window_size == 1
+    torch.testing.assert_close(
+        mean_attention(input), mean_attention(input, self_attn_mask="default")
+    )

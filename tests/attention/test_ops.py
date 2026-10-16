@@ -159,3 +159,34 @@ def test_cu_to_indices_export_same_batch_different_seqlens(opset_version: int) -
     batch_idx, pos_idx = _export_cu_to_indices(ExportShapeMode.DYNAMIC, opset_version, cu)
     assert batch_idx.tolist() == [0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1]
     assert pos_idx.tolist() == [0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4]
+
+
+@pytest.mark.parametrize("custom_mask", [False, True])
+def test_packed_mask_kernel_routing(monkeypatch: pytest.MonkeyPatch, custom_mask: bool) -> None:
+    """Explicit pair visibility bypasses varlen; ordinary modes retain its fast path."""
+    from stackformers.attention import ops
+    from stackformers.sequence import PackedSequence
+
+    calls: list[tuple[bool, int | None]] = []
+
+    def fake_varlen(
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        q_seq: PackedSequence,
+        k_seq: PackedSequence,
+        causal: bool,
+        window_size: int | None,
+        bias: torch.Tensor | None,
+    ) -> torch.Tensor:
+        """Record routing without requiring a supported GPU kernel."""
+        calls.append((causal, window_size))
+        return v
+
+    monkeypatch.setattr(ops, "try_varlen_attn", fake_varlen)
+    q = torch.ones(5, 1, 4)
+    seq = PackedSequence(torch.tensor([0, 3, 5]), 3)
+    allowed = torch.ones(3, 3, dtype=torch.bool) if custom_mask else None
+    output = ops.packed_attn_or_fallback(q, q, q, seq, seq, True, None, None, allowed)
+    assert calls == ([] if custom_mask else [(True, None)])
+    torch.testing.assert_close(output, q)

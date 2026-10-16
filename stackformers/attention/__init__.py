@@ -15,6 +15,7 @@ from stackformers.attention.config import (
 from stackformers.attention.cross_attn import CrossAttention
 from stackformers.attention.distance_bias import RelativeDistanceBias
 from stackformers.attention.factory import build_attn_bias
+from stackformers.attention.masking import CrossAttentionMask, SelfAttentionMask
 from stackformers.attention.protocols import (
     AttnBias,
     CrossAttn,
@@ -23,6 +24,8 @@ from stackformers.attention.protocols import (
 from stackformers.attention.self_attn import SelfAttention
 
 __all__ = [
+    "SelfAttentionMask",
+    "CrossAttentionMask",
     "SelfAttentionConfig",
     "CrossAttentionConfig",
     "AttnBiasConfig",

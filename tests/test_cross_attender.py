@@ -285,3 +285,34 @@ def test_cross_attender_norm_placement_is_export_compatible(
         dynamic_shapes=shapes.dynamic_shapes(layer, (x_input, ctx_input)),
         runtime_args=(resized_x_input, resized_ctx_input),
     )
+
+
+@pytest.fixture
+def visibility_cross_attender(
+    config: CrossAttenderConfig,
+    norm_placement: NormPlacement,
+    device_dtype: tuple[torch.device, torch.dtype],
+) -> CrossAttender:
+    """Build the complete cross stack for each normalization topology."""
+    device, dtype = device_dtype
+    return (
+        CrossAttender(config.model_copy(update={"norm_placement": norm_placement}))
+        .to(device=device, dtype=dtype)
+        .eval()
+    )
+
+
+@pytest.mark.parametrize("norm_placement", ["pre", "post", "sandwich", "reordered"])
+def test_cross_attender_runtime_mask(
+    visibility_cross_attender: CrossAttender,
+    x_context_inp: tuple[PaddedInput, PaddedInput],
+) -> None:
+    """Excluded context cannot affect any layer of the cross-attender preset."""
+    input, context = x_context_inp
+    allowed = torch.zeros(N, S, dtype=torch.bool, device=input.x.device)
+    allowed[:, :2] = True
+    changed = context.x.clone()
+    changed[:, 2:] += 100
+    expected = visibility_cross_attender(input, context, cross_attn_mask=allowed)
+    actual = visibility_cross_attender(input, context._replace(x=changed), cross_attn_mask=allowed)
+    torch.testing.assert_close(actual, expected)

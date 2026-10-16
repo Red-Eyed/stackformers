@@ -6,6 +6,7 @@ if TYPE_CHECKING:
     from jaxtyping import Float
     from torch import Tensor
 
+    from stackformers.attention.masking import CrossAttentionMask, SelfAttentionMask
     from stackformers.sequence import PackedInput, PaddedInput, SequenceInput
 
 
@@ -28,7 +29,9 @@ class AttnBias(Protocol):
 class SelfAttn(Protocol):
     """Self-attention over a sequence: maps input → x."""
 
-    def __call__(self, input: SequenceInput) -> Tensor: ...
+    def __call__(
+        self, input: SequenceInput, *, self_attn_mask: SelfAttentionMask = "default"
+    ) -> Tensor: ...
 
 
 @runtime_checkable
@@ -36,11 +39,23 @@ class CrossAttn(Protocol):
     """Map queries and context of the same layout to query-shaped embeddings."""
 
     @overload
-    def __call__(self, x_input: PaddedInput, ctx_input: PaddedInput) -> Tensor:
+    def __call__(
+        self,
+        x_input: PaddedInput,
+        ctx_input: PaddedInput,
+        *,
+        cross_attn_mask: CrossAttentionMask = None,
+    ) -> Tensor:
         """Attend between padded batches with the same batch size."""
         ...
 
     @overload
-    def __call__(self, x_input: PackedInput, ctx_input: PackedInput) -> Tensor:
+    def __call__(
+        self,
+        x_input: PackedInput,
+        ctx_input: PackedInput,
+        *,
+        cross_attn_mask: CrossAttentionMask = None,
+    ) -> Tensor:
         """Attend between packed batches with the same document count."""
         ...

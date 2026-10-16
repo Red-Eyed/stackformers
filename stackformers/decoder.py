@@ -9,7 +9,8 @@ import torch.nn as nn
 from torch import Tensor
 from typing_extensions import override
 
-from stackformers.attention.layout import call_cross_attention
+from stackformers.attention.layout import call_cross_attention, call_self_attention
+from stackformers.attention.masking import CrossAttentionMask, SelfAttentionMask, require_context
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -38,7 +39,12 @@ class DecoderLayerBase(nn.Module, ABC):
     @abstractmethod
     @override
     def forward(
-        self, x_input: SequenceInput, ctx_input: SequenceInput | None = None
+        self,
+        x_input: SequenceInput,
+        ctx_input: SequenceInput | None = None,
+        *,
+        self_attn_mask: SelfAttentionMask = "default",
+        cross_attn_mask: CrossAttentionMask = None,
     ) -> SequenceInput:
         """Decode one layer while preserving target-sequence metadata."""
 
@@ -69,15 +75,25 @@ class DecoderLayer(DecoderLayerBase):
         self.norm_ff = norm_ff
 
     def forward(
-        self, x_input: SequenceInput, ctx_input: SequenceInput | None = None
+        self,
+        x_input: SequenceInput,
+        ctx_input: SequenceInput | None = None,
+        *,
+        self_attn_mask: SelfAttentionMask = "default",
+        cross_attn_mask: CrossAttentionMask = None,
     ) -> SequenceInput:
         """Apply pre-norm self-attention, cross-attention, and FFN branches."""
+        require_context(ctx_input is not None, cross_attn_mask)
         normed_self = x_input._replace(x=self.norm_self(x_input.x))
-        x = x_input.x + self.self_attn(normed_self)
+        x = x_input.x + call_self_attention(
+            self.self_attn, normed_self, self_attn_mask=self_attn_mask
+        )
         x_input = x_input._replace(x=x)
         if ctx_input is not None:
             normed_cross = x_input._replace(x=self.norm_cross(x_input.x))
-            x = x_input.x + call_cross_attention(self.cross_attn, normed_cross, ctx_input)
+            x = x_input.x + call_cross_attention(
+                self.cross_attn, normed_cross, ctx_input, cross_attn_mask=cross_attn_mask
+            )
         x = x + self.ff(self.norm_ff(x))
         return x_input._replace(x=x)
 
@@ -108,13 +124,26 @@ class PostNormDecoderLayer(DecoderLayerBase):
         self.norm_ff = norm_ff
 
     def forward(
-        self, x_input: SequenceInput, ctx_input: SequenceInput | None = None
+        self,
+        x_input: SequenceInput,
+        ctx_input: SequenceInput | None = None,
+        *,
+        self_attn_mask: SelfAttentionMask = "default",
+        cross_attn_mask: CrossAttentionMask = None,
     ) -> SequenceInput:
         """Normalize each residual sum before evaluating the next branch."""
-        x = self.norm_self(x_input.x + self.self_attn(x_input))
+        require_context(ctx_input is not None, cross_attn_mask)
+        x = self.norm_self(
+            x_input.x + call_self_attention(self.self_attn, x_input, self_attn_mask=self_attn_mask)
+        )
         x_input = x_input._replace(x=x)
         if ctx_input is not None:
-            x = self.norm_cross(x + call_cross_attention(self.cross_attn, x_input, ctx_input))
+            x = self.norm_cross(
+                x
+                + call_cross_attention(
+                    self.cross_attn, x_input, ctx_input, cross_attn_mask=cross_attn_mask
+                )
+            )
         x = self.norm_ff(x + self.ff(x))
         return x_input._replace(x=x)
 
@@ -151,16 +180,26 @@ class SandwichNormDecoderLayer(DecoderLayerBase):
         self.norm_ff_post = norm_ff_post
 
     def forward(
-        self, x_input: SequenceInput, ctx_input: SequenceInput | None = None
+        self,
+        x_input: SequenceInput,
+        ctx_input: SequenceInput | None = None,
+        *,
+        self_attn_mask: SelfAttentionMask = "default",
+        cross_attn_mask: CrossAttentionMask = None,
     ) -> SequenceInput:
         """Normalize the input and output of every decoder residual branch."""
+        require_context(ctx_input is not None, cross_attn_mask)
         normed_self = x_input._replace(x=self.norm_self_pre(x_input.x))
-        x = x_input.x + self.norm_self_post(self.self_attn(normed_self))
+        x = x_input.x + self.norm_self_post(
+            call_self_attention(self.self_attn, normed_self, self_attn_mask=self_attn_mask)
+        )
         x_input = x_input._replace(x=x)
         if ctx_input is not None:
             normed_cross = x_input._replace(x=self.norm_cross_pre(x_input.x))
             x = x + self.norm_cross_post(
-                call_cross_attention(self.cross_attn, normed_cross, ctx_input)
+                call_cross_attention(
+                    self.cross_attn, normed_cross, ctx_input, cross_attn_mask=cross_attn_mask
+                )
             )
         x = x + self.norm_ff_post(self.ff(self.norm_ff_pre(x)))
         return x_input._replace(x=x)
@@ -193,13 +232,25 @@ class ReorderedNormDecoderLayer(DecoderLayerBase):
         self.norm_ff = norm_ff
 
     def forward(
-        self, x_input: SequenceInput, ctx_input: SequenceInput | None = None
+        self,
+        x_input: SequenceInput,
+        ctx_input: SequenceInput | None = None,
+        *,
+        self_attn_mask: SelfAttentionMask = "default",
+        cross_attn_mask: CrossAttentionMask = None,
     ) -> SequenceInput:
         """Normalize each decoder branch result immediately before residual addition."""
-        x = x_input.x + self.norm_self(self.self_attn(x_input))
+        require_context(ctx_input is not None, cross_attn_mask)
+        x = x_input.x + self.norm_self(
+            call_self_attention(self.self_attn, x_input, self_attn_mask=self_attn_mask)
+        )
         x_input = x_input._replace(x=x)
         if ctx_input is not None:
-            x = x + self.norm_cross(call_cross_attention(self.cross_attn, x_input, ctx_input))
+            x = x + self.norm_cross(
+                call_cross_attention(
+                    self.cross_attn, x_input, ctx_input, cross_attn_mask=cross_attn_mask
+                )
+            )
         x = x + self.norm_ff(self.ff(x))
         return x_input._replace(x=x)
 
@@ -217,10 +268,20 @@ class Decoder(nn.Module):
         self.final_norm = final_norm
 
     @override
-    def forward(self, x_input: SequenceInput, ctx_input: SequenceInput | None = None) -> Tensor:
+    def forward(
+        self,
+        x_input: SequenceInput,
+        ctx_input: SequenceInput | None = None,
+        *,
+        self_attn_mask: SelfAttentionMask = "default",
+        cross_attn_mask: CrossAttentionMask = None,
+    ) -> Tensor:
         """Decode with optional context; omission skips the entire cross-attention branch."""
+        require_context(ctx_input is not None, cross_attn_mask)
         for layer in self.layers:
-            x_input = layer(x_input, ctx_input)
+            x_input = layer(
+                x_input, ctx_input, self_attn_mask=self_attn_mask, cross_attn_mask=cross_attn_mask
+            )
         return self.final_norm(x_input.x)
 
     if TYPE_CHECKING:

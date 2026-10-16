@@ -42,6 +42,7 @@ from stackformers.result import Err, Ok, Result
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from stackformers.attention.masking import SelfAttentionMask
     from stackformers.attention.protocols import AttnBias
     from stackformers.feedforward.protocols import FeedForward
     from stackformers.norm.protocols import Norm
@@ -73,8 +74,11 @@ class TransformerEncoderBase(nn.Module, Generic[C], ABC):
     def build_norm(self, config: C) -> Norm: ...
 
     @override
-    def forward(self, input: SequenceInput) -> Tensor:
-        return self._encoder(input)
+    def forward(
+        self, input: SequenceInput, *, self_attn_mask: SelfAttentionMask = "default"
+    ) -> Tensor:
+        """Encode with optional self-attention visibility overriding initialization defaults."""
+        return self._encoder(input, self_attn_mask=self_attn_mask)
 
     if TYPE_CHECKING:
         __call__ = forward

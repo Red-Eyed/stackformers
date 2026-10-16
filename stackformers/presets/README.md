@@ -30,6 +30,33 @@ Compilation and export specialize to the context presence used when tracing.
 
 All presets accept `PaddedInput` or `PackedInput` interchangeably.
 
+## Per-call attention visibility
+
+Encoder presets (including the variable-width encoder) accept `self_attn_mask`. Decoder
+presets accept both `self_attn_mask` and `cross_attn_mask`; CrossAttender accepts only
+`cross_attn_mask`. Layer and stack APIs expose the same arguments.
+
+```python
+encoder(input, self_attn_mask="causal")
+decoder(text, image_memory, self_attn_mask="causal")
+decoder(text, self_attn_mask="bidirectional")
+decoder(text, image_memory, self_attn_mask=text_visibility, cross_attn_mask=image_visibility)
+```
+
+`self_attn_mask="default"` uses each layer's initialization settings. `"causal"`,
+`"bidirectional"`, or a boolean `(n, n)` tensor replaces those causal/window settings.
+`cross_attn_mask=None` allows every valid context token; a boolean `(n, s)` tensor restricts
+query/context pairs. True means allowed. Masks share a pattern across documents and heads;
+padding and packed document boundaries always remain enforced. For packed inputs, dimensions
+are `max_seqlen`, and coordinates restart within each document. Tensor masks must be on the
+input device and use padded SDPA fallback; named modes retain the packed fast path.
+A cross mask without context raises `ValueError`.
+
+Named modes specialize during compilation/export; tensor masks remain runtime graph inputs.
+Cached generation retains its existing causal API and does not accept these overrides.
+Custom layer subclasses must accept and forward the new keyword arguments. Custom attention
+collaborators need them when a caller requests an override.
+
 ## Customising a collaborator (subclass the concrete preset)
 
 Override one or more `build_*` methods; the rest use their defaults:

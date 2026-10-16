@@ -49,6 +49,7 @@ def padded_sdpa(
     causal: bool,
     window_size: int | None,
     bias: Tensor | None,
+    allowed_pairs: Tensor | None = None,
 ) -> Tensor:
     """Apply padding, window and bias constraints; return zero for fully excluded rows."""
     n, s = q.shape[-2], k.shape[-2]
@@ -58,6 +59,8 @@ def padded_sdpa(
     if window_size is not None or causal:
         width = s if window_size is None else window_size
         attn_mask = attn_mask + window_mask(n, s, width, causal, q.device, q.dtype)
+    if allowed_pairs is not None:
+        attn_mask = attn_mask.masked_fill(~allowed_pairs, float("-inf"))
     return _sdpa_with_empty_rows(q, k, v, attn_mask)
 
 
@@ -120,6 +123,7 @@ def packed_attn_or_fallback(
     causal: bool,
     window_size: int | None,
     bias: Tensor | None,
+    allowed_pairs: Tensor | None = None,
 ) -> Tensor:
     """Run varlen attention; fall back to padded SDPA when it is unavailable.
 
@@ -128,9 +132,10 @@ def packed_attn_or_fallback(
     take the padded SDPA path — silently for the expected CPU/float32/export route, or after
     a warning when the kernel was eligible but unavailable.
     """
-    out = try_varlen_attn(q, k, v, q_seq, k_seq, causal, window_size, bias)
-    if out is not None:
-        return out
+    if allowed_pairs is None:
+        out = try_varlen_attn(q, k, v, q_seq, k_seq, causal, window_size, bias)
+        if out is not None:
+            return out
 
     # Keep b as SymInt-friendly: int(SymInt) forces specialization under torch.export.
     # Downstream consumers (_packed_heads_to_padded) accept SymInt for shape args.
@@ -138,5 +143,5 @@ def packed_attn_or_fallback(
     q_pad, q_mask = _packed_heads_to_padded(q, q_seq.cu_seqlens, b, q_seq.max_seqlen)
     k_pad, k_mask = _packed_heads_to_padded(k, k_seq.cu_seqlens, b, k_seq.max_seqlen)
     v_pad, _ = _packed_heads_to_padded(v, k_seq.cu_seqlens, b, k_seq.max_seqlen)
-    out_pad = padded_sdpa(q_pad, k_pad, v_pad, k_mask, causal, window_size, bias)
+    out_pad = padded_sdpa(q_pad, k_pad, v_pad, k_mask, causal, window_size, bias, allowed_pairs)
     return _padded_heads_to_packed(out_pad, q_mask)

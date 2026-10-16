@@ -6,7 +6,24 @@ Multi-head self-attention and cross-attention.
 
 **Two configs, two modules.** `SelfAttentionConfig` and `CrossAttentionConfig` are separate types because their parameter sets differ: self-attention has `causal` and `window_size`; cross-attention has neither.
 
-**Static vs runtime dispatch.** The attention *type* (global vs sliding-window) is determined at construction time via `window_size: int | None` in `SelfAttentionConfig`. The *backend* (padded vs packed) is determined at runtime: `SelfAttention.forward` and `CrossAttention.forward` dispatch on `SequenceInput` via `match`. This means one model handles both training (packed) and inference (padded) without swapping classes.
+**Defaults vs per-call visibility.** `SelfAttentionConfig.causal` and `window_size` set
+initialization defaults. `self_attn_mask="default"` preserves both; `"causal"` selects global
+causal attention and `"bidirectional"` selects global bidirectional attention. A boolean
+`(n, n)` tensor supplies the full visibility pattern instead. All explicit choices replace
+configured causal/window restrictions without mutating config or parameters. Additive learned
+attention biases still apply. The backend remains a runtime layout decision: padded inputs
+use SDPA and packed inputs try varlen attention.
+
+**Mask ownership.** `masking.py` owns the public mask types, validation, and mode resolution;
+layers, stacks, and presets only forward the keyword arguments. `SelfAttention` accepts
+`self_attn_mask`; `CrossAttention` accepts an optional boolean `cross_attn_mask` of shape
+`(n, s)`. True means allowed. Pair masks are shared across batch entries and heads, must be
+on the input device, and combine with key validity. Fully excluded attention rows return
+zero. Padding and document isolation cannot be overridden. With packed inputs, `n` and `s`
+are the query/context `max_seqlen` values and masks apply independently in local document
+coordinates. Arbitrary pair masks deliberately bypass varlen and use padded SDPA; symbolic
+causal/bidirectional choices retain the varlen route. This keeps common training modes from
+allocating a dense pair mask on the packed fast path.
 
 **Kernel ops in `ops.py`.** All low-level attention math lives in `attention/ops.py`: mask builders, `padded_sdpa`, the packed↔padded scatter/gather helpers, and `packed_attn_or_fallback`. The modules stay thin dispatchers.
 
@@ -36,6 +53,9 @@ decoder, preset, and positional classes contain no cache-specific methods.
 
 ## Extending
 
-To add a new attention variant, create a new `nn.Module` that satisfies the `SelfAttn` or `CrossAttn` protocol. No kernel registration or factory changes required.
+To add a new attention variant, create a new `nn.Module` that satisfies the `SelfAttn` or
+`CrossAttn` protocol, including its keyword-only visibility argument. No kernel registration
+or factory changes are required. Default calls preserve legacy attention collaborator calls;
+using an override requires the collaborator to implement the updated protocol.
 
 To add a new attention bias, write an `nn.Module` satisfying `AttnBias` (take `PaddedInput`, return a broadcastable `(b, h, n, s)` tensor or `None`), give it a config with a `kind` discriminator, join it to the `AttnBiasConfig` union, and add one `match` arm to `build_attn_bias`.

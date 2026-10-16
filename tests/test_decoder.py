@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 import torch
+from typing_extensions import override
 
 from stackformers.attention.config import CrossAttentionConfig, SelfAttentionConfig
 from stackformers.decoder import (
@@ -29,6 +32,9 @@ from tests.norm_topology_helpers import (
     expected_norm,
     make_topology_input,
 )
+
+if TYPE_CHECKING:
+    from stackformers.attention.masking import SelfAttentionMask
 
 B, N, S, D, H, DH = 2, 8, 12, 64, 4, 16
 
@@ -390,3 +396,200 @@ def test_context_free_decoder_compiles_and_exports(norm_placement: NormPlacement
     assert torch.equal(compiled(input), expected)
     exported = torch.export.export(decoder, (input,)).module()
     assert torch.equal(exported(input), expected)
+
+
+@pytest.fixture
+def visibility_decoder(
+    config: TransformerDecoderConfig,
+    norm_placement: NormPlacement,
+    device_dtype: tuple[torch.device, torch.dtype],
+) -> TransformerDecoder:
+    """Build every topology with the same runtime visibility contract."""
+    device, dtype = device_dtype
+    return (
+        TransformerDecoder(config.model_copy(update={"norm_placement": norm_placement}))
+        .to(device=device, dtype=dtype)
+        .eval()
+    )
+
+
+@pytest.mark.parametrize("norm_placement", ["pre", "post", "sandwich", "reordered"])
+def test_decoder_runtime_masks(
+    visibility_decoder: TransformerDecoder,
+    x_context_inp: tuple[PaddedInput, PaddedInput],
+) -> None:
+    """Mode/tensor equivalence and excluded-context invariance hold across the full stack."""
+    from tests.conftest import atol
+
+    input, context = x_context_inp
+    causal = torch.ones(N, N, device=input.x.device, dtype=torch.bool).tril()
+    full = torch.ones_like(causal)
+    cross = torch.zeros(N, S, device=input.x.device, dtype=torch.bool)
+    cross[:, :2] = True
+    changed = context.x.clone()
+    changed[:, 2:] += 100
+    changed_context = context._replace(x=changed)
+
+    modes: tuple[tuple[SelfAttentionMask, torch.Tensor], ...] = (
+        ("causal", causal),
+        ("bidirectional", full),
+    )
+    for mode, mask in modes:
+        actual = visibility_decoder(input, context, self_attn_mask=mode, cross_attn_mask=cross)
+        expected = visibility_decoder(
+            input, changed_context, self_attn_mask=mask, cross_attn_mask=cross
+        )
+        torch.testing.assert_close(actual, expected, atol=atol(actual.dtype), rtol=0)
+    torch.testing.assert_close(
+        visibility_decoder(input), visibility_decoder(input, self_attn_mask=causal)
+    )
+
+
+def test_decoder_rejects_cross_mask_without_context(
+    decoder: TransformerDecoder,
+    x_context_inp: tuple[PaddedInput, PaddedInput],
+) -> None:
+    """A context mask must never be accepted and silently ignored."""
+    input, _ = x_context_inp
+    with pytest.raises(ValueError, match="requires context"):
+        decoder(input, cross_attn_mask=torch.ones(N, S, device=input.x.device, dtype=torch.bool))
+
+
+def test_decoder_tensor_masks_compile_and_export(
+    decoder: TransformerDecoder,
+    x_context_inp: tuple[PaddedInput, PaddedInput],
+) -> None:
+    """Masks remain graph inputs whose values can change after tracing."""
+    input, context = x_context_inp
+    self_mask = torch.ones(N, N, device=input.x.device, dtype=torch.bool).tril()
+    cross_mask = torch.ones(N, S, device=input.x.device, dtype=torch.bool)
+    compiled = torch.compile(decoder, backend="eager", fullgraph=True)
+    exported = torch.export.export(
+        decoder,
+        (input, context),
+        kwargs={"self_attn_mask": self_mask, "cross_attn_mask": cross_mask},
+    ).module()
+    for allowed in [False, True]:
+        cross_mask.fill_(allowed)
+        expected = decoder(input, context, self_attn_mask=self_mask, cross_attn_mask=cross_mask)
+        torch.testing.assert_close(
+            compiled(input, context, self_attn_mask=self_mask, cross_attn_mask=cross_mask), expected
+        )
+        torch.testing.assert_close(
+            exported(input, context, self_attn_mask=self_mask, cross_attn_mask=cross_mask), expected
+        )
+
+
+@pytest.fixture
+def gradient_decoder(config: TransformerDecoderConfig, device: torch.device) -> TransformerDecoder:
+    """Use float32 on each available device for visibility-gradient checks."""
+    return TransformerDecoder(config).to(device=device)
+
+
+@pytest.fixture
+def gradient_inputs(device: torch.device) -> tuple[PaddedInput, PaddedInput]:
+    """Keep original leaf tensors available for checking excluded-token gradients."""
+    input = make_padded_input(
+        torch.randn(B, N, D, device=device, requires_grad=True),
+        torch.ones(B, N, device=device, dtype=torch.bool),
+    )
+    context = make_padded_input(
+        torch.randn(B, S, D, device=device, requires_grad=True),
+        torch.ones(B, S, device=device, dtype=torch.bool),
+    )
+    return input, context
+
+
+@pytest.mark.parametrize("packed", [False, True])
+def test_decoder_masks_exclude_gradients(
+    gradient_decoder: TransformerDecoder,
+    gradient_inputs: tuple[PaddedInput, PaddedInput],
+    packed: bool,
+) -> None:
+    """Neither future target tokens nor excluded image tokens receive gradients."""
+    from stackformers.sequence import padded_to_packed
+
+    input, context = gradient_inputs
+    allowed = torch.zeros(N, S, dtype=torch.bool, device=input.x.device)
+    allowed[:, :2] = True
+    if packed:
+        output = gradient_decoder(
+            padded_to_packed(input),
+            padded_to_packed(context),
+            self_attn_mask="causal",
+            cross_attn_mask=allowed,
+        )
+        loss = output[0].sum()
+    else:
+        output = gradient_decoder(input, context, self_attn_mask="causal", cross_attn_mask=allowed)
+        loss = output[0, 0].sum()
+    loss.backward()
+    assert input.x.grad is not None
+    assert context.x.grad is not None
+    assert torch.isfinite(input.x.grad).all()
+    assert torch.isfinite(context.x.grad).all()
+    assert input.x.grad[0, 1:].eq(0).all()
+    assert context.x.grad[0, 2:].eq(0).all()
+    assert context.x.grad[0, :2].abs().sum() > 0
+    assert input.x.grad[1].eq(0).all()
+    assert context.x.grad[1].eq(0).all()
+
+
+class MaskedDecoderExport(torch.nn.Module):
+    """Expose keyword-only visibility as tensor inputs for shared ONNX test utilities."""
+
+    def __init__(self, decoder: TransformerDecoder) -> None:
+        """Keep the ordinary decoder's weights and per-call mask semantics."""
+        super().__init__()
+        self.decoder = decoder
+
+    @override
+    def forward(
+        self,
+        input: PaddedInput,
+        context: PaddedInput,
+        self_mask: torch.Tensor,
+        cross_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        """Decode with explicit shared query/key masks."""
+        return self.decoder(input, context, self_attn_mask=self_mask, cross_attn_mask=cross_mask)
+
+
+@pytest.fixture
+def masked_decoder_export(config: TransformerDecoderConfig) -> MaskedDecoderExport:
+    """ONNX Runtime executes this CPU float32 decoder."""
+    return MaskedDecoderExport(TransformerDecoder(config).eval())
+
+
+@pytest.mark.parametrize("shape_mode", tuple(ExportShapeMode), ids=lambda mode: mode.value)
+@pytest.mark.parametrize("opset_version", [18, 23])
+def test_decoder_runtime_masks_onnx(
+    masked_decoder_export: MaskedDecoderExport,
+    shape_mode: ExportShapeMode,
+    opset_version: int,
+) -> None:
+    """Both ONNX attention lowerings retain dynamic mask axes and fully excluded rows."""
+    input = make_padded_input(torch.randn(B, N, D), torch.ones(B, N, dtype=torch.bool))
+    context = make_padded_input(torch.randn(B, S, D), torch.ones(B, S, dtype=torch.bool))
+    self_mask = torch.ones(N, N, dtype=torch.bool).tril()
+    cross_mask = torch.ones(N, S, dtype=torch.bool)
+    cross_mask[0] = False
+    args = (input, context, self_mask, cross_mask)
+    n, s = torch.export.Dim("n", min=1, max=N), torch.export.Dim("s", min=1, max=S)
+    shapes = torch.export.ShapesCollection()
+    for tensor in input:
+        shapes[tensor] = {1: n}
+    for tensor in context:
+        shapes[tensor] = {1: s}
+    shapes[self_mask] = {0: n, 1: n}
+    shapes[cross_mask] = {0: n, 1: s}
+    resized_input = PaddedInput(*(tensor[:, :3] for tensor in input))
+    resized_context = PaddedInput(*(tensor[:, :5] for tensor in context))
+    export_and_run(
+        masked_decoder_export,
+        args,
+        shape_mode,
+        opset_version,
+        dynamic_shapes=shapes.dynamic_shapes(masked_decoder_export, args),
+        runtime_args=(resized_input, resized_context, self_mask[:3, :3], cross_mask[:3, :5]),
+    )

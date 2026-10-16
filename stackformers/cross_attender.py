@@ -14,6 +14,7 @@ from stackformers.attention.layout import call_cross_attention
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from stackformers.attention.masking import CrossAttentionMask
     from stackformers.attention.protocols import CrossAttn
     from stackformers.feedforward.protocols import FeedForward
     from stackformers.norm.protocols import Norm
@@ -31,7 +32,13 @@ class CrossAttenderLayerBase(nn.Module, ABC):
 
     @abstractmethod
     @override
-    def forward(self, x_input: SequenceInput, ctx_input: SequenceInput) -> SequenceInput:
+    def forward(
+        self,
+        x_input: SequenceInput,
+        ctx_input: SequenceInput,
+        *,
+        cross_attn_mask: CrossAttentionMask = None,
+    ) -> SequenceInput:
         """Apply one cross-attender layer while preserving query metadata."""
 
     if TYPE_CHECKING:
@@ -57,10 +64,18 @@ class CrossAttenderLayer(CrossAttenderLayerBase):
         self.norm_cross = norm_cross
         self.norm_ff = norm_ff
 
-    def forward(self, x_input: SequenceInput, ctx_input: SequenceInput) -> SequenceInput:
+    def forward(
+        self,
+        x_input: SequenceInput,
+        ctx_input: SequenceInput,
+        *,
+        cross_attn_mask: CrossAttentionMask = None,
+    ) -> SequenceInput:
         """Apply pre-norm cross-attention and feed-forward residual branches."""
         normed = x_input._replace(x=self.norm_cross(x_input.x))
-        x = x_input.x + call_cross_attention(self.cross_attn, normed, ctx_input)
+        x = x_input.x + call_cross_attention(
+            self.cross_attn, normed, ctx_input, cross_attn_mask=cross_attn_mask
+        )
         x = x + self.ff(self.norm_ff(x))
         return x_input._replace(x=x)
 
@@ -87,9 +102,20 @@ class PostNormCrossAttenderLayer(CrossAttenderLayerBase):
         self.norm_cross = norm_cross
         self.norm_ff = norm_ff
 
-    def forward(self, x_input: SequenceInput, ctx_input: SequenceInput) -> SequenceInput:
+    def forward(
+        self,
+        x_input: SequenceInput,
+        ctx_input: SequenceInput,
+        *,
+        cross_attn_mask: CrossAttentionMask = None,
+    ) -> SequenceInput:
         """Normalize each residual sum before evaluating the next branch."""
-        x = self.norm_cross(x_input.x + call_cross_attention(self.cross_attn, x_input, ctx_input))
+        x = self.norm_cross(
+            x_input.x
+            + call_cross_attention(
+                self.cross_attn, x_input, ctx_input, cross_attn_mask=cross_attn_mask
+            )
+        )
         x = self.norm_ff(x + self.ff(x))
         return x_input._replace(x=x)
 
@@ -120,11 +146,19 @@ class SandwichNormCrossAttenderLayer(CrossAttenderLayerBase):
         self.norm_ff_pre = norm_ff_pre
         self.norm_ff_post = norm_ff_post
 
-    def forward(self, x_input: SequenceInput, ctx_input: SequenceInput) -> SequenceInput:
+    def forward(
+        self,
+        x_input: SequenceInput,
+        ctx_input: SequenceInput,
+        *,
+        cross_attn_mask: CrossAttentionMask = None,
+    ) -> SequenceInput:
         """Normalize the input and output of both residual branches."""
         normed = x_input._replace(x=self.norm_cross_pre(x_input.x))
         x = x_input.x + self.norm_cross_post(
-            call_cross_attention(self.cross_attn, normed, ctx_input)
+            call_cross_attention(
+                self.cross_attn, normed, ctx_input, cross_attn_mask=cross_attn_mask
+            )
         )
         x = x + self.norm_ff_post(self.ff(self.norm_ff_pre(x)))
         return x_input._replace(x=x)
@@ -153,9 +187,19 @@ class ReorderedNormCrossAttenderLayer(CrossAttenderLayerBase):
         self.norm_cross = norm_cross
         self.norm_ff = norm_ff
 
-    def forward(self, x_input: SequenceInput, ctx_input: SequenceInput) -> SequenceInput:
+    def forward(
+        self,
+        x_input: SequenceInput,
+        ctx_input: SequenceInput,
+        *,
+        cross_attn_mask: CrossAttentionMask = None,
+    ) -> SequenceInput:
         """Normalize each branch result immediately before residual addition."""
-        x = x_input.x + self.norm_cross(call_cross_attention(self.cross_attn, x_input, ctx_input))
+        x = x_input.x + self.norm_cross(
+            call_cross_attention(
+                self.cross_attn, x_input, ctx_input, cross_attn_mask=cross_attn_mask
+            )
+        )
         x = x + self.norm_ff(self.ff(x))
         return x_input._replace(x=x)
 
@@ -173,10 +217,16 @@ class CrossAttenderStack(nn.Module):
         self.final_norm = final_norm
 
     @override
-    def forward(self, x_input: SequenceInput, ctx_input: SequenceInput) -> Tensor:
+    def forward(
+        self,
+        x_input: SequenceInput,
+        ctx_input: SequenceInput,
+        *,
+        cross_attn_mask: CrossAttentionMask = None,
+    ) -> Tensor:
         """Transform a query sequence against a fixed context sequence."""
         for layer in self.layers:
-            x_input = layer(x_input, ctx_input)
+            x_input = layer(x_input, ctx_input, cross_attn_mask=cross_attn_mask)
         return self.final_norm(x_input.x)
 
     if TYPE_CHECKING:

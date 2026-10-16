@@ -564,3 +564,23 @@ def test_variable_width_encoder_is_export_compatible(
         dynamic_shapes=shapes.dynamic_shapes(encoder, (input,)),
         runtime_args=(resized_input,),
     )
+
+
+@pytest.fixture
+def visibility_encoder(
+    config: VariableWidthTransformerEncoderConfig,
+    device_dtype: tuple[torch.device, torch.dtype],
+) -> VariableWidthTransformerEncoder:
+    """Build the staged encoder with noncausal initialization."""
+    device, dtype = device_dtype
+    return VariableWidthTransformerEncoder(config).to(device=device, dtype=dtype).eval()
+
+
+def test_variable_width_encoder_runtime_mask(
+    visibility_encoder: VariableWidthTransformerEncoder,
+    padded_input: PaddedInput,
+) -> None:
+    """Runtime visibility survives the projection boundaries between stages."""
+    allowed = torch.ones(N, N, dtype=torch.bool, device=padded_input.x.device).tril()
+    expected = visibility_encoder(padded_input, self_attn_mask="causal")
+    torch.testing.assert_close(visibility_encoder(padded_input, self_attn_mask=allowed), expected)

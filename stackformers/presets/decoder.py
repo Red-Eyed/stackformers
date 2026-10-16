@@ -33,6 +33,7 @@ from stackformers.positional.none import NoPosEncoding
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from stackformers.attention.masking import CrossAttentionMask, SelfAttentionMask
     from stackformers.attention.protocols import AttnBias
     from stackformers.feedforward.protocols import FeedForward
     from stackformers.norm.protocols import Norm
@@ -64,8 +65,18 @@ class TransformerDecoderBase(nn.Module, Generic[C], ABC):
     def build_norm(self, config: C) -> Norm: ...
 
     @override
-    def forward(self, x_input: SequenceInput, ctx_input: SequenceInput | None = None) -> Tensor:
-        return self._decoder(x_input, ctx_input)
+    def forward(
+        self,
+        x_input: SequenceInput,
+        ctx_input: SequenceInput | None = None,
+        *,
+        self_attn_mask: SelfAttentionMask = "default",
+        cross_attn_mask: CrossAttentionMask = None,
+    ) -> Tensor:
+        """Decode with independent self/cross visibility; cross masks require context."""
+        return self._decoder(
+            x_input, ctx_input, self_attn_mask=self_attn_mask, cross_attn_mask=cross_attn_mask
+        )
 
     if TYPE_CHECKING:
         __call__ = forward

@@ -11,6 +11,7 @@ from typing_extensions import override
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from stackformers.attention.masking import SelfAttentionMask
     from stackformers.layers import TransformerLayerBase
     from stackformers.norm.protocols import Norm
     from stackformers.sequence import SequenceInput
@@ -29,9 +30,12 @@ class Encoder(nn.Module):
         self.final_norm = final_norm
 
     @override
-    def forward(self, input: SequenceInput) -> Tensor:
+    def forward(
+        self, input: SequenceInput, *, self_attn_mask: SelfAttentionMask = "default"
+    ) -> Tensor:
+        """Encode with shared per-call visibility; default preserves each layer configuration."""
         for layer in self.layers:
-            input = layer(input)
+            input = layer(input, self_attn_mask=self_attn_mask)
         return self.final_norm(input.x)
 
     if TYPE_CHECKING:

@@ -6,6 +6,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/): MAJOR for breaking public API changes,
 MINOR for backwards-compatible features, PATCH for bug fixes and internal changes.
 
+## [5.0.0rc9]
+
+### New Features
+
+- Add per-call `self_attn_mask` to encoders and decoders: select initialization defaults,
+  global causal or bidirectional attention, or explicit boolean `(n, n)` visibility.
+- Add boolean `(n, s)` `cross_attn_mask` to decoders and cross-attenders. Runtime masks
+  preserve padding and packed document isolation; arbitrary masks use padded SDPA fallback.
+
+### Developers
+
+- Extend attention protocols and layer forward contracts with keyword-only visibility
+  arguments. Custom layers must forward these keywords; custom attention implementations
+  need to accept them when an override is requested. Existing built-in configs and checkpoints
+  remain compatible. Cached generation retains its existing causal API.
+
 ## [5.0.0rc8]
 
 ### New Features

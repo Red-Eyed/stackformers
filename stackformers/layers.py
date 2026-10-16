@@ -8,9 +8,11 @@ from typing import TYPE_CHECKING
 import torch.nn as nn
 from typing_extensions import override
 
+from stackformers.attention.layout import call_self_attention
 from stackformers.norm.config import NormPlacement as NormPlacement
 
 if TYPE_CHECKING:
+    from stackformers.attention.masking import SelfAttentionMask
     from stackformers.attention.protocols import SelfAttn
     from stackformers.feedforward.protocols import FeedForward
     from stackformers.norm.protocols import Norm
@@ -28,7 +30,9 @@ class TransformerLayerBase(nn.Module, ABC):
 
     @abstractmethod
     @override
-    def forward(self, input: SequenceInput) -> SequenceInput:
+    def forward(
+        self, input: SequenceInput, *, self_attn_mask: SelfAttentionMask = "default"
+    ) -> SequenceInput:
         """Apply one transformer layer while preserving sequence metadata."""
 
     if TYPE_CHECKING:
@@ -54,10 +58,12 @@ class TransformerLayer(TransformerLayerBase):
         self.norm_attn = norm_attn
         self.norm_ff = norm_ff
 
-    def forward(self, input: SequenceInput) -> SequenceInput:
+    def forward(
+        self, input: SequenceInput, *, self_attn_mask: SelfAttentionMask = "default"
+    ) -> SequenceInput:
         """Apply pre-norm attention and feed-forward residual branches."""
         normed = input._replace(x=self.norm_attn(input.x))
-        x = input.x + self.self_attn(normed)
+        x = input.x + call_self_attention(self.self_attn, normed, self_attn_mask=self_attn_mask)
         x = x + self.ff(self.norm_ff(x))
         return input._replace(x=x)
 
@@ -84,9 +90,13 @@ class PostNormTransformerLayer(TransformerLayerBase):
         self.norm_attn = norm_attn
         self.norm_ff = norm_ff
 
-    def forward(self, input: SequenceInput) -> SequenceInput:
+    def forward(
+        self, input: SequenceInput, *, self_attn_mask: SelfAttentionMask = "default"
+    ) -> SequenceInput:
         """Apply each norm after its branch has been added to the residual."""
-        x = self.norm_attn(input.x + self.self_attn(input))
+        x = self.norm_attn(
+            input.x + call_self_attention(self.self_attn, input, self_attn_mask=self_attn_mask)
+        )
         x = self.norm_ff(x + self.ff(x))
         return input._replace(x=x)
 
@@ -117,10 +127,14 @@ class SandwichNormTransformerLayer(TransformerLayerBase):
         self.norm_ff_pre = norm_ff_pre
         self.norm_ff_post = norm_ff_post
 
-    def forward(self, input: SequenceInput) -> SequenceInput:
+    def forward(
+        self, input: SequenceInput, *, self_attn_mask: SelfAttentionMask = "default"
+    ) -> SequenceInput:
         """Normalize the input and output of each residual branch."""
         normed = input._replace(x=self.norm_attn_pre(input.x))
-        x = input.x + self.norm_attn_post(self.self_attn(normed))
+        x = input.x + self.norm_attn_post(
+            call_self_attention(self.self_attn, normed, self_attn_mask=self_attn_mask)
+        )
         x = x + self.norm_ff_post(self.ff(self.norm_ff_pre(x)))
         return input._replace(x=x)
 
@@ -148,9 +162,13 @@ class ReorderedNormTransformerLayer(TransformerLayerBase):
         self.norm_attn = norm_attn
         self.norm_ff = norm_ff
 
-    def forward(self, input: SequenceInput) -> SequenceInput:
+    def forward(
+        self, input: SequenceInput, *, self_attn_mask: SelfAttentionMask = "default"
+    ) -> SequenceInput:
         """Normalize each branch result immediately before adding its residual."""
-        x = input.x + self.norm_attn(self.self_attn(input))
+        x = input.x + self.norm_attn(
+            call_self_attention(self.self_attn, input, self_attn_mask=self_attn_mask)
+        )
         x = x + self.norm_ff(self.ff(x))
         return input._replace(x=x)
 

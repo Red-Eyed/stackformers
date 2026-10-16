@@ -34,6 +34,7 @@ from stackformers.positional.factory import build_pos_encoding
 from stackformers.result import Err, Ok, Result
 
 if TYPE_CHECKING:
+    from stackformers.attention.masking import SelfAttentionMask
     from stackformers.sequence import SequenceInput
 
 _T = TypeVar("_T")
@@ -255,10 +256,12 @@ class _VariableWidthLayer(nn.Module):
         self.layer = layer
 
     @override
-    def forward(self, input: SequenceInput) -> SequenceInput:
+    def forward(
+        self, input: SequenceInput, *, self_attn_mask: SelfAttentionMask = "default"
+    ) -> SequenceInput:
         """Project only the feature tensor while preserving all sequence metadata."""
         projected = input._replace(x=self.projection(input.x))
-        return self.layer(projected)
+        return self.layer(projected, self_attn_mask=self_attn_mask)
 
     if TYPE_CHECKING:
         __call__ = forward
@@ -353,10 +356,12 @@ class VariableWidthTransformerEncoder(nn.Module):
                 )
 
     @override
-    def forward(self, input: SequenceInput) -> Tensor:
+    def forward(
+        self, input: SequenceInput, *, self_attn_mask: SelfAttentionMask = "default"
+    ) -> Tensor:
         """Encode a padded or packed sequence into the configured final width."""
         for layer in self.layers:
-            input = layer(input)
+            input = layer(input, self_attn_mask=self_attn_mask)
         return self.final_norm(input.x)
 
     if TYPE_CHECKING:

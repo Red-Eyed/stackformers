@@ -7,7 +7,9 @@ from einops import rearrange, repeat
 from torch import Tensor
 from typing_extensions import override
 
+from stackformers._result import unwrap_or_raise
 from stackformers.attention.bias import NoAttnBias
+from stackformers.attention.masking import SelfAttentionMask, resolve_self_mask
 from stackformers.attention.ops import packed_attn_or_fallback, padded_sdpa
 from stackformers.sequence import (
     PackedInput,
@@ -54,7 +56,7 @@ class SelfAttention(nn.Module):
         self.k_norm: nn.Module = nn.RMSNorm(dh) if config.qk_norm else nn.Identity()
         nn.init.normal_(self.to_out.weight, std=0.02)
 
-    def _forward_padded(self, input: PaddedInput) -> Tensor:
+    def _forward_padded(self, input: PaddedInput, self_attn_mask: SelfAttentionMask) -> Tensor:
         cfg = self.config
         h, kv_h, groups = cfg.heads, cfg.effective_kv_heads, cfg.groups
         x = input.x
@@ -66,11 +68,16 @@ class SelfAttention(nn.Module):
             v = repeat(v, "b h n d -> b (h g) n d", g=groups)
         q, k = self.pos_encoding.forward_padded(q, k, input.abs_positions, input.abs_positions)
         bias = self.attn_bias(input)
-        out = padded_sdpa(q, k, v, input.mask, cfg.causal, cfg.window_size, bias)
+        causal, window, allowed = unwrap_or_raise(
+            resolve_self_mask(
+                self_attn_mask, cfg.causal, cfg.window_size, input.x.shape[1], input.x.device
+            )
+        )
+        out = padded_sdpa(q, k, v, input.mask, causal, window, bias, allowed)
         projected: Tensor = self.dropout(self.to_out(rearrange(out, "b h n d -> b n (h d)")))
         return projected
 
-    def _forward_packed(self, input: PackedInput) -> Tensor:
+    def _forward_packed(self, input: PackedInput, self_attn_mask: SelfAttentionMask) -> Tensor:
         cfg = self.config
         h, kv_h, groups = cfg.heads, cfg.effective_kv_heads, cfg.groups
         x = input.x
@@ -87,17 +94,25 @@ class SelfAttention(nn.Module):
             case _:
                 bias = self.attn_bias(packed_to_padded(input))
         seq = PackedSequence(cu_seqlens=input.cu_seqlens, max_seqlen=input.max_seqlen)
-        out = packed_attn_or_fallback(q, k, v, seq, seq, cfg.causal, cfg.window_size, bias)
+        causal, window, allowed = unwrap_or_raise(
+            resolve_self_mask(
+                self_attn_mask, cfg.causal, cfg.window_size, input.max_seqlen, input.x.device
+            )
+        )
+        out = packed_attn_or_fallback(q, k, v, seq, seq, causal, window, bias, allowed)
         projected: Tensor = self.dropout(self.to_out(rearrange(out, "nt h d -> nt (h d)")))
         return projected
 
     @override
-    def forward(self, input: SequenceInput) -> Tensor:
+    def forward(
+        self, input: SequenceInput, *, self_attn_mask: SelfAttentionMask = "default"
+    ) -> Tensor:
+        """Attend with per-call visibility; explicit masks override causal/window defaults."""
         match input:
             case PaddedInput():
-                return self._forward_padded(input)
+                return self._forward_padded(input, self_attn_mask)
             case PackedInput():
-                return self._forward_packed(input)
+                return self._forward_packed(input, self_attn_mask)
 
     if TYPE_CHECKING:
         __call__ = forward

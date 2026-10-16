@@ -24,6 +24,7 @@ from stackformers.attention import (
     SelfAttn,
     build_attn_bias,
 )
+from stackformers.attention.masking import CrossAttentionMask, SelfAttentionMask
 from stackformers.config import DecoderConfig, EncoderConfig, LayerConfig
 from stackformers.cross_attender import (
     CrossAttenderLayer,
@@ -131,6 +132,8 @@ from stackformers.sequence import (
 )
 
 __all__ = [
+    "SelfAttentionMask",
+    "CrossAttentionMask",
     "__version__",
     "Result",
     "Ok",
