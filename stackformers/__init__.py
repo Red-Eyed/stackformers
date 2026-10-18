@@ -50,7 +50,15 @@ from stackformers.decoder import (
     ReorderedNormDecoderLayer,
     SandwichNormDecoderLayer,
 )
-from stackformers.decoder_cache import CachedDecoderWrapper, DecoderCrossAttentionCacheBuilder
+from stackformers.decoder_cache import (
+    CachedDecoderLayer,
+    CachedDecoderLayerBase,
+    CachedDecoderWrapper,
+    CachedPostNormDecoderLayer,
+    CachedReorderedNormDecoderLayer,
+    CachedSandwichNormDecoderLayer,
+    DecoderCrossAttentionCacheBuilder,
+)
 from stackformers.encoder import Encoder
 from stackformers.feedforward import (
     GEGLU,
@@ -108,16 +116,19 @@ from stackformers.positional import (
 )
 from stackformers.presets.cross_attender import (
     CrossAttender,
+    CrossAttenderBase,
     CrossAttenderConfig,
     plain_cross_attender_config,
 )
 from stackformers.presets.decoder import (
     TransformerDecoder,
+    TransformerDecoderBase,
     TransformerDecoderConfig,
     plain_decoder_config,
 )
 from stackformers.presets.encoder import (
     TransformerEncoder,
+    TransformerEncoderBase,
     TransformerEncoderConfig,
     node_encoder_config,
     plain_encoder_config,
@@ -142,6 +153,10 @@ from stackformers.sequence import (
     make_packed_input,
     make_padded,
     make_padded_input,
+    packed_batch_size,
+    packed_to_padded,
+    padded_to_key_padding_mask,
+    padded_to_packed,
     position_ids_from_packed,
     to_seq_info,
 )
@@ -169,6 +184,10 @@ __all__ = [
     "to_seq_info",
     "lengths_to_cu_seqlens",
     "position_ids_from_packed",
+    "packed_batch_size",
+    "packed_to_padded",
+    "padded_to_key_padding_mask",
+    "padded_to_packed",
     # protocols
     "PosEncoding",
     "SelfAttn",
@@ -264,6 +283,11 @@ __all__ = [
     "Decoder",
     "DecoderCrossAttentionCacheBuilder",
     "CachedDecoderWrapper",
+    "CachedDecoderLayerBase",
+    "CachedDecoderLayer",
+    "CachedPostNormDecoderLayer",
+    "CachedSandwichNormDecoderLayer",
+    "CachedReorderedNormDecoderLayer",
     "CrossAttenderLayerBase",
     "CrossAttenderLayer",
     "PostNormCrossAttenderLayer",
@@ -271,6 +295,9 @@ __all__ = [
     "ReorderedNormCrossAttenderLayer",
     "CrossAttenderStack",
     # presets
+    "TransformerEncoderBase",
+    "TransformerDecoderBase",
+    "CrossAttenderBase",
     "TransformerEncoderConfig",
     "TransformerEncoder",
     "plain_encoder_config",

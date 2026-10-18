@@ -29,51 +29,50 @@ stackformers takes a different approach:
 
 ## Quick start
 
+Import the public API with `import stackformers as sf`. Configs, models, protocols,
+base classes, factories, sequence helpers, and projection conversions are available
+directly through `sf`.
+
 ### Zero boilerplate
 
 ```python
 import torch
-from stackformers import TransformerEncoder, plain_encoder_config, make_padded_input
+import stackformers as sf
 
-model = TransformerEncoder(plain_encoder_config(dim=512, heads=8, num_layers=6))
+model = sf.TransformerEncoder(sf.plain_encoder_config(dim=512, heads=8, num_layers=6))
 
 x    = torch.randn(2, 128, 512)
 mask = torch.ones(2, 128, dtype=torch.bool)
-out  = model(make_padded_input(x, mask))   # (2, 128, 512)
+out  = model(sf.make_padded_input(x, mask))   # (2, 128, 512)
 ```
 
 Switch to packed (variable-length, no padding waste) — same weights:
 
 ```python
-from stackformers import make_packed_input
-
 cu  = torch.tensor([0, 64, 128], dtype=torch.int32)
-out = model(make_packed_input(x_flat, cu, max_seqlen=64))  # (128, 512)
+out = model(sf.make_packed_input(x_flat, cu, max_seqlen=64))  # (128, 512)
 ```
 
 Causal LM backbone:
 
 ```python
-plain_encoder_config(dim=768, heads=12, num_layers=12, causal=True)
+sf.plain_encoder_config(dim=768, heads=12, num_layers=12, causal=True)
 ```
 
 Sliding-window local attention (O(n · w)):
 
 ```python
-from stackformers import windowed_encoder_config
-windowed_encoder_config(dim=512, heads=8, num_layers=6, window_size=128)
+sf.windowed_encoder_config(dim=512, heads=8, num_layers=6, window_size=128)
 ```
 
 Variable-width encoder — one model and head dimension per Transformer block:
 
 ```python
-from stackformers import VariableWidthTransformerEncoder, variable_width_encoder_config
-
-config = variable_width_encoder_config(
+config = sf.variable_width_encoder_config(
     d_models=[512, 512, 768, 768, 1024],
     dim_heads=[64, 64, 64, 64, 128],
 )
-model = VariableWidthTransformerEncoder(config)
+model = sf.VariableWidthTransformerEncoder(config)
 ```
 
 Omitting `heads` derives each block's head count as `d_model // dim_head`. Set `heads=12` or
@@ -94,10 +93,8 @@ a learned linear projection, so it is a related experimental variant rather than
 Encoder–decoder:
 
 ```python
-from stackformers import TransformerDecoder, plain_decoder_config
-
-model = TransformerDecoder(plain_decoder_config(dim=512, heads=8, num_layers=6))
-out   = model(make_padded_input(x, mask), make_padded_input(context, ctx_mask))
+model = sf.TransformerDecoder(sf.plain_decoder_config(dim=512, heads=8, num_layers=6))
+out   = model(sf.make_padded_input(x, mask), sf.make_padded_input(context, ctx_mask))
 ```
 
 For autoregressive export, build cross K/V once and pass both required cache tensors to every
@@ -106,14 +103,11 @@ one-token decoder invocation:
 ```python
 import torch
 
-from stackformers import (
-    CachedDecoderWrapper,
-    DecoderCrossAttentionCacheBuilder,
-)
+import stackformers as sf
 
 model.eval()
-cache_builder = DecoderCrossAttentionCacheBuilder(model).eval()
-cached_decoder = CachedDecoderWrapper(model).eval()
+cache_builder = sf.DecoderCrossAttentionCacheBuilder(model).eval()
+cached_decoder = sf.CachedDecoderWrapper(model).eval()
 
 cross_cache = cache_builder(context_input)
 self_kv_cache = torch.empty(num_layers, 2, batch, kv_heads, 0, dim_head)
@@ -142,23 +136,19 @@ See the complete eager, ONNX export, and raw ONNX Runtime demonstration in
 Full control with JSON round-trip via `kind` discriminators:
 
 ```python
-from stackformers import (
-    TransformerEncoderConfig, TransformerEncoder,
-    SelfAttentionConfig, SwiGLUConfig, RMSNormConfig, RoPE1DConfig,
-    make_padded_input,
-)
+import stackformers as sf
 
-cfg = TransformerEncoderConfig(
-    attn=SelfAttentionConfig(dim=512, heads=8, dim_head=64, causal=False),
-    ff=SwiGLUConfig(dim=512, mult=4.0),
-    norm=RMSNormConfig(dim=512),
-    pos_encoding=RoPE1DConfig(dim_head=64),
+cfg = sf.TransformerEncoderConfig(
+    attn=sf.SelfAttentionConfig(dim=512, heads=8, dim_head=64, causal=False),
+    ff=sf.SwiGLUConfig(dim=512, mult=4.0),
+    norm=sf.RMSNormConfig(dim=512),
+    pos_encoding=sf.RoPE1DConfig(dim_head=64),
     num_layers=6,
 )
-model = TransformerEncoder(cfg)
+model = sf.TransformerEncoder(cfg)
 
 # Serialise / restore
-cfg2 = TransformerEncoderConfig.model_validate(cfg.model_dump())
+cfg2 = sf.TransformerEncoderConfig.model_validate(cfg.model_dump())
 ```
 
 `norm_placement` is available on `TransformerEncoderConfig`, `TransformerDecoderConfig`, and
@@ -184,25 +174,21 @@ target/query residual stream; the context sequence is not normalized or mutated 
 Wire layers yourself when presets aren't enough:
 
 ```python
-from stackformers import (
-    SelfAttention, SwiGLU, TransformerLayer, Encoder, RMSNorm,
-    RotaryEmbedding1D,
-    SelfAttentionConfig, SwiGLUConfig, RMSNormConfig, RoPE1DConfig,
-)
+import stackformers as sf
 
-pos  = RotaryEmbedding1D(RoPE1DConfig(dim_head=64))
-attn = SelfAttention(SelfAttentionConfig(dim=512, heads=8, dim_head=64), pos_encoding=pos)
+pos  = sf.RotaryEmbedding1D(sf.RoPE1DConfig(dim_head=64))
+attn = sf.SelfAttention(sf.SelfAttentionConfig(dim=512, heads=8, dim_head=64), pos_encoding=pos)
 
 layers = [
-    TransformerLayer(
+    sf.TransformerLayer(
         self_attn=attn,
-        ff=SwiGLU(SwiGLUConfig(dim=512)),
-        norm_attn=RMSNorm(RMSNormConfig(dim=512)),
-        norm_ff=RMSNorm(RMSNormConfig(dim=512)),
+        ff=sf.SwiGLU(sf.SwiGLUConfig(dim=512)),
+        norm_attn=sf.build_norm(sf.RMSNormConfig(dim=512)),
+        norm_ff=sf.build_norm(sf.RMSNormConfig(dim=512)),
     )
     for _ in range(6)
 ]
-encoder = Encoder(layers=layers, final_norm=RMSNorm(RMSNormConfig(dim=512)))
+encoder = sf.Encoder(layers=layers, final_norm=sf.build_norm(sf.RMSNormConfig(dim=512)))
 ```
 
 ---
@@ -213,12 +199,12 @@ Load an ordinary checkpoint, then recursively pack supported self-attention, cro
 SwiGLU, GEGLU, and HardSwishGLU layers:
 
 ```python
-from stackformers import to_packed, to_unpacked
+import stackformers as sf
 
 model.load_state_dict(checkpoint)
-model = to_packed(model)
+model = sf.to_packed(model)
 # Run or save the packed model.
-model = to_unpacked(model)
+model = sf.to_unpacked(model)
 ```
 
 These helpers replace registered children in place and return the root, which may itself be

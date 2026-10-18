@@ -6,6 +6,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/): MAJOR for breaking public API changes,
 MINOR for backwards-compatible features, PATCH for bug fixes and internal changes.
 
+## [5.0.0rc15]
+
+### Improvements
+
+- Complete the `import stackformers as sf` API with sequence conversion helpers,
+  preset base classes, and cached decoder layer classes. Existing module imports remain valid.
+- Use the `sf` namespace throughout the README examples and construct normalization through
+  `sf.build_norm()` instead of the unavailable `RMSNorm` import.
+
 ## [5.0.0rc14]
 
 ### New Features

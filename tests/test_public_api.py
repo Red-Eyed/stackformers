@@ -2,10 +2,26 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 
 import stackformers
+import stackformers as sf
+import stackformers.attention as attention
+import stackformers.decoder_cache as decoder_cache
+import stackformers.feedforward as feedforward
+import stackformers.norm as norm
+import stackformers.positional as positional
 import stackformers.presets as presets
+import stackformers.presets.cross_attender as cross_attender
+import stackformers.presets.decoder as decoder
+import stackformers.presets.encoder as encoder
+import stackformers.result as result
+import stackformers.sequence as sequence
+
+if TYPE_CHECKING:
+    from types import ModuleType
 
 STABLE_4_6_PUBLIC_NAMES = (
     "__version__",
@@ -141,3 +157,51 @@ def test_preset_package_exports_public_component(name: str) -> None:
     """Preset-specific configuration entry points remain available from the subpackage."""
     assert name in presets.__all__
     assert hasattr(presets, name)
+
+
+@pytest.mark.parametrize("name", sf.__all__)
+def test_declared_root_export_resolves(name: str) -> None:
+    """Every declared public name is accessible through the sf namespace."""
+    assert hasattr(sf, name)
+
+
+@pytest.mark.parametrize("module", [attention, feedforward, norm, positional, presets, result])
+def test_subpackage_exports_available_at_root(module: ModuleType) -> None:
+    """Subpackage public APIs retain object identity through the package facade."""
+    for name in module.__all__:
+        assert name in sf.__all__
+        assert getattr(sf, name) is getattr(module, name)
+
+
+@pytest.mark.parametrize(
+    ("module", "names"),
+    [
+        (
+            sequence,
+            (
+                "packed_batch_size",
+                "packed_to_padded",
+                "padded_to_key_padding_mask",
+                "padded_to_packed",
+            ),
+        ),
+        (encoder, ("TransformerEncoderBase",)),
+        (decoder, ("TransformerDecoderBase",)),
+        (cross_attender, ("CrossAttenderBase",)),
+        (
+            decoder_cache,
+            (
+                "CachedDecoderLayerBase",
+                "CachedDecoderLayer",
+                "CachedPostNormDecoderLayer",
+                "CachedSandwichNormDecoderLayer",
+                "CachedReorderedNormDecoderLayer",
+            ),
+        ),
+    ],
+)
+def test_public_helpers_and_extension_classes(module: ModuleType, names: tuple[str, ...]) -> None:
+    """Root imports expose the original helpers and subclassing contracts."""
+    for name in names:
+        assert name in sf.__all__
+        assert getattr(sf, name) is getattr(module, name)
