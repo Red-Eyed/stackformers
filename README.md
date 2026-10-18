@@ -207,6 +207,34 @@ encoder = Encoder(layers=layers, final_norm=RMSNorm(RMSNormConfig(dim=512)))
 
 ---
 
+## Convert projection layouts
+
+Load an ordinary checkpoint, then recursively pack supported self-attention, cross-attention,
+SwiGLU, GEGLU, and HardSwishGLU layers:
+
+```python
+from stackformers import to_packed, to_unpacked
+
+model.load_state_dict(checkpoint)
+model = to_packed(model)
+# Run or save the packed model.
+model = to_unpacked(model)
+```
+
+These helpers replace registered children in place and return the root, which may itself be
+replaced. Repeated calls keep layers already in the requested layout. Shared layer references
+and retained child modules stay shared. Built-in preset configs follow the new layout; save
+`model.config.model_dump_json()` alongside its state dict to reconstruct that layout later.
+Caller-owned config objects are left unchanged. Custom subclasses keep their own behavior
+and metadata; supported children are still visited.
+
+Weights round-trip exactly; outputs match within dtype tolerance because matrix multiplication
+rounding can change. Convert before constructing an optimizer: replaced projection parameters
+do not migrate optimizer state, existing gradients, hooks, or cross-layer parameter aliases.
+Groups with mixed `requires_grad` fail before mutation. Existing cache wrappers require ordinary
+attention, so packing an already-wrapped cache executor is rejected before mutation.
+Projection packing is independent of the `PackedInput` sequence layout.
+
 ## What's included
 
 | Area | Variants |

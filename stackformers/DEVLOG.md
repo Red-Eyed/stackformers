@@ -1,5 +1,34 @@
 # Transformer model development log
 
+## 2026-10-18 — Recursive projection conversion (5.0.0rc14)
+
+### Observation and decision
+
+The per-layer conversions require callers to replace every nested attention and gated
+feed-forward manually and keep checkpoint configs in sync. Add public `to_packed(nn.Module)`
+and `to_unpacked(nn.Module)` adapters that reuse concrete conversion methods. Prepare each
+replacement once per module identity before changing registered child slots. Reconnect retained
+children so shared layer references, positional encodings, biases, and other collaborators
+remain shared. Use the returned root because it may itself be replaced.
+
+Copy built-in preset configs into the selected variants without changing caller-owned config
+objects. Leave custom subclass behavior and metadata under the caller's control. No new
+projection protocol, base class, or forward dispatch is introduced. Mixed trainability and
+existing cache wrappers fail before tree mutation; packed cached execution remains unsupported.
+
+### Verified result and limits
+
+Focused tests pass for all five supported layer types, masked padded and packed sequence inputs,
+all four presets and normalization topologies, all gated variants and a non-gated FFN, nested
+containers, shared siblings/collaborators, standalone roots, idempotence, and mixed layouts.
+Exact weight restoration and matching config/checkpoint reloads are verified independently
+of output tolerance. `just check` passes: 2,220 passed, 21 skipped, 172 expected failures,
+and 111 optional-case unexpected passes; formatting, lint, and types also pass.
+Trainability and training modes survive conversion. Output parity uses
+dtype tolerances because packing can change floating-point rounding. Convert before creating
+an optimizer; replaced projection parameters do not migrate optimizer state, gradients,
+hooks, or cross-layer parameter aliases. No new performance or model-quality claim is made.
+
 ## 2026-10-18 — Extend packed feed-forward selection (5.0.0rc13)
 
 GEGLU and HardSwishGLU now have independent packed variants and concrete configs selected

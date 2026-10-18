@@ -6,6 +6,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/): MAJOR for breaking public API changes,
 MINOR for backwards-compatible features, PATCH for bug fixes and internal changes.
 
+## [5.0.0rc14]
+
+### New Features
+
+- Add recursive `to_packed(nn.Module)` and `to_unpacked(nn.Module)` helpers for supported
+  attention and gated feed-forward layers. Replace registered children in place and return
+  the root, preserving weights, training flags, and shared layer references.
+- Synchronize built-in preset configs with converted checkpoint layouts without mutating
+  caller-owned configs. Check incompatible trainability and cache wrappers before mutation.
+
 ## [5.0.0rc13]
 
 ### New Features

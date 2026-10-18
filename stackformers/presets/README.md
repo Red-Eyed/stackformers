@@ -52,7 +52,11 @@ variant in each layer. Feed-forward selection is independent of attention select
 Defaults remain ordinary projections. Old attention JSON without a `kind` discriminator also
 selects ordinary projections, preserving old checkpoint layouts. For existing weights, load
 the ordinary checkpoint before calling `to_packed()` on the supported modules; save a matching
-packed preset config alongside the converted state dict. A state dict alone carries no config.
+packed preset config alongside the converted state dict. Alternatively, call the public
+`model = to_packed(model)` helper to replace layers recursively and update built-in preset
+configs together. `to_unpacked(model)` reverses both changes. Config updates use copies, so
+external references to the original configs remain valid. Custom preset subclasses retain
+their own metadata. A state dict alone carries no config.
 Existing cached decoding wrappers require ordinary attention.
 
 ## Per-call attention visibility

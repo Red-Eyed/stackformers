@@ -89,6 +89,7 @@ from stackformers.mlm.wrapper import MLMOutput, MLMWrapper
 from stackformers.norm.config import LayerNormConfig, NormPlacement, RMSNormConfig
 from stackformers.norm.factory import NormConfig, build_norm
 from stackformers.norm.protocols import Norm
+from stackformers.packing import to_packed, to_unpacked
 from stackformers.positional import (
     LearnedPosEncoding,
     LearnedPosEncodingConfig,
@@ -146,6 +147,8 @@ from stackformers.sequence import (
 )
 
 __all__ = [
+    "to_packed",
+    "to_unpacked",
     "SelfAttentionMask",
     "CrossAttentionMask",
     "__version__",
