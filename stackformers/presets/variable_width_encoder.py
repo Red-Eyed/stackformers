@@ -15,9 +15,9 @@ from stackformers.attention.config import (
     DistanceBiasConfig,
     NoAttnBiasConfig,
     SelfAttentionConfig,
+    SelfAttentionVariantConfig,
 )
-from stackformers.attention.factory import build_attn_bias
-from stackformers.attention.self_attn import SelfAttention
+from stackformers.attention.factory import build_attn_bias, build_self_attn
 from stackformers.feedforward.config import FeedForwardConfig, SwiGLUConfig
 from stackformers.feedforward.factory import build_ff
 from stackformers.layers import (
@@ -70,7 +70,7 @@ def _layer_values(value: _T | list[_T], count: int, name: str) -> Result[list[_T
 class VariableWidthEncoderLayerConfig(BaseModel):
     """Describe every configurable component used by one variable-width block."""
 
-    attn: SelfAttentionConfig
+    attn: SelfAttentionVariantConfig
     ff: FeedForwardConfig
     norm: NormConfig
     pos_encoding: PosEncodingConfig
@@ -317,7 +317,7 @@ class VariableWidthTransformerEncoder(nn.Module):
         norm_placement: NormPlacement,
     ) -> TransformerLayerBase:
         """Construct one block entirely from its explicit component configurations."""
-        self_attn = SelfAttention(
+        self_attn = build_self_attn(
             config=config.attn,
             pos_encoding=build_pos_encoding(config=config.pos_encoding),
             attn_bias=build_attn_bias(config=config.attn_bias),

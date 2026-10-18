@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import warnings
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, BeforeValidator, Field, JsonValue, model_validator
 
 from stackformers._result import unwrap_or_raise
 from stackformers.result import Err, Ok, Result
@@ -44,7 +44,7 @@ def _warn_attn_dims(dim: int, heads: int, dim_head: int) -> None:
         )
 
 
-class SelfAttentionConfig(BaseModel, frozen=True):
+class _SelfAttentionConfigBase(BaseModel, frozen=True):
     """Immutable attention geometry and execution settings fixed at construction."""
 
     dim: int = Field(
@@ -95,7 +95,7 @@ class SelfAttentionConfig(BaseModel, frozen=True):
     )
 
     @model_validator(mode="after")
-    def _validate(self) -> "SelfAttentionConfig":
+    def _validate(self) -> Self:
         """Translate core validation failures into the existing Pydantic error contract."""
         unwrap_or_raise(_validate_head_grouping(self.heads, self.kv_heads))
         _warn_attn_dims(self.dim, self.heads, self.dim_head)
@@ -108,6 +108,36 @@ class SelfAttentionConfig(BaseModel, frozen=True):
     @property
     def groups(self) -> int:
         return self.heads // self.effective_kv_heads
+
+
+class SelfAttentionConfig(_SelfAttentionConfigBase):
+    """Self-attention with separate Q/K/V projections and ordinary checkpoint names."""
+
+    kind: Literal["self_attention"] = "self_attention"
+
+
+class PackedSelfAttentionConfig(_SelfAttentionConfigBase):
+    """Self-attention with one QKV projection, including unequal GQA/MQA widths."""
+
+    kind: Literal["packed_self_attention"] = "packed_self_attention"
+
+
+def _legacy_self_attention_kind(
+    value: SelfAttentionConfig | PackedSelfAttentionConfig | dict[str, JsonValue],
+) -> SelfAttentionConfig | PackedSelfAttentionConfig | dict[str, JsonValue]:
+    """Read legacy untagged attention JSON as the original separate-projection layout."""
+    match value:
+        case dict() if "kind" not in value:
+            return {**value, "kind": "self_attention"}
+        case _:
+            return value
+
+
+SelfAttentionVariantConfig = Annotated[
+    SelfAttentionConfig | PackedSelfAttentionConfig,
+    Field(discriminator="kind"),
+    BeforeValidator(_legacy_self_attention_kind),
+]
 
 
 class NoAttnBiasConfig(BaseModel):
@@ -152,7 +182,7 @@ AttnBiasConfig = Annotated[
 ]
 
 
-class CrossAttentionConfig(BaseModel, frozen=True):
+class _CrossAttentionConfigBase(BaseModel, frozen=True):
     """Immutable cross-attention settings shared with the constructed projections."""
 
     dim: int = Field(
@@ -190,7 +220,7 @@ class CrossAttentionConfig(BaseModel, frozen=True):
     )
 
     @model_validator(mode="after")
-    def _validate(self) -> "CrossAttentionConfig":
+    def _validate(self) -> Self:
         """Translate core validation failures into the existing Pydantic error contract."""
         unwrap_or_raise(_validate_head_grouping(self.heads, self.kv_heads))
         _warn_attn_dims(self.dim, self.heads, self.dim_head)
@@ -203,3 +233,33 @@ class CrossAttentionConfig(BaseModel, frozen=True):
     @property
     def groups(self) -> int:
         return self.heads // self.effective_kv_heads
+
+
+class CrossAttentionConfig(_CrossAttentionConfigBase):
+    """Cross-attention with separate query, key, and value projections."""
+
+    kind: Literal["cross_attention"] = "cross_attention"
+
+
+class PackedCrossAttentionConfig(_CrossAttentionConfigBase):
+    """Cross-attention with a separate query projection and one context KV projection."""
+
+    kind: Literal["packed_cross_attention"] = "packed_cross_attention"
+
+
+def _legacy_cross_attention_kind(
+    value: CrossAttentionConfig | PackedCrossAttentionConfig | dict[str, JsonValue],
+) -> CrossAttentionConfig | PackedCrossAttentionConfig | dict[str, JsonValue]:
+    """Read legacy untagged cross-attention JSON without changing its checkpoint layout."""
+    match value:
+        case dict() if "kind" not in value:
+            return {**value, "kind": "cross_attention"}
+        case _:
+            return value
+
+
+CrossAttentionVariantConfig = Annotated[
+    CrossAttentionConfig | PackedCrossAttentionConfig,
+    Field(discriminator="kind"),
+    BeforeValidator(_legacy_cross_attention_kind),
+]

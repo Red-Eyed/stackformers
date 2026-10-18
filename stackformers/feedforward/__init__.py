@@ -5,6 +5,7 @@ from stackformers.feedforward.config import (
     GEGLUConfig,
     GELUConfig,
     HardSwishGLUConfig,
+    PackedSwiGLUConfig,
     ReluSquaredConfig,
     SwiGLUConfig,
 )
@@ -18,6 +19,7 @@ from stackformers.feedforward.relu_squared import ReluSquaredFF
 from stackformers.feedforward.swiglu import SwiGLU
 
 __all__ = [
+    "PackedSwiGLUConfig",
     "PackedSwiGLU",
     "FeedForward",
     "FeedForwardConfig",

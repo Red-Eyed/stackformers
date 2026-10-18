@@ -1,5 +1,32 @@
 # Transformer model development log
 
+## 2026-10-18 — Construct packed layouts from concrete configs (5.0.0rc12)
+
+### Observation and decision
+
+The explicit conversion API in `67f5b40` preserves old checkpoints, but reconstructing a
+packed model should not require constructing and replacing ordinary projections first.
+Introduce separate `PackedSelfAttentionConfig`, `PackedCrossAttentionConfig`, and
+`PackedSwiGLUConfig` records. Factories exhaustively match discriminated unions; constructors
+accept only their matching concrete config. Existing presets delegate to these factories.
+Shared config fields remain in private data bases without adding behavioral abstractions.
+
+Persist `kind` in JSON so saved configs reconstruct the matching state-dict layout. Adapt
+legacy untagged attention JSON to the ordinary variant at validation. Conversion and
+unpacking create the destination config explicitly. Ordinary forward implementations and
+checkpoint names remain intact; existing cache wrappers still require ordinary attention.
+A converted model's state dict must be saved alongside a matching packed preset config.
+
+### Verified result and limits
+
+Focused checks cover factory dispatch, config transitions, legacy JSON, and strict checkpoint
+reload/output parity for all four presets, all normalization topologies, independent attention
+and SwiGLU layout selections, and supported device/dtype combinations. `just check` passes:
+1,769 passed, 21 skipped, 172 expected failures, and 111 optional-case unexpected passes;
+formatting, lint, and types also pass. Existing conversion and numerical parity tests pass.
+This change does not alter projection equations or
+establish new performance results; the previous complete-block experiment remains the evidence.
+
 ## 2026-10-18 — Opt-in projection packing (5.0.0rc11)
 
 ### Observation

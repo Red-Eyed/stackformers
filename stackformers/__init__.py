@@ -12,6 +12,7 @@ from stackformers.attention import (
     CrossAttention,
     CrossAttentionConfig,
     CrossAttentionKVCache,
+    CrossAttentionVariantConfig,
     CrossAttn,
     DecoderCrossAttentionCache,
     DecoderStepOutput,
@@ -19,12 +20,17 @@ from stackformers.attention import (
     NoAttnBias,
     NoAttnBiasConfig,
     PackedCrossAttention,
+    PackedCrossAttentionConfig,
     PackedSelfAttention,
+    PackedSelfAttentionConfig,
     RelativeDistanceBias,
     SelfAttention,
     SelfAttentionConfig,
+    SelfAttentionVariantConfig,
     SelfAttn,
     build_attn_bias,
+    build_cross_attn,
+    build_self_attn,
 )
 from stackformers.attention.masking import CrossAttentionMask, SelfAttentionMask
 from stackformers.config import DecoderConfig, EncoderConfig, LayerConfig
@@ -56,6 +62,7 @@ from stackformers.feedforward import (
     HardSwishGLU,
     HardSwishGLUConfig,
     PackedSwiGLU,
+    PackedSwiGLUConfig,
     ReluSquaredConfig,
     ReluSquaredFF,
     SwiGLU,
@@ -206,6 +213,10 @@ __all__ = [
     "RotaryEmbeddingND",
     "LearnedPosEncoding",
     # attention
+    "PackedSelfAttentionConfig",
+    "PackedCrossAttentionConfig",
+    "SelfAttentionVariantConfig",
+    "CrossAttentionVariantConfig",
     "PackedSelfAttention",
     "PackedCrossAttention",
     "SelfAttention",
@@ -214,6 +225,7 @@ __all__ = [
     "RelativeDistanceBias",
     # feedforward
     "HardSwishGLU",
+    "PackedSwiGLUConfig",
     "PackedSwiGLU",
     "SwiGLU",
     "GEGLU",
@@ -224,6 +236,8 @@ __all__ = [
     "build_ff",
     "build_pos_encoding",
     "build_attn_bias",
+    "build_cross_attn",
+    "build_self_attn",
     # transformer blocks
     "TransformerLayerBase",
     "TransformerLayer",

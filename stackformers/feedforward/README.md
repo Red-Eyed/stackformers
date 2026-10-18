@@ -17,8 +17,11 @@ Load ordinary weights before converting. `packed.unpack()` restores the ordinary
 and checkpoint names. Conversion preserves dtype/device, trainability and training modes,
 and owns new parameters. Convert before creating an optimizer: optimizer state, gradients,
 hooks and parameter aliases are not transferred. Gate and value projections must share
-`requires_grad`. Default factory dispatch remains unchanged. Measure complete blocks before
-selecting this variant for deployment.
+`requires_grad`. Select `PackedSwiGLUConfig` in `build_ff` or a preset to construct packed
+projections directly. Its `kind="packed_swiglu"` discriminator survives JSON serialization;
+ordinary `SwiGLUConfig` keeps the original layout. Each constructor accepts only its matching
+concrete config, and conversion updates the destination config accordingly. Measure complete
+blocks before selecting this variant for deployment.
 
 ## Adding a new feed-forward
 

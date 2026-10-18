@@ -6,6 +6,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/): MAJOR for breaking public API changes,
 MINOR for backwards-compatible features, PATCH for bug fixes and internal changes.
 
+## [5.0.0rc12]
+
+### New Features
+
+- Select packed projections directly with `PackedSelfAttentionConfig`,
+  `PackedCrossAttentionConfig`, and `PackedSwiGLUConfig` through factories and presets.
+  JSON discriminators reconstruct the matching layout before loading packed checkpoints.
+- Keep legacy untagged attention configs loading as ordinary projections. Conversion and
+  unpacking produce matching concrete config types; each constructor accepts its own config.
+
 ## [5.0.0rc11]
 
 ### New Features

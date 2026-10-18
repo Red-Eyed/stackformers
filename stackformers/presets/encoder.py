@@ -16,9 +16,9 @@ from stackformers.attention.config import (
     DistanceBiasConfig,
     NoAttnBiasConfig,
     SelfAttentionConfig,
+    SelfAttentionVariantConfig,
 )
-from stackformers.attention.factory import build_attn_bias
-from stackformers.attention.self_attn import SelfAttention
+from stackformers.attention.factory import build_attn_bias, build_self_attn
 from stackformers.encoder import Encoder
 from stackformers.feedforward.config import FeedForwardConfig, SwiGLUConfig
 from stackformers.feedforward.factory import build_ff
@@ -85,7 +85,7 @@ class TransformerEncoderBase(nn.Module, Generic[C], ABC):
 
 
 class TransformerEncoderConfig(BaseModel):
-    attn: SelfAttentionConfig
+    attn: SelfAttentionVariantConfig
     ff: FeedForwardConfig
     norm: NormConfig
     pos_encoding: PosEncodingConfig
@@ -230,7 +230,7 @@ class TransformerEncoder(TransformerEncoderBase[TransformerEncoderConfig]):
         bias: AttnBias,
     ) -> TransformerLayerBase:
         """Construct the layer class selected by the normalization topology."""
-        self_attn = SelfAttention(config=config.attn, pos_encoding=pos, attn_bias=bias)
+        self_attn = build_self_attn(config=config.attn, pos_encoding=pos, attn_bias=bias)
         ff = self.build_ff(config)
         match config.norm_placement:
             case "pre":

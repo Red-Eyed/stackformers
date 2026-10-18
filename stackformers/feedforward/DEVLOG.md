@@ -1,5 +1,14 @@
 # Feed-forward Development Log
 
+## 2026-10-18 — Concrete packed SwiGLU config (5.0.0rc12)
+
+`PackedSwiGLUConfig` selects the packed layout through the existing discriminated factory.
+`PackedSwiGLU` accepts only this concrete config; ordinary `SwiGLUConfig` keeps its existing
+constructor and checkpoint layout. Conversion and unpacking change config variants explicitly.
+JSON roundtrip, direct factory construction, conversion metadata, and preset checkpoint
+reloads are verified alongside the existing numerical parity tests. The forward equations
+are unchanged; no new throughput or model-quality claim is made.
+
 ## 2026-10-18 — Opt-in packed SwiGLU (5.0.0rc11)
 
 ### Observation and decision

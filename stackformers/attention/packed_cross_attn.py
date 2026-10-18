@@ -13,6 +13,7 @@ from typing_extensions import override
 
 from stackformers._projection_packing import load_packed_state, load_unpacked_state
 from stackformers._result import unwrap_or_raise
+from stackformers.attention.config import CrossAttentionConfig, PackedCrossAttentionConfig
 from stackformers.attention.cross_attn import CrossAttention
 from stackformers.attention.layout import matching_layouts
 from stackformers.attention.masking import CrossAttentionMask, validate_cross_mask
@@ -22,7 +23,6 @@ from stackformers.sequence import PackedInput, PackedSequence, PaddedInput, Sequ
 if TYPE_CHECKING:
     from jaxtyping import Float
 
-    from stackformers.attention.config import CrossAttentionConfig
     from stackformers.positional.protocols import PosEncoding
 
 
@@ -37,7 +37,7 @@ class PackedCrossAttention(nn.Module):
     the original checkpoint layout. Convert before creating an optimizer.
     """
 
-    def __init__(self, config: CrossAttentionConfig, pos_encoding: PosEncoding) -> None:
+    def __init__(self, config: PackedCrossAttentionConfig, pos_encoding: PosEncoding) -> None:
         """Build packed projections and shared attention collaborators."""
         super().__init__()
         self.config = config
@@ -61,15 +61,21 @@ class PackedCrossAttention(nn.Module):
     @classmethod
     def from_unpacked(cls, source: CrossAttention) -> PackedCrossAttention:
         """Copy an ordinary module without retaining or changing its parameters."""
+        config = PackedCrossAttentionConfig.model_validate(
+            source.config.model_dump(exclude={"kind"})
+        )
         with torch.device("meta"):
-            target = cls(source.config, deepcopy(source.pos_encoding))
+            target = cls(config, deepcopy(source.pos_encoding))
         load_packed_state(source, target, _SEPARATE, _PACKED)
         return target
 
     def unpack(self) -> CrossAttention:
         """Return an independent module compatible with ordinary checkpoints."""
         with torch.device("meta"):
-            target = CrossAttention(self.config, deepcopy(self.pos_encoding))
+            target = CrossAttention(
+                CrossAttentionConfig.model_validate(self.config.model_dump(exclude={"kind"})),
+                deepcopy(self.pos_encoding),
+            )
         load_unpacked_state(self, target, _PACKED, _SEPARATE)
         return target
 

@@ -10,8 +10,8 @@ from pydantic import BaseModel, Field
 from torch import Tensor
 from typing_extensions import override
 
-from stackformers.attention.config import CrossAttentionConfig
-from stackformers.attention.cross_attn import CrossAttention
+from stackformers.attention.config import CrossAttentionConfig, CrossAttentionVariantConfig
+from stackformers.attention.factory import build_cross_attn
 from stackformers.cross_attender import (
     CrossAttenderLayer,
     CrossAttenderLayerBase,
@@ -76,7 +76,7 @@ class CrossAttenderBase(nn.Module, Generic[C], ABC):
 
 
 class CrossAttenderConfig(BaseModel):
-    attn: CrossAttentionConfig
+    attn: CrossAttentionVariantConfig
     ff: FeedForwardConfig
     norm: NormConfig
     pos_encoding: PosEncodingConfig = NoPosEncodingConfig()
@@ -125,7 +125,7 @@ class CrossAttender(CrossAttenderBase[CrossAttenderConfig]):
         pos: PosEncoding,
     ) -> CrossAttenderLayerBase:
         """Construct the cross-attender layer selected by the norm topology."""
-        cross_attn = CrossAttention(config=config.attn, pos_encoding=pos)
+        cross_attn = build_cross_attn(config=config.attn, pos_encoding=pos)
         ff = self.build_ff(config)
         match config.norm_placement:
             case "pre":

@@ -11,9 +11,13 @@ from torch import Tensor
 from typing_extensions import override
 
 from stackformers.attention.bias import NoAttnBias
-from stackformers.attention.config import CrossAttentionConfig, SelfAttentionConfig
-from stackformers.attention.cross_attn import CrossAttention
-from stackformers.attention.self_attn import SelfAttention
+from stackformers.attention.config import (
+    CrossAttentionConfig,
+    CrossAttentionVariantConfig,
+    SelfAttentionConfig,
+    SelfAttentionVariantConfig,
+)
+from stackformers.attention.factory import build_cross_attn, build_self_attn
 from stackformers.decoder import (
     Decoder,
     DecoderLayer,
@@ -83,8 +87,8 @@ class TransformerDecoderBase(nn.Module, Generic[C], ABC):
 
 
 class TransformerDecoderConfig(BaseModel):
-    self_attn: SelfAttentionConfig
-    cross_attn: CrossAttentionConfig
+    self_attn: SelfAttentionVariantConfig
+    cross_attn: CrossAttentionVariantConfig
     ff: FeedForwardConfig
     norm: NormConfig
     pos_encoding: PosEncodingConfig  # applies to self-attention only
@@ -135,12 +139,12 @@ class TransformerDecoder(TransformerDecoderBase[TransformerDecoderConfig]):
         self_bias: AttnBias,
     ) -> DecoderLayerBase:
         """Construct the decoder layer selected by the normalization topology."""
-        self_attn = SelfAttention(
+        self_attn = build_self_attn(
             config=config.self_attn,
             pos_encoding=self_pos,
             attn_bias=self_bias,
         )
-        cross_attn = CrossAttention(
+        cross_attn = build_cross_attn(
             config=config.cross_attn,
             pos_encoding=NoPosEncoding(NoPosEncodingConfig()),
         )

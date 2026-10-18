@@ -14,6 +14,7 @@ from typing_extensions import override
 from stackformers._projection_packing import load_packed_state, load_unpacked_state
 from stackformers._result import unwrap_or_raise
 from stackformers.attention.bias import NoAttnBias
+from stackformers.attention.config import PackedSelfAttentionConfig, SelfAttentionConfig
 from stackformers.attention.masking import SelfAttentionMask, resolve_self_mask
 from stackformers.attention.ops import packed_attn_or_fallback, padded_sdpa
 from stackformers.attention.self_attn import SelfAttention
@@ -28,7 +29,6 @@ from stackformers.sequence import (
 if TYPE_CHECKING:
     from jaxtyping import Float
 
-    from stackformers.attention.config import SelfAttentionConfig
     from stackformers.attention.protocols import AttnBias
     from stackformers.positional.protocols import PosEncoding
 
@@ -46,7 +46,7 @@ class PackedSelfAttention(nn.Module):
 
     def __init__(
         self,
-        config: SelfAttentionConfig,
+        config: PackedSelfAttentionConfig,
         pos_encoding: PosEncoding,
         attn_bias: AttnBias | None = None,
     ) -> None:
@@ -78,8 +78,11 @@ class PackedSelfAttention(nn.Module):
     @classmethod
     def from_unpacked(cls, source: SelfAttention) -> PackedSelfAttention:
         """Copy an ordinary module without retaining or changing its parameters."""
+        config = PackedSelfAttentionConfig.model_validate(
+            source.config.model_dump(exclude={"kind"})
+        )
         with torch.device("meta"):
-            target = cls(source.config, deepcopy(source.pos_encoding), deepcopy(source.attn_bias))
+            target = cls(config, deepcopy(source.pos_encoding), deepcopy(source.attn_bias))
         load_packed_state(source, target, _SEPARATE, _PACKED)
         return target
 
@@ -87,7 +90,9 @@ class PackedSelfAttention(nn.Module):
         """Return an independent module compatible with ordinary checkpoints."""
         with torch.device("meta"):
             target = SelfAttention(
-                self.config, deepcopy(self.pos_encoding), deepcopy(self.attn_bias)
+                SelfAttentionConfig.model_validate(self.config.model_dump(exclude={"kind"})),
+                deepcopy(self.pos_encoding),
+                deepcopy(self.attn_bias),
             )
         load_unpacked_state(self, target, _PACKED, _SEPARATE)
         return target

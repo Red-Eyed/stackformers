@@ -30,6 +30,31 @@ Compilation and export specialize to the context presence used when tracing.
 
 All presets accept `PaddedInput` or `PackedInput` interchangeably.
 
+## Projection layout
+
+Select concrete config variants to construct packed projections directly:
+
+```python
+config = plain_encoder_config(dim=768, heads=12, num_layers=6)
+config.attn = PackedSelfAttentionConfig(dim=768, heads=12, dim_head=64)
+config.ff = PackedSwiGLUConfig(dim=768)
+model = TransformerEncoder(config)
+
+saved_config = config.model_dump_json()
+restored_config = TransformerEncoderConfig.model_validate_json(saved_config)
+restored = TransformerEncoder(restored_config)
+restored.load_state_dict(model.state_dict())
+```
+
+Decoder configs accept `PackedSelfAttentionConfig` and `PackedCrossAttentionConfig` independently.
+Cross-attender configs accept the cross-attention variant; variable-width encoders select the
+variant in each layer. Feed-forward selection is independent of attention selection.
+Defaults remain ordinary projections. Old attention JSON without a `kind` discriminator also
+selects ordinary projections, preserving old checkpoint layouts. For existing weights, load
+the ordinary checkpoint before calling `to_packed()` on the supported modules; save a matching
+packed preset config alongside the converted state dict. A state dict alone carries no config.
+Existing cached decoding wrappers require ordinary attention.
+
 ## Per-call attention visibility
 
 Encoder presets (including the variable-width encoder) accept `self_attn_mask`. Decoder

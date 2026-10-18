@@ -46,6 +46,12 @@ class SwiGLUConfig(_FFBase):
     kind: Literal["swiglu"] = "swiglu"
 
 
+class PackedSwiGLUConfig(_FFBase):
+    """SwiGLU with one packed gate/value projection and packed checkpoint names."""
+
+    kind: Literal["packed_swiglu"] = "packed_swiglu"
+
+
 class HardSwishGLUConfig(_FFBase):
     """Config for a parameter-matched GLU with a HardSwish gate."""
 
@@ -87,6 +93,11 @@ class ReluSquaredConfig(_FFBase):
 
 
 FeedForwardConfig = Annotated[
-    SwiGLUConfig | HardSwishGLUConfig | GEGLUConfig | GELUConfig | ReluSquaredConfig,
+    SwiGLUConfig
+    | PackedSwiGLUConfig
+    | HardSwishGLUConfig
+    | GEGLUConfig
+    | GELUConfig
+    | ReluSquaredConfig,
     Field(discriminator="kind"),
 ]

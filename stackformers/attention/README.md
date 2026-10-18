@@ -72,8 +72,12 @@ new parameters, preserves dtype/device, frozen parameters and training modes, an
 the source untouched. Packing requires all projections in a group to share `requires_grad`.
 Optimizer state, existing gradients, hooks and parameter aliases are not migrated.
 `unpack()` restores ordinary checkpoint names; packed checkpoints load into their matching
-packed class. Configs, factories, presets and cache wrappers retain their existing behavior.
-Use ordinary attention with the existing cache wrappers.
+packed class. Use `PackedSelfAttentionConfig` or `PackedCrossAttentionConfig` to construct
+packed projections directly through `build_self_attn` or `build_cross_attn`. Each constructor
+accepts its own concrete config; only factory inputs use the discriminated variant union.
+The `kind` field survives JSON serialization so presets reconstruct the checkpoint layout.
+Legacy attention JSON without `kind` selects ordinary attention. Conversion also changes the
+module's config to the destination variant. Use ordinary attention with the existing cache wrappers.
 
 Keep another experimental projection layout in its own module, with explicit conversion
 and parity tests against ordinary attention. Measure complete blocks before selecting a
@@ -83,8 +87,9 @@ and workload-dependent precision selection belong in deployment tooling.
 ## Extending
 
 To add a new attention variant, create a new `nn.Module` that satisfies the `SelfAttn` or
-`CrossAttn` protocol, including its keyword-only visibility argument. No kernel registration
-or factory changes are required. Default calls preserve legacy attention collaborator calls;
-using an override requires the collaborator to implement the updated protocol.
+`CrossAttn` protocol, including its keyword-only visibility argument. For config-based construction,
+add a discriminated config variant and a matching factory arm. Default calls preserve legacy
+attention collaborator calls; using an override requires the collaborator to implement the
+updated protocol.
 
 To add a new attention bias, write an `nn.Module` satisfying `AttnBias` (take `PaddedInput`, return a broadcastable `(b, h, n, s)` tensor or `None`), give it a config with a `kind` discriminator, join it to the `AttnBiasConfig` union, and add one `match` arm to `build_attn_bias`.
