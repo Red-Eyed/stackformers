@@ -6,6 +6,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/): MAJOR for breaking public API changes,
 MINOR for backwards-compatible features, PATCH for bug fixes and internal changes.
 
+## [5.0.0rc11]
+
+### New Features
+
+- Add `to_packed()` to self-attention, cross-attention and SwiGLU for opt-in packed
+  QKV, context KV, and gate/value projections. GQA/MQA retain explicit Q/KV widths.
+- Preserve ordinary forward paths and checkpoint names. Load old checkpoints normally,
+  then convert; `packed.unpack()` restores an independently owned ordinary module.
+  Convert before creating an optimizer; optimizer state and parameter aliases are not migrated.
+
 ## [5.0.0rc10]
 
 ### Developers

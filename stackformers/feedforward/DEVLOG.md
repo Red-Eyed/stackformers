@@ -1,5 +1,30 @@
 # Feed-forward Development Log
 
+## 2026-10-18 — Opt-in packed SwiGLU (5.0.0rc11)
+
+### Observation and decision
+
+Gate and value share an input and can use one projection. Keep the original `SwiGLU.forward`
+intact and add `to_packed()` returning an independent `PackedSwiGLU`. Preserve SiLU, the
+multiplication, dropout placement, inner width and output projection. Keep checkpoint
+conversion in focused helpers, and use `unpack()` to restore ordinary checkpoint names.
+Store a config snapshot without changing the ordinary state dict.
+
+### Verified result
+
+The full project check passes. Focused tests cover forward/input-gradient/parameter-gradient
+parity, padded and flattened token layouts, training dropout, dynamic export, checkpoint
+serialization, frozen/tied projection values, and fresh SGD steps. An independently captured
+Stackformers 4.6.0 checkpoint/output/input-gradient reference passes before and after conversion.
+The original implementation and its checkpoint names remain available.
+
+### Unproven claims
+
+Conversion does not migrate existing gradients, optimizer state, hooks or parameter aliases.
+GPU throughput, memory savings, convergence and trained-model task quality remain unmeasured.
+See the model-level DEVLOG for complete-block deployment measurements and their scope.
+
+
 ## 2026-08-14 — Standard GELU FFN
 
 ### Motivation

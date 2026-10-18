@@ -21,6 +21,7 @@ from stackformers.sequence import (
 
 if TYPE_CHECKING:
     from stackformers.attention.config import SelfAttentionConfig
+    from stackformers.attention.packed_self_attn import PackedSelfAttention
     from stackformers.attention.protocols import AttnBias
     from stackformers.positional.protocols import PosEncoding
 
@@ -113,6 +114,12 @@ class SelfAttention(nn.Module):
                 return self._forward_padded(input, self_attn_mask)
             case PackedInput():
                 return self._forward_packed(input, self_attn_mask)
+
+    def to_packed(self) -> PackedSelfAttention:
+        """Copy weights into packed QKV projections; convert before creating an optimizer."""
+        from stackformers.attention.packed_self_attn import PackedSelfAttention
+
+        return PackedSelfAttention.from_unpacked(self)
 
     if TYPE_CHECKING:
         __call__ = forward

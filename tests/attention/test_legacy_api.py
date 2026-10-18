@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from stackformers.attention.config import CrossAttentionConfig, SelfAttentionConfig
 from stackformers.attention.cross_attn import CrossAttention
+from stackformers.attention.packed_cross_attn import PackedCrossAttention
 from stackformers.attention.self_attn import SelfAttention
 from stackformers.positional.none import NoPosEncoding
 from stackformers.sequence import PaddedInput, make_padded_input, padded_to_packed
@@ -126,7 +127,7 @@ def _legacy_checkpoint(case: LegacyCase) -> dict[str, torch.Tensor]:
 
 
 def _cross_output(
-    attention: CrossAttention,
+    attention: CrossAttention | PackedCrossAttention,
     queries: PaddedInput,
     context: PaddedInput,
     packed: bool,
@@ -158,12 +159,14 @@ def _cross_output(
 )
 @pytest.mark.parametrize("packed", [False, True], ids=["padded", "packed"])
 @pytest.mark.parametrize("keyword_api", [False, True], ids=["positional", "keyword"])
+@pytest.mark.parametrize("pack_projections", [False, True], ids=["ordinary", "packed-projections"])
 def test_existing_attention_api_matches_rc1(
     legacy_case: LegacyCase,
     legacy_queries: PaddedInput,
     legacy_context: PaddedInput,
     packed: bool,
     keyword_api: bool,
+    pack_projections: bool,
 ) -> None:
     """Old calls load old checkpoints strictly and retain reference outputs and input gradients."""
     attention = _legacy_attention(legacy_case, keyword_api)
@@ -174,13 +177,21 @@ def test_existing_attention_api_matches_rc1(
         legacy_case.state_shapes
     )
     attention.load_state_dict(_legacy_checkpoint(legacy_case), strict=True)
+    if pack_projections:
+        restored = attention.to_packed().unpack()
+        for name, value in attention.state_dict().items():
+            torch.testing.assert_close(restored.state_dict()[name], value, rtol=0, atol=0)
 
     match attention:
         case SelfAttention():
             queries = padded_to_packed(legacy_queries) if packed else legacy_queries
-            output = attention(input=queries) if keyword_api else attention(queries)
+            self_attention = attention.to_packed() if pack_projections else attention
+            output = self_attention(input=queries) if keyword_api else self_attention(queries)
         case CrossAttention():
-            output = _cross_output(attention, legacy_queries, legacy_context, packed, keyword_api)
+            cross_attention = attention.to_packed() if pack_projections else attention
+            output = _cross_output(
+                cross_attention, legacy_queries, legacy_context, packed, keyword_api
+            )
 
     expected = torch.tensor(legacy_case.output, dtype=torch.float64)
     torch.testing.assert_close(

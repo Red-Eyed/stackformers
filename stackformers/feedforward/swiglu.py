@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from jaxtyping import Float
 
     from stackformers.feedforward.config import SwiGLUConfig
+    from stackformers.feedforward.packed_swiglu import PackedSwiGLU
 
 
 class SwiGLU(nn.Module):
@@ -23,6 +24,7 @@ class SwiGLU(nn.Module):
 
     def __init__(self, config: SwiGLUConfig) -> None:
         super().__init__()
+        self.config = config.model_copy(deep=True)
         inner_dim = config.inner_dim
 
         self.w1 = nn.Linear(config.dim, inner_dim, bias=False)
@@ -39,6 +41,12 @@ class SwiGLU(nn.Module):
         hidden = gate * self.w2(x)
         output: Tensor = self.w3(self.dropout(hidden))
         return output
+
+    def to_packed(self) -> PackedSwiGLU:
+        """Copy weights into packed gate/value projections before creating an optimizer."""
+        from stackformers.feedforward.packed_swiglu import PackedSwiGLU
+
+        return PackedSwiGLU.from_unpacked(self)
 
     if TYPE_CHECKING:
         __call__ = forward

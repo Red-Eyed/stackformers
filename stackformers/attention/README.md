@@ -51,6 +51,35 @@ decoder, preset, and positional classes contain no cache-specific methods.
 
 **Why not `flex_attention`.** It fuses the bias into the kernel and would make it O(n) instead of O(n²) — attempted, and parked on the `flex-attention` branch. It needs `dim_head >= 16`; its `score_mod` must lower as a *pointwise* subgraph, which forbids both a `vector_norm` over coordinates and a sum over shells; a captured tensor requiring grad may be indexed exactly once, which forbids unrolling that sum instead; called eagerly it is unfused and catastrophic (measured 64 s/step at n=2048, OOM at n=4096, against ~40 ms for SDPA), so it is viable only inside `torch.compile`; and under `torch.compile` with *dynamic* shapes it bails back to SDPA anyway. With node counts that vary per batch, the fused kernel would rarely be the one that runs.
 
+## Packed projection experiments
+
+Ordinary attention keeps its original forward path and checkpoint names. Call
+`attention.to_packed()` to create an independent `PackedSelfAttention` or
+`PackedCrossAttention`. These optional modules combine Q/K/V or context K/V with
+`nn.Linear` and explicit splits; GQA/MQA retain unequal query and KV widths.
+They support both padded and packed sequence inputs. No new protocol or base class is required.
+
+```python
+attention.load_state_dict(old_checkpoint)
+packed = attention.to_packed()
+output = packed(sequence)
+ordinary = packed.unpack()
+ordinary_checkpoint = ordinary.state_dict()
+```
+
+Convert after loading ordinary weights and before creating an optimizer. Conversion owns
+new parameters, preserves dtype/device, frozen parameters and training modes, and leaves
+the source untouched. Packing requires all projections in a group to share `requires_grad`.
+Optimizer state, existing gradients, hooks and parameter aliases are not migrated.
+`unpack()` restores ordinary checkpoint names; packed checkpoints load into their matching
+packed class. Configs, factories, presets and cache wrappers retain their existing behavior.
+Use ordinary attention with the existing cache wrappers.
+
+Keep another experimental projection layout in its own module, with explicit conversion
+and parity tests against ordinary attention. Measure complete blocks before selecting a
+layout: fewer projections do not guarantee faster FP32 or integer inference. Quantization
+and workload-dependent precision selection belong in deployment tooling.
+
 ## Extending
 
 To add a new attention variant, create a new `nn.Module` that satisfies the `SelfAttn` or

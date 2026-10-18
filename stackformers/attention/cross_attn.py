@@ -15,6 +15,7 @@ from stackformers.sequence import PackedInput, PackedSequence, PaddedInput, Sequ
 
 if TYPE_CHECKING:
     from stackformers.attention.config import CrossAttentionConfig
+    from stackformers.attention.packed_cross_attn import PackedCrossAttention
     from stackformers.positional.protocols import PosEncoding
 
 
@@ -149,6 +150,12 @@ class CrossAttention(nn.Module):
                 return self._forward_padded(queries, context, cross_attn_mask=cross_attn_mask)
             case PackedInput() as queries, PackedInput() as context:
                 return self._forward_packed(queries, context, cross_attn_mask=cross_attn_mask)
+
+    def to_packed(self) -> PackedCrossAttention:
+        """Copy weights into packed context KV projections before creating an optimizer."""
+        from stackformers.attention.packed_cross_attn import PackedCrossAttention
+
+        return PackedCrossAttention.from_unpacked(self)
 
     if TYPE_CHECKING:
         # Preserve nn.Module's hook machinery at runtime while exposing the

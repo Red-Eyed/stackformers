@@ -1,5 +1,104 @@
 # Transformer model development log
 
+## 2026-10-18 — Opt-in projection packing (5.0.0rc11)
+
+### Observation
+
+Self-attention projects the same input three times; cross-attention projects its context
+twice; SwiGLU projects gate and value independently. QuantSmith's isolated QKV measurements
+suggested packing could reduce integer-projection overhead, but did not establish complete-block gains.
+
+### Decision
+
+Add `to_packed()` to the existing attention and SwiGLU classes. Preserve their original forward
+implementations, parameter names, factory dispatch, and cache wrappers. Put experimental
+`PackedSelfAttention`, `PackedCrossAttention`, and `PackedSwiGLU` in separate modules, using
+ordinary `nn.Linear` and explicit split widths. No new protocol or abstract hierarchy is needed.
+
+Load old checkpoints into the original classes, then convert. Conversion copies parameters,
+preserves dtype/device, frozen parameters and training modes, and leaves the source untouched.
+`unpack()` returns an independently owned original module with its original checkpoint names.
+Projection groups must share trainability. Convert before creating an optimizer; optimizer
+state, existing gradients, hooks and parameter aliases are not migrated. Sequence packing and
+projection packing are independent: both projection layouts accept padded and packed inputs.
+
+### Verified
+
+`just check` passes: 1,614 tests passed, 21 skipped, 172 expected failures, and 111 optional-case
+unexpected passes. New checks cover forward and gradient parity, MHA/GQA/MQA, masks, learned
+bias, local visibility, checkpoint serialization, frozen/tied parameters, training dropout,
+and fresh optimizer steps. Released attention references from 5.0.0rc1 retain exact checkpoint
+keys and output/input-gradient behavior after conversion. A SwiGLU reference captured from
+the installed 4.6.0 wheel verifies the old checkpoint transition independently of current code.
+
+All 12 attention dynamic-export tests pass in QuantSmith's PyTorch 2.14 environment. Four
+PyTorch 2.11 GQA cases remain expected failures only after confirming that the ordinary
+implementation encounters the same symbolic stride-guard error. The other new export cases pass.
+
+### Complete-block ORT CPU experiment
+
+QuantSmith's existing exporter, integer lowering, profiler and timing runner were reused with
+an experiment adapter under ignored `work_dir/projection_packing/`. This run uses the local
+5.0.0rc11 source checkout (file hashes recorded in `source.json`), PyTorch 2.14.0, ORT 1.30.0,
+ONNX 1.23.0, arm64 macOS 27.0.1, batch 1, width 768 and 12 heads. The causal encoder has one
+RoPE/RMSNorm/SwiGLU layer and a final norm; cross-attention reprojects a 128-token context.
+Neither workload uses a KV cache. Weights and inputs are identical across projection layouts.
+
+Each candidate uses independent native opset-18/21 exports with dynamic sequence axes,
+CPUExecutionProvider, ORT_ENABLE_ALL, one intra/inter-op thread, 10 warmups and three
+alternating-order sweeps of 300 calls. Profiling uses a separate 10-call session. Initialization
+and weight packing are excluded. Values below are opset-18 medians of repetition medians.
+
+| Block/layout | Query tokens | FP32 µs | Native dynamic INT8 µs |
+|---|---:|---:|---:|
+| Encoder, unchanged | 1 | 393.90 | 137.10 |
+| Encoder, attention packed | 1 | 389.25 | 125.71 |
+| Encoder, SwiGLU packed | 1 | 391.21 | 120.79 |
+| Encoder, both packed | 1 | 388.06 | 106.85 |
+| Encoder, unchanged | 128 | 1758.96 | 3672.31 |
+| Encoder, attention packed | 128 | 1780.42 | 2950.37 |
+| Encoder, SwiGLU packed | 128 | 1897.25 | 2353.94 |
+| Encoder, both packed | 128 | 1831.33 | 1637.06 |
+| Cross-attention, unchanged | 1 | 241.56 | 727.67 |
+| Cross-attention, KV packed | 1 | 260.29 | 263.67 |
+| Cross-attention, unchanged | 128 | 590.44 | 1135.12 |
+| Cross-attention, KV packed | 128 | 610.44 | 672.44 |
+
+Combined packing improves the encoder's native INT8 path by 1.28× at one token and 2.24×
+at 128 tokens, reducing integer projections from seven to four. FP32 improvements are not
+consistent: combined packing is about 4% slower at 128 tokens, and packing context KV also
+regresses FP32 here. Native INT8 cross-attention remains slower than its FP32 baseline despite
+its improvement from packing. Keep all layouts explicit rather than changing defaults.
+
+All 144 graph variants execute at query/context pairs (1,1), (2,7), (7,2), and (31,13):
+576 graph/length validations. FP32 matches PyTorch; native dynamic and four fixed-grid integer
+paths return finite FP32 outputs with correct shapes. All 72 graph pairs have identical hashes
+between the one-token and 128-token measurements. Only FP32/native dynamic candidates are
+timed in this run; fixed-grid integer paths are correctness diagnostics.
+
+Native INT8 relative MSE against unchanged FP32 is about 0.000033 for the combined one-token
+encoder and 0.000018 at 128 tokens. These synthetic errors are not task-accuracy budgets.
+
+Raw reports, graphs, profiles, the generated adapter, and source fingerprints remain in
+`work_dir/projection_packing/`. Re-run the adapter from that directory with the adjacent
+QuantSmith checkout and its locked example dependencies:
+
+```sh
+PYTHONPATH=../..:../../../QuantSmith \
+  uv run --locked --group examples --project ../../../QuantSmith benchmark.py
+```
+
+`environment.json` reports installed distribution metadata (including Stackformers 4.6.0 in
+QuantSmith's pinned environment); `source.json` identifies the actual selected local 5.0.0rc11
+code and its hashes. The QuantSmith dependency pin was not changed.
+
+### Unproven
+
+CUDA execution, trained-model task quality, optimizer-state migration, and cached execution of
+the packed variants have not been established. Existing cache wrappers continue to use ordinary
+attention. Quantization and workload-dependent precision selection remain deployment concerns.
+
+
 ## 2026-09-26 — Precise cache and vendor input contracts (5.0.0rc7)
 
 ### Observation
