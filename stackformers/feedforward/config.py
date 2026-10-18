@@ -64,6 +64,18 @@ class GEGLUConfig(_FFBase):
     kind: Literal["geglu"] = "geglu"
 
 
+class PackedGEGLUConfig(_FFBase):
+    """GEGLU with one packed gate/value projection and packed checkpoint names."""
+
+    kind: Literal["packed_geglu"] = "packed_geglu"
+
+
+class PackedHardSwishGLUConfig(_FFBase):
+    """HardSwish GLU with one packed gate/value projection and packed checkpoint names."""
+
+    kind: Literal["packed_hardswish_glu"] = "packed_hardswish_glu"
+
+
 class GELUConfig(_FFBase):
     """Config for the standard GELU feed-forward network."""
 
@@ -96,7 +108,9 @@ FeedForwardConfig = Annotated[
     SwiGLUConfig
     | PackedSwiGLUConfig
     | HardSwishGLUConfig
+    | PackedHardSwishGLUConfig
     | GEGLUConfig
+    | PackedGEGLUConfig
     | GELUConfig
     | ReluSquaredConfig,
     Field(discriminator="kind"),

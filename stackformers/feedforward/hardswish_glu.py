@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from jaxtyping import Float
 
     from stackformers.feedforward.config import HardSwishGLUConfig
+    from stackformers.feedforward.packed_hardswish_glu import PackedHardSwishGLU
 
 
 class HardSwishGLU(nn.Module):
@@ -25,6 +26,7 @@ class HardSwishGLU(nn.Module):
     def __init__(self, config: HardSwishGLUConfig) -> None:
         """Build three bias-free projections at the configured gated width."""
         super().__init__()
+        self.config = config.model_copy(deep=True)
         inner_dim = config.inner_dim
 
         self.w1 = nn.Linear(config.dim, inner_dim, bias=False)
@@ -42,6 +44,12 @@ class HardSwishGLU(nn.Module):
         hidden = gate * self.w2(x)
         output: Tensor = self.w3(self.dropout(hidden))
         return output
+
+    def to_packed(self) -> PackedHardSwishGLU:
+        """Copy weights into packed gate/value projections before creating an optimizer."""
+        from stackformers.feedforward.packed_hardswish_glu import PackedHardSwishGLU
+
+        return PackedHardSwishGLU.from_unpacked(self)
 
     if TYPE_CHECKING:
         __call__ = forward

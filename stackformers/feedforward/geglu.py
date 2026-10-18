@@ -1,3 +1,5 @@
+"""GEGLU feed-forward network with separate gate/value projections."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -10,6 +12,7 @@ if TYPE_CHECKING:
     from jaxtyping import Float
 
     from stackformers.feedforward.config import GEGLUConfig
+    from stackformers.feedforward.packed_geglu import PackedGEGLU
 
 
 class GEGLU(nn.Module):
@@ -24,6 +27,7 @@ class GEGLU(nn.Module):
 
     def __init__(self, config: GEGLUConfig) -> None:
         super().__init__()
+        self.config = config.model_copy(deep=True)
         inner_dim = config.inner_dim
 
         self.w1 = nn.Linear(config.dim, inner_dim, bias=False)
@@ -40,6 +44,12 @@ class GEGLU(nn.Module):
         hidden = gate * self.w2(x)
         output: Tensor = self.w3(self.dropout(hidden))
         return output
+
+    def to_packed(self) -> PackedGEGLU:
+        """Copy weights into packed gate/value projections before creating an optimizer."""
+        from stackformers.feedforward.packed_geglu import PackedGEGLU
+
+        return PackedGEGLU.from_unpacked(self)
 
     if TYPE_CHECKING:
         __call__ = forward

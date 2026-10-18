@@ -6,6 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/): MAJOR for breaking public API changes,
 MINOR for backwards-compatible features, PATCH for bug fixes and internal changes.
 
+## [5.0.0rc13]
+
+### New Features
+
+- Add `PackedGEGLU` and `PackedHardSwishGLU` with matching concrete configs, factory and
+  preset selection, and JSON discriminators. Existing GEGLU and HardSwishGLU checkpoints
+  load normally before `to_packed()`; `unpack()` restores the original layout.
+
 ## [5.0.0rc12]
 
 ### New Features

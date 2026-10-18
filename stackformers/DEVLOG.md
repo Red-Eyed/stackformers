@@ -1,5 +1,16 @@
 # Transformer model development log
 
+## 2026-10-18 — Extend packed feed-forward selection (5.0.0rc13)
+
+GEGLU and HardSwishGLU now have independent packed variants and concrete configs selected
+through the existing feed-forward factory, including preset construction. Their gate and
+value projections share one matrix multiplication while retaining their original activation,
+dropout, and output projection. Original implementations remain available for old checkpoints;
+`to_packed()` and `unpack()` provide explicit transitions. No preset wiring or new behavior
+abstraction is required. `just check` passes with 1,799 tests passed, 21 skipped, 172 expected
+failures, and 111 optional-case unexpected passes. See the feed-forward DEVLOG for verification scope. No speedup or
+model-quality claim is established for these variants.
+
 ## 2026-10-18 — Construct packed layouts from concrete configs (5.0.0rc12)
 
 ### Observation and decision

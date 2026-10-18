@@ -1,5 +1,25 @@
 # Feed-forward Development Log
 
+## 2026-10-18 — Packed GEGLU and HardSwishGLU (5.0.0rc13)
+
+### Observation and decision
+
+GEGLU and HardSwishGLU share the same gate/value projection opportunity as SwiGLU. Add
+independent `PackedGEGLU` and `PackedHardSwishGLU` modules and concrete config variants.
+Factories select the layout; existing conversion helpers own weight copying and trainability
+checks. Keep activation choices local to each variant without introducing a behavior base
+class, protocol, or constructor mode flag. Original forwards and state-dict keys remain intact.
+
+### Verification scope
+
+Verified outputs, input/parameter gradients, seeded training dropout, dynamic export, strict
+ordinary/packed checkpoint reloads, config JSON dispatch, frozen parameters, training modes,
+and independent weight/config ownership across supported devices and dtypes. `just check`
+passes: 1,799 passed, 21 skipped, 172 expected failures, and 111 optional-case unexpected
+passes; formatting, lint, and types also pass. Packing does not
+migrate optimizer state, existing gradients, hooks, or aliases. Throughput and trained-model
+quality for these two variants remain unmeasured.
+
 ## 2026-10-18 — Concrete packed SwiGLU config (5.0.0rc12)
 
 `PackedSwiGLUConfig` selects the packed layout through the existing discriminated factory.
