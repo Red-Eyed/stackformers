@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from stackformers.feedforward.config import SwiGLUConfig
 from stackformers.feedforward.swiglu import SwiGLU
 from tests.conftest import atol
+from tests.export_utils import ExportShapeMode, export_and_run
 
 
 @pytest.fixture
@@ -128,3 +129,34 @@ def test_old_checkpoint_transition(
     restored = legacy_source.to_packed().unpack()
     for name, value in legacy_source.state_dict().items():
         torch.testing.assert_close(restored.state_dict()[name], value, rtol=0, atol=0)
+
+
+@pytest.fixture
+def onnx_source() -> SwiGLU:
+    """Use CPU float32 for portable ONNX Runtime execution."""
+    return SwiGLU(SwiGLUConfig(dim=24)).eval()
+
+
+@pytest.mark.parametrize("shape_mode", tuple(ExportShapeMode), ids=lambda mode: mode.value)
+@pytest.mark.parametrize("opset_version", range(20, 26))
+@pytest.mark.parametrize("flattened", [False, True], ids=["padded", "flat"])
+def test_onnx_export(
+    onnx_source: SwiGLU,
+    shape_mode: ExportShapeMode,
+    opset_version: int,
+    flattened: bool,
+) -> None:
+    """Packed weights execute correctly in ONNX at every required opset and tensor rank."""
+    packed = onnx_source.to_packed()
+    example = torch.randn((3, 24) if flattened else (2, 3, 24))
+    resized = torch.randn((1, 24) if flattened else (2, 1, 24))
+    token_axis = 0 if flattened else 1
+    tokens = torch.export.Dim("tokens", min=1, max=8)
+    export_and_run(
+        packed,
+        (example,),
+        shape_mode,
+        opset_version,
+        dynamic_shapes=({token_axis: tokens},),
+        runtime_args=(resized,),
+    )

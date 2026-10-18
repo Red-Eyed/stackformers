@@ -6,14 +6,14 @@ from typing import TYPE_CHECKING
 
 import pytest
 import torch
-from torch._dynamo.exc import UserError
 
 from stackformers.attention.config import SelfAttentionConfig
 from stackformers.attention.self_attn import SelfAttention
 from stackformers.positional.config import RoPE1DConfig
 from stackformers.positional.rope1d import RotaryEmbedding1D
-from stackformers.sequence import SequenceInput, make_packed_input, make_padded_input
+from stackformers.sequence import PaddedInput, SequenceInput, make_packed_input, make_padded_input
 from tests.conftest import atol
+from tests.export_utils import ExportShapeMode, export_and_run
 
 if TYPE_CHECKING:
     from stackformers.attention.masking import SelfAttentionMask
@@ -104,19 +104,9 @@ def test_dynamic_export(source: SelfAttention) -> None:
     length = torch.export.Dim("tokens", min=1, max=32)
     for tensor in example:
         shapes[tensor] = {1: length}
-    try:
-        program = torch.export.export(
-            packed, (example,), dynamic_shapes=shapes.dynamic_shapes(packed, (example,))
-        ).module()
-    except UserError as error:
-        if not torch.__version__.startswith("2.11.") or "min(8*" not in str(error):
-            raise
-        # This exporter guard also rejects the ordinary implementation on PyTorch 2.11.
-        with pytest.raises(UserError, match=r"min\(8\*"):
-            torch.export.export(
-                source, (example,), dynamic_shapes=shapes.dynamic_shapes(source, (example,))
-            )
-        pytest.xfail("PyTorch 2.11 cannot prove the existing GQA stride guards")
+    program = torch.export.export(
+        packed, (example,), dynamic_shapes=shapes.dynamic_shapes(packed, (example,))
+    ).module()
     for tokens in (1, 2, 7):
         sequence = make_padded_input(
             torch.randn(2, tokens, 32, device=weight.device, dtype=weight.dtype),
@@ -138,3 +128,49 @@ def test_window_and_bias(source: SelfAttention, sequence: SequenceInput) -> None
     expected = source(sequence)
     actual = packed(sequence)
     torch.testing.assert_close(actual, expected, atol=atol(actual.dtype), rtol=atol(actual.dtype))
+
+
+@pytest.fixture(params=[1, 2, 4], ids=["mqa", "gqa", "mha"])
+def onnx_source(request: pytest.FixtureRequest) -> SelfAttention:
+    """Export CPU float32 projections across all supported head-sharing geometries."""
+    return SelfAttention(
+        SelfAttentionConfig(dim=32, heads=4, dim_head=8, kv_heads=request.param, qk_norm=True),
+        RotaryEmbedding1D(RoPE1DConfig(dim_head=8)),
+    ).eval()
+
+
+@pytest.fixture
+def onnx_query() -> PaddedInput:
+    """Trace a non-singleton query with a partially padded document."""
+    return make_padded_input(
+        torch.randn(2, 3, 32), torch.tensor([[True, True, True], [True, True, False]])
+    )
+
+
+@pytest.mark.parametrize("shape_mode", tuple(ExportShapeMode), ids=lambda mode: mode.value)
+@pytest.mark.parametrize("opset_version", range(20, 26))
+@pytest.mark.parametrize("pack_weights", [False, True], ids=["ordinary-weights", "packed-weights"])
+def test_onnx_export(
+    onnx_source: SelfAttention,
+    onnx_query: PaddedInput,
+    shape_mode: ExportShapeMode,
+    opset_version: int,
+    pack_weights: bool,
+) -> None:
+    """Both projection layouts preserve rotary attention through mandatory ONNX execution."""
+    model = onnx_source.to_packed() if pack_weights else onnx_source
+    resized_query = make_padded_input(torch.randn(2, 1, 32), torch.ones(2, 1, dtype=torch.bool))
+    shapes = torch.export.ShapesCollection()
+    queries = torch.export.Dim("queries", min=1, max=8)
+    for tensor in onnx_query:
+        shapes[tensor] = {1: queries}
+    example_args = (onnx_query,)
+    runtime_args = (resized_query,)
+    export_and_run(
+        model,
+        example_args,
+        shape_mode,
+        opset_version,
+        dynamic_shapes=shapes.dynamic_shapes(model, example_args),
+        runtime_args=runtime_args,
+    )

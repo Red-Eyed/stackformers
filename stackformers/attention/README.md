@@ -33,7 +33,13 @@ allocating a dense pair mask on the packed fast path.
 
 **`torch.export` and `torch.compile` compatibility.** All scatter/gather helpers in `ops.py` (`_cu_to_indices`, `_packed_heads_to_padded`, `_padded_heads_to_packed`) are fully export-compatible. The key design constraint is that per-document length iteration must never use Python-side loops over data-dependent values (i.e., no `.tolist()` followed by a list comprehension). Instead, `_cu_to_indices` uses `torch.repeat_interleave` to produce `batch_idx` and derives `pos_idx` via the identity `arange(nt) - cu[batch_idx]`. This keeps the computation graph purely symbolic even when `nt` (total tokens) is a data-dependent unbacked symbol.
 
-**GQA / MQA.** Set `kv_heads < heads` in either config. Key and value heads are repeated via `einops.repeat` before the dot-product — no attention-specific changes needed.
+**GQA / MQA.** Set `kv_heads < heads` in either config. Key and value heads are repeated via
+`einops.repeat` before the dot-product. For padded inputs, repeat in token-major layout before
+returning to head-major attention layout. This keeps symbolic sequence strides out of the
+head-flattening reshape and allows dynamic export on PyTorch 2.11, including singleton inputs.
+Ordinary and packed projections use the same helper in `ops.py` for this layout rule.
+Mandatory ONNX Runtime tests cover
+opsets 20–25 with static and dynamic padded inputs for MHA, GQA, and MQA.
 
 **Exportable decoder K/V caches.** `CachedCrossAttentionWrapper` composes an existing cross-attention
 module and projects one fixed padded context at the configured `kv_heads` width.

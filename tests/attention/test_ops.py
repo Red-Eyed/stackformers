@@ -13,18 +13,55 @@ import pytest
 import torch
 import torch.export
 import torch.nn as nn
+from einops import rearrange
 from typing_extensions import override
 
 from stackformers.attention.ops import (
     _cu_to_indices,
     _packed_heads_to_padded,
     _padded_heads_to_packed,
+    _repeat_padded_kv_heads,
 )
 from tests.export_utils import ONNX_OPSET_CASES, ExportShapeMode, export_and_run
 
 B = 3
 H = 2
 DH = 8
+
+
+@pytest.fixture(params=[1, 3], ids=["singleton", "multiple-tokens"])
+def kv_heads(
+    request: pytest.FixtureRequest, device_dtype: tuple[torch.device, torch.dtype]
+) -> torch.Tensor:
+    """Keep every head distinct in a noncontiguous, token-major backing allocation."""
+    device, dtype = device_dtype
+    tokens: int = request.param
+    values = torch.arange(2 * tokens * H * DH, device=device, dtype=dtype)
+    return rearrange(values, "(b n h dh) -> b h n dh", b=2, n=tokens, h=H, dh=DH)
+
+
+@pytest.mark.parametrize("groups", [1, 2, 4])
+def test_repeat_padded_kv_heads_order(kv_heads: torch.Tensor, groups: int) -> None:
+    """Each KV head occupies consecutive query-head slots without reordering tokens."""
+    indices = torch.arange(H, device=kv_heads.device).repeat_interleave(groups)
+    expected = kv_heads.index_select(1, indices)
+    actual = _repeat_padded_kv_heads(kv_heads, groups)
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+
+
+@pytest.fixture
+def trainable_kv_heads(device: torch.device) -> torch.Tensor:
+    """Use float32 leaf values to measure accumulation from repeated heads."""
+    return torch.randn(2, H, 3, DH, device=device, requires_grad=True)
+
+
+@pytest.mark.parametrize("groups", [1, 2, 4])
+def test_repeat_padded_kv_heads_gradients(trainable_kv_heads: torch.Tensor, groups: int) -> None:
+    """Every original element receives one gradient contribution per head replica."""
+    actual = _repeat_padded_kv_heads(trainable_kv_heads, groups)
+    actual.sum().backward()
+    expected = torch.full_like(trainable_kv_heads, groups)
+    torch.testing.assert_close(trainable_kv_heads.grad, expected, rtol=0, atol=0)
 
 
 # --- _cu_to_indices correctness ---

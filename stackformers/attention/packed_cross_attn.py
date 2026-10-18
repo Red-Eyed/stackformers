@@ -17,7 +17,11 @@ from stackformers.attention.config import CrossAttentionConfig, PackedCrossAtten
 from stackformers.attention.cross_attn import CrossAttention
 from stackformers.attention.layout import matching_layouts
 from stackformers.attention.masking import CrossAttentionMask, validate_cross_mask
-from stackformers.attention.ops import packed_attn_or_fallback, padded_sdpa
+from stackformers.attention.ops import (
+    _repeat_padded_kv_heads,
+    packed_attn_or_fallback,
+    padded_sdpa,
+)
 from stackformers.sequence import PackedInput, PackedSequence, PaddedInput, SequenceInput
 
 if TYPE_CHECKING:
@@ -95,8 +99,8 @@ class PackedCrossAttention(nn.Module):
         k = self.k_norm(rearrange(projected_k, "b s (h d) -> b h s d", h=kv_h))
         v = rearrange(projected_v, "b s (h d) -> b h s d", h=kv_h)
         if groups > 1:
-            k = repeat(k, "b h s d -> b (h g) s d", g=groups)
-            v = repeat(v, "b h s d -> b (h g) s d", g=groups)
+            k = _repeat_padded_kv_heads(k, groups)
+            v = _repeat_padded_kv_heads(v, groups)
         q, k = self.pos_encoding.forward_padded(
             q, k, x_input.abs_positions, ctx_input.abs_positions
         )

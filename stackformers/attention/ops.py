@@ -1,15 +1,29 @@
+"""Shared attention operations and export-compatible tensor layout transforms."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
 import torch
 import torch.nn.functional as F
+from einops import rearrange, repeat
 from torch import Tensor
 
 from stackformers.attention.varlen_backend import try_varlen_attn
 
 if TYPE_CHECKING:
+    from jaxtyping import Float
+
     from stackformers.sequence import PackedSequence
+
+
+def _repeat_padded_kv_heads(
+    x: Float[Tensor, "b h n dh"], groups: int
+) -> Float[Tensor, "b h*groups n dh"]:
+    """Repeat adjacent KV heads without symbolic sequence strides in the head reshape."""
+    tokens = rearrange(x, "b h n dh -> b n h dh")
+    expanded = repeat(tokens, "b n h dh -> b n (h g) dh", g=groups)
+    return rearrange(expanded, "b n h dh -> b h n dh")
 
 
 def padding_mask(mask: Tensor, dtype: torch.dtype) -> Tensor:

@@ -6,6 +6,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/): MAJOR for breaking public API changes,
 MINOR for backwards-compatible features, PATCH for bug fixes and internal changes.
 
+## [5.0.0rc16]
+
+### Bug Fixes
+
+- Fix dynamic GQA export on PyTorch 2.11 for ordinary and packed self-/cross-attention.
+  Repeat KV heads in token-major layout to avoid symbolic reshape stride guards while
+  preserving head order, projection weights, and checkpoint layouts.
+
+### Developers
+
+- Require ONNX opsets 20–25 execution parity for ordinary and packed MHA/GQA/MQA attention,
+  packed SwiGLU/GEGLU/HardSwishGLU, and packed variable-width encoders. Cover static and
+  dynamic inputs, including singleton attention queries and feed-forward token axes.
+- Remove the expected-failure exemption for packed attention dynamic export.
+
 ## [5.0.0rc15]
 
 ### Improvements

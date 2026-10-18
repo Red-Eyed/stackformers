@@ -34,6 +34,7 @@ from stackformers import (
     VariableWidthEncoderLayerConfig,
     VariableWidthTransformerEncoder,
     VariableWidthTransformerEncoderConfig,
+    to_packed,
     variable_width_encoder_config,
 )
 from stackformers.layers import (
@@ -533,15 +534,18 @@ def test_every_feed_forward_variant_is_configurable(
 @pytest.mark.parametrize(("config_type", "_"), FEED_FORWARD_VARIANTS)
 @pytest.mark.parametrize("shape_mode", tuple(ExportShapeMode), ids=lambda mode: mode.value)
 @pytest.mark.parametrize("opset_version", ONNX_OPSET_CASES)
+@pytest.mark.parametrize("pack_weights", [False, True], ids=["ordinary-weights", "packed-weights"])
 def test_variable_width_encoder_is_export_compatible(
     config_type: FeedForwardConfigType,
     _: type[nn.Module],
     shape_mode: ExportShapeMode,
     opset_version: int,
+    pack_weights: bool,
 ) -> None:
-    """Every feed-forward variant exports with static and dynamic shapes."""
+    """Every feed-forward variant exports with ordinary or packed projection weights."""
     config = _config_with_feed_forward(config_type)
     encoder = VariableWidthTransformerEncoder(config=config)
+    model = to_packed(encoder) if pack_weights else encoder
     x = torch.randn(B, N, D_IN)
     mask = torch.ones(B, N, dtype=torch.bool)
     input = make_padded_input(x, mask)
@@ -557,11 +561,11 @@ def test_variable_width_encoder_is_export_compatible(
     shapes[input.abs_positions] = {0: batch, 1: tokens}
 
     export_and_run(
-        encoder,
+        model,
         (input,),
         shape_mode,
         opset_version,
-        dynamic_shapes=shapes.dynamic_shapes(encoder, (input,)),
+        dynamic_shapes=shapes.dynamic_shapes(model, (input,)),
         runtime_args=(resized_input,),
     )
 

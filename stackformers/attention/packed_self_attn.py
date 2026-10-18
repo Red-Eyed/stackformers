@@ -16,7 +16,11 @@ from stackformers._result import unwrap_or_raise
 from stackformers.attention.bias import NoAttnBias
 from stackformers.attention.config import PackedSelfAttentionConfig, SelfAttentionConfig
 from stackformers.attention.masking import SelfAttentionMask, resolve_self_mask
-from stackformers.attention.ops import packed_attn_or_fallback, padded_sdpa
+from stackformers.attention.ops import (
+    _repeat_padded_kv_heads,
+    packed_attn_or_fallback,
+    padded_sdpa,
+)
 from stackformers.attention.self_attn import SelfAttention
 from stackformers.sequence import (
     PackedInput,
@@ -107,8 +111,8 @@ class PackedSelfAttention(nn.Module):
         k = self.k_norm(rearrange(projected_k, "b n (h d) -> b h n d", h=kv_h))
         v = rearrange(projected_v, "b n (h d) -> b h n d", h=kv_h)
         if groups > 1:
-            k = repeat(k, "b h n d -> b (h g) n d", g=groups)
-            v = repeat(v, "b h n d -> b (h g) n d", g=groups)
+            k = _repeat_padded_kv_heads(k, groups)
+            v = _repeat_padded_kv_heads(v, groups)
         q, k = self.pos_encoding.forward_padded(q, k, input.abs_positions, input.abs_positions)
         bias = self.attn_bias(input)
         causal, window, allowed = unwrap_or_raise(
