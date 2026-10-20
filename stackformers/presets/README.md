@@ -57,7 +57,9 @@ packed preset config alongside the converted state dict. Alternatively, call the
 configs together. `to_unpacked(model)` reverses both changes. Config updates use copies, so
 external references to the original configs remain valid. Custom preset subclasses retain
 their own metadata. A state dict alone carries no config.
-Existing cached decoding wrappers require ordinary attention.
+Cached decoding wrappers accept ordinary and packed attention without changing their calls
+or cache layouts. Convert a preset before constructing wrappers, or convert a containing
+module that registers the preset and its existing wrappers together to retain shared attention.
 
 ## Per-call attention visibility
 

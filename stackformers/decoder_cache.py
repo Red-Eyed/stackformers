@@ -22,6 +22,8 @@ from stackformers.attention.cached import (
     CachedSelfAttentionWrapper,
 )
 from stackformers.attention.cross_attn import CrossAttention
+from stackformers.attention.packed_cross_attn import PackedCrossAttention
+from stackformers.attention.packed_self_attn import PackedSelfAttention
 from stackformers.attention.self_attn import SelfAttention
 from stackformers.decoder import (
     Decoder,
@@ -46,22 +48,30 @@ def _unwrap_decoder(module: nn.Module) -> Result[Decoder, TypeError]:
     return Ok(candidate)
 
 
-def _self_attention(module: SelfAttn) -> Result[SelfAttention, TypeError]:
-    """Require the standard self-attention whose projections the cache executor reuses."""
-    if not isinstance(module, SelfAttention):
-        return Err(
-            TypeError(f"cached decoding does not support {type(module).__name__} self-attention")
-        )
-    return Ok(module)
+def _self_attention(module: SelfAttn) -> Result[SelfAttention | PackedSelfAttention, TypeError]:
+    """Admit the closed set of self-attention projection layouts supported by caching."""
+    match module:
+        case SelfAttention() | PackedSelfAttention():
+            return Ok(module)
+        case _:
+            return Err(
+                TypeError(
+                    f"cached decoding does not support {type(module).__name__} self-attention"
+                )
+            )
 
 
-def _cross_attention(module: CrossAttn) -> Result[CrossAttention, TypeError]:
-    """Require the standard cross-attention whose projections the cache executor reuses."""
-    if not isinstance(module, CrossAttention):
-        return Err(
-            TypeError(f"cached decoding does not support {type(module).__name__} cross-attention")
-        )
-    return Ok(module)
+def _cross_attention(module: CrossAttn) -> Result[CrossAttention | PackedCrossAttention, TypeError]:
+    """Admit the closed set of cross-attention projection layouts supported by caching."""
+    match module:
+        case CrossAttention() | PackedCrossAttention():
+            return Ok(module)
+        case _:
+            return Err(
+                TypeError(
+                    f"cached decoding does not support {type(module).__name__} cross-attention"
+                )
+            )
 
 
 def _layer_cross_cache(cache: Tensor) -> CrossAttentionKVCache:

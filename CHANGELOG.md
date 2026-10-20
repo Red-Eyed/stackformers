@@ -6,6 +6,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/): MAJOR for breaking public API changes,
 MINOR for backwards-compatible features, PATCH for bug fixes and internal changes.
 
+## [5.0.0rc17]
+
+### New Features
+
+- Support packed self- and cross-attention in existing KV-cache wrappers and cached decoder
+  ONNX export without changing wrapper calls, cache records, or cache tensor layouts.
+- Allow `to_packed()` on existing cache executors. Converting a containing module preserves
+  shared attention references between the original model and its registered cache wrappers;
+  `to_unpacked()` restores the separate projection layout.
+
 ## [5.0.0rc16]
 
 ### Bug Fixes

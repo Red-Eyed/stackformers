@@ -242,7 +242,7 @@ def test_trainability_failure_leaves_tree_unchanged(invalid_tree: nn.Sequential)
 
 @pytest.fixture(params=["self", "cross"])
 def cached_tree(request: pytest.FixtureRequest) -> nn.Sequential:
-    """Place a cache executor after a convertible module to verify rejection before mutation."""
+    """Register both a cache executor and its shared attention in a convertible tree."""
     match request.param:
         case "self":
             wrapper = CachedSelfAttentionWrapper(
@@ -257,16 +257,25 @@ def cached_tree(request: pytest.FixtureRequest) -> nn.Sequential:
             )
         case _:
             pytest.fail("unknown cache wrapper")
-    return nn.Sequential(SwiGLU(SwiGLUConfig(dim=24)), wrapper)
+    return nn.Sequential(SwiGLU(SwiGLUConfig(dim=24)), wrapper, wrapper.attention)
 
 
-def test_cache_wrapper_rejected(cached_tree: nn.Sequential) -> None:
-    """A helper must not replace projections that cache execution accesses by name."""
-    children = tuple(cached_tree.children())
-    with pytest.raises(TypeError, match="cache wrappers"):
-        to_packed(cached_tree)
-    assert tuple(cached_tree.children()) == children
+def test_cache_wrapper_conversion(cached_tree: nn.Sequential) -> None:
+    """Packing and unpacking retain wrappers, shared attention, and exact checkpoint weights."""
+    state = {name: value.clone() for name, value in cached_tree.state_dict().items()}
+    wrapper = cached_tree[1]
+    assert to_packed(cached_tree) is cached_tree
+    assert cached_tree[1] is wrapper
+    assert wrapper.attention is cached_tree[2]
+    assert isinstance(wrapper.attention, (PackedSelfAttention, PackedCrossAttention))
+    packed_attention = wrapper.attention
+    assert to_packed(cached_tree) is cached_tree
+    assert wrapper.attention is packed_attention
     assert to_unpacked(cached_tree) is cached_tree
+    assert cached_tree[1] is wrapper
+    assert wrapper.attention is cached_tree[2]
+    assert isinstance(wrapper.attention, (SelfAttention, CrossAttention))
+    _assert_state_equal(cached_tree, state)
 
 
 class CustomSwiGLU(SwiGLU):

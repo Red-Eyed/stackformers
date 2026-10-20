@@ -50,6 +50,12 @@ position. `DecoderCrossAttentionCacheBuilder` stacks every decoder layer into on
 `CachedDecoderWrapper` mirrors each normalization topology for the one-token graph. The wrappers position
 K before storage and Q on each step through the existing joint positional API. Ordinary attention,
 decoder, preset, and positional classes contain no cache-specific methods.
+The wrappers accept a closed union of ordinary and packed attention classes. Exhaustive projection
+dispatch reuses separate Q/K/V matrices or a single packed QKV/KV matrix without copying weights.
+Cache records, head widths, and wrapper calls are independent of projection layout. Cached
+self-attention still requires global causal attention, `NoAttnBias`, and one token per call.
+Add a supported projection variant to the union, admission checks, and projection dispatch together;
+keep the shared normalization, positioning, and cache update equation outside that dispatch.
 
 **Geometry a rotary encoding cannot carry.** `RelativeDistanceBias` adds a learned function of the Euclidean distance between node positions to the logits, making attention invariant to any global translation or rotation of the input. It lives here rather than in `positional/` because it *cannot* live there: RoPE rotates by `ω·p`, which is linear in position by construction — and that linearity is exactly what makes the query and key rotations cancel into a relative offset. Distance is not linear in position, so no rotary encoding, axial or otherwise, can express it; a bias is the only route. Pair it with `NoPosEncoding` — a rotary encoding alongside it would reintroduce the preferred frame it exists to remove. Use it when node coordinates have no meaningful axes; when up and right *do* mean something, RoPE-2D keeps direction and stays varlen-compatible.
 
@@ -83,7 +89,11 @@ packed projections directly through `build_self_attn` or `build_cross_attn`. Eac
 accepts its own concrete config; only factory inputs use the discriminated variant union.
 The `kind` field survives JSON serialization so presets reconstruct the checkpoint layout.
 Legacy attention JSON without `kind` selects ordinary attention. Conversion also changes the
-module's config to the destination variant. Use ordinary attention with the existing cache wrappers.
+module's config to the destination variant. Both layouts work with the existing cache wrappers.
+Recursive conversion can visit an already-wrapped attention module. Convert the complete registered
+tree when the model and multiple cache executors share attention children; external references are
+not rewritten. Packed self-attention projects QKV once per token; packed cross-attention projects KV
+once when building the context cache and reuses it on subsequent calls.
 
 Keep another experimental projection layout in its own module, with explicit conversion
 and parity tests against ordinary attention. Measure complete blocks before selecting a

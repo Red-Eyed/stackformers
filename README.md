@@ -217,8 +217,11 @@ and metadata; supported children are still visited.
 Weights round-trip exactly; outputs match within dtype tolerance because matrix multiplication
 rounding can change. Convert before constructing an optimizer: replaced projection parameters
 do not migrate optimizer state, existing gradients, hooks, or cross-layer parameter aliases.
-Groups with mixed `requires_grad` fail before mutation. Existing cache wrappers require ordinary
-attention, so packing an already-wrapped cache executor is rejected before mutation.
+Groups with mixed `requires_grad` fail before mutation. Cache wrappers support both ordinary and
+packed attention with the same calls and cache tensor layouts. Pack the model before constructing
+cache wrappers, or convert a containing module that registers the model and its existing wrappers
+together so their attention references remain shared. Packing a wrapper alone converts only its
+registered children; references outside that tree still point to the original attention modules.
 Projection packing is independent of the `PackedInput` sequence layout.
 
 ## What's included

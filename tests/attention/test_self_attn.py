@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Literal
+from unittest.mock import Mock
 
 import pytest
 import torch
@@ -9,12 +10,14 @@ import torch.nn as nn
 from stackformers.attention.bias import NoAttnBias
 from stackformers.attention.cached import CachedSelfAttentionWrapper
 from stackformers.attention.config import SelfAttentionConfig
+from stackformers.attention.packed_self_attn import PackedSelfAttention
 from stackformers.attention.protocols import AttnBias
 from stackformers.attention.self_attn import SelfAttention
 from stackformers.positional.config import RoPE1DConfig
 from stackformers.positional.none import NoPosEncoding
 from stackformers.positional.rope1d import RotaryEmbedding1D
 from stackformers.sequence import PackedInput, PaddedInput, make_packed_input, make_padded_input
+from tests.conftest import atol
 
 
 class ConstantBias(nn.Module):
@@ -140,12 +143,16 @@ def test_self_attn_gqa(device_dtype: tuple[torch.device, torch.dtype]) -> None:
 
 
 @pytest.mark.parametrize("use_rope", [False, True])
-@pytest.mark.parametrize("kv_heads", [None, 2])
+@pytest.mark.parametrize("kv_heads", [None, 2, 1])
+@pytest.mark.parametrize("packed", [False, True])
+@pytest.mark.parametrize("qk_norm", [False, True])
 def test_cached_self_attn_matches_full_causal_prefix(
     device_dtype: tuple[torch.device, torch.dtype],
     x_pad: PaddedInput,
     use_rope: bool,
     kv_heads: int | None,
+    packed: bool,
+    qk_norm: bool,
 ) -> None:
     """Required growing caches preserve causal output with RoPE and GQA."""
     device, dtype = device_dtype
@@ -155,13 +162,21 @@ def test_cached_self_attn_matches_full_causal_prefix(
         dim_head=DH,
         kv_heads=kv_heads,
         causal=True,
+        qk_norm=qk_norm,
     )
     position = RotaryEmbedding1D(RoPE1DConfig(dim_head=DH)) if use_rope else NoPosEncoding()
     attention = SelfAttention(config=config, pos_encoding=position).to(
         device=device,
         dtype=dtype,
     )
-    cached = CachedSelfAttentionWrapper(attention)
+    wrapped = attention.to_packed() if packed else attention
+    cached = CachedSelfAttentionWrapper(wrapped)
+    assert cached.attention is wrapped
+    assert {id(p) for p in cached.parameters()} == {id(p) for p in wrapped.parameters()}
+    projection_calls = Mock(return_value=None)
+    match wrapped:
+        case PackedSelfAttention():
+            wrapped.qkv.register_forward_hook(projection_calls)
     cache = torch.zeros(
         2,
         B,
@@ -182,9 +197,10 @@ def test_cached_self_attn_matches_full_causal_prefix(
                 cache,
                 torch.tensor([step], dtype=torch.int64, device=device),
             )
-            torch.testing.assert_close(actual, expected)
+            torch.testing.assert_close(actual, expected, atol=atol(dtype), rtol=atol(dtype))
 
     assert cache.shape == (2, B, config.effective_kv_heads, N, DH)
+    assert projection_calls.call_count == (N if packed else 0)
 
 
 def test_self_attn_gradients(device: torch.device) -> None:

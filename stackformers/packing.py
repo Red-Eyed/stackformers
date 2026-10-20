@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, TypeVar, assert_never
 
-from stackformers.attention.cached import CachedCrossAttentionWrapper, CachedSelfAttentionWrapper
 from stackformers.attention.config import (
     CrossAttentionConfig,
     PackedCrossAttentionConfig,
@@ -66,10 +65,6 @@ _PresetConfig = TypeVar(
 def _pack_layer(module: nn.Module) -> nn.Module:
     """Convert built-in concrete layers without erasing subclass behavior."""
     match module:
-        case CachedSelfAttentionWrapper() | CachedCrossAttentionWrapper():
-            raise TypeError(
-                "cache wrappers require separate projections; convert the original model instead"
-            )
         case SelfAttention() if type(module) is SelfAttention:
             return module.to_packed()
         case CrossAttention() if type(module) is CrossAttention:
@@ -206,7 +201,8 @@ def to_packed(module: nn.Module) -> nn.Module:
 
     Convert before constructing an optimizer. Replaced projection parameters do not carry
     optimizer state, existing gradients, hooks, or cross-layer parameter aliases. Mixed
-    trainability within a projection group raises ValueError; cache wrappers raise TypeError.
+    trainability within a projection group raises ValueError. Cache wrappers retain their
+    interface while their registered attention children follow the requested layout.
     These checks complete before the module tree changes. Repeated calls retain packed layers.
     """
     return _convert(module, _pack_layer, _PACKED_CONFIGS)

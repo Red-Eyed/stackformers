@@ -1,5 +1,35 @@
 # Transformer model development log
 
+## 2026-10-20 — Packed attention in KV-cache executors (5.0.0rc17)
+
+### Observation and decision
+
+Cached decoding accessed separate Q/K/V projections and rejected packed attention, preventing
+packed models from using the existing ONNX deployment interface. Accept closed unions of
+ordinary and packed attention classes. Exhaustive pattern matching selects only the projection
+operation; normalization, positional encoding, attention, and cache updates remain shared.
+Use one packed QKV projection per decoded token and one packed KV projection per context-cache
+construction without copying or unpacking parameters. Retain wrapper calls, cache records,
+tensor layouts, and global causal/no-bias/single-token admission restrictions.
+
+Allow recursive conversion through existing wrappers. Convert the complete containing module
+when the model and multiple executors share attention children, so every registered reference
+reconnects to the same replacement. References outside that tree are not rewritten. Reuse the
+export-compatible token-major KV-head repetition helper for dynamic GQA/MQA cache attention.
+
+### Verified result and limits
+
+Focused eager checks pass for packed MHA/GQA/MQA, RoPE, Q/K normalization, masked cross contexts,
+all four decoder normalization topologies, and context-free decoding. Tests verify packed
+projection call counts, shared parameter ownership, unchanged cache records and head widths,
+and continued use of live cache tensors across packing and unpacking an integrated model.
+All 192 required static/dynamic ONNX Runtime cases pass across opsets 18–25 for ordinary MHA
+and packed MHA/GQA/MQA cache construction and decoding, with and without context. Dynamic
+runtime inputs change batch/context lengths and exercise an empty self cache. Checks use
+PyTorch 2.11 on CPU; GPU providers, target-device latency, and quantization remain unverified.
+`just check` passes formatting, lint, types, and the full suite: 2,936 passed, 21 skipped,
+252 expected failures, and 111 optional-case unexpected passes.
+
 ## 2026-10-18 — Recursive projection conversion (5.0.0rc14)
 
 ### Observation and decision

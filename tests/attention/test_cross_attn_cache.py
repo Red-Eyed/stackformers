@@ -10,10 +10,12 @@ import torch
 from stackformers.attention.cached import CachedCrossAttentionWrapper
 from stackformers.attention.config import CrossAttentionConfig
 from stackformers.attention.cross_attn import CrossAttention
+from stackformers.attention.packed_cross_attn import PackedCrossAttention
 from stackformers.positional.config import RoPE1DConfig
 from stackformers.positional.none import NoPosEncoding
 from stackformers.positional.rope1d import RotaryEmbedding1D
 from stackformers.sequence import PaddedInput, PaddedSequence, make_padded_input
+from tests.conftest import atol
 
 B, N, S, D, H, DH = 2, 8, 12, 64, 4, 16
 
@@ -37,10 +39,14 @@ def target_context(
 
 
 @pytest.mark.parametrize("qk_norm", [False, True])
+@pytest.mark.parametrize("packed", [False, True])
+@pytest.mark.parametrize("kv_heads", [4, 2, 1])
 def test_cached_cross_attention_matches_ordinary_forward(
     target_context: tuple[PaddedInput, PaddedInput],
     device_dtype: tuple[torch.device, torch.dtype],
     qk_norm: bool,
+    packed: bool,
+    kv_heads: int,
 ) -> None:
     """Cached and ordinary padded paths implement the same attention equation."""
     device, dtype = device_dtype
@@ -49,11 +55,14 @@ def test_cached_cross_attention_matches_ordinary_forward(
         dim=D,
         heads=H,
         dim_head=DH,
-        kv_heads=2,
+        kv_heads=kv_heads,
         qk_norm=qk_norm,
     )
     attention = CrossAttention(config, NoPosEncoding()).to(device=device, dtype=dtype).eval()
-    cached = CachedCrossAttentionWrapper(attention)
+    wrapped = attention.to_packed() if packed else attention
+    cached = CachedCrossAttentionWrapper(wrapped)
+    assert cached.attention is wrapped
+    assert {id(p) for p in cached.parameters()} == {id(p) for p in wrapped.parameters()}
 
     with torch.no_grad():
         expected = attention(target, context)
@@ -64,7 +73,8 @@ def test_cached_cross_attention_matches_ordinary_forward(
             PaddedSequence(mask=context.mask),
         )
 
-    torch.testing.assert_close(actual, expected)
+    torch.testing.assert_close(actual, expected, atol=atol(dtype), rtol=atol(dtype))
+    assert cache.k.shape == cache.v.shape == (B, kv_heads, S, DH)
 
 
 def test_cache_retains_kv_heads(
@@ -84,22 +94,29 @@ def test_cache_retains_kv_heads(
     assert cache.v.shape == (B, 2, S, DH)
 
 
+@pytest.mark.parametrize("packed", [False, True])
 def test_cached_calls_do_not_repeat_context_projections(
     target_context: tuple[PaddedInput, PaddedInput],
     device_dtype: tuple[torch.device, torch.dtype],
+    packed: bool,
 ) -> None:
     """Repeated cached decoding reuses K/V while continuing to project each query."""
     device, dtype = device_dtype
     target, context = target_context
     config = CrossAttentionConfig(dim=D, heads=H, dim_head=DH)
-    attention = CrossAttention(config, NoPosEncoding()).to(device=device, dtype=dtype).eval()
+    ordinary = CrossAttention(config, NoPosEncoding()).to(device=device, dtype=dtype).eval()
+    attention = ordinary.to_packed() if packed else ordinary
     cached = CachedCrossAttentionWrapper(attention)
     q_calls = Mock(return_value=None)
     k_calls = Mock(return_value=None)
     v_calls = Mock(return_value=None)
     attention.to_q.register_forward_hook(q_calls)
-    attention.to_k.register_forward_hook(k_calls)
-    attention.to_v.register_forward_hook(v_calls)
+    match attention:
+        case CrossAttention():
+            attention.to_k.register_forward_hook(k_calls)
+            attention.to_v.register_forward_hook(v_calls)
+        case PackedCrossAttention():
+            attention.kv.register_forward_hook(k_calls)
 
     with torch.no_grad():
         cache = cached.build_cache(context)
@@ -112,12 +129,14 @@ def test_cached_calls_do_not_repeat_context_projections(
 
     assert q_calls.call_count == 2
     assert k_calls.call_count == 1
-    assert v_calls.call_count == 1
+    assert v_calls.call_count == (0 if packed else 1)
 
 
+@pytest.mark.parametrize("packed", [False, True])
 def test_cached_cross_attention_matches_ordinary_forward_with_rope(
     target_context: tuple[PaddedInput, PaddedInput],
     device_dtype: tuple[torch.device, torch.dtype],
+    packed: bool,
 ) -> None:
     """Context K and repeated Q positioning preserve RoPE attention exactly."""
     device, dtype = device_dtype
@@ -125,11 +144,11 @@ def test_cached_cross_attention_matches_ordinary_forward_with_rope(
     config = CrossAttentionConfig(dim=D, heads=H, dim_head=DH)
     position = RotaryEmbedding1D(RoPE1DConfig(dim_head=DH))
     attention = CrossAttention(config, position).to(device=device, dtype=dtype)
-    cached = CachedCrossAttentionWrapper(attention)
+    cached = CachedCrossAttentionWrapper(attention.to_packed() if packed else attention)
 
     with torch.no_grad():
         expected = attention(target, context)
         cache = cached.build_cache(context)
         actual = cached(target, cache, PaddedSequence(mask=context.mask))
 
-    torch.testing.assert_close(actual, expected)
+    torch.testing.assert_close(actual, expected, atol=atol(dtype), rtol=atol(dtype))

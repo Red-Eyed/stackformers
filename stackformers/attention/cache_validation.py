@@ -8,12 +8,13 @@ from stackformers.attention.bias import NoAttnBias
 from stackformers.result import Err, Ok, Result
 
 if TYPE_CHECKING:
+    from stackformers.attention.packed_self_attn import PackedSelfAttention
     from stackformers.attention.self_attn import SelfAttention
 
 
 def supported_self_attention(
-    attention: SelfAttention,
-) -> Result[SelfAttention, NotImplementedError]:
+    attention: SelfAttention | PackedSelfAttention,
+) -> Result[SelfAttention | PackedSelfAttention, NotImplementedError]:
     """Return the supported cached equation or explain its unsupported features."""
     if not attention.config.causal or attention.config.window_size is not None:
         return Err(

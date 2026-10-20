@@ -9,40 +9,80 @@ import torch
 
 from stackformers.attention.cache import DecoderCrossAttentionCache
 from stackformers.attention.cross_attn import CrossAttention
+from stackformers.attention.packed_self_attn import PackedSelfAttention
 from stackformers.attention.self_attn import SelfAttention
 from stackformers.decoder import Decoder
 from stackformers.decoder_cache import (
+    CachedDecoderLayerBase,
     CachedDecoderWrapper,
     DecoderCrossAttentionCacheBuilder,
 )
+from stackformers.packing import to_packed, to_unpacked
 from stackformers.positional.config import RoPE1DConfig
 from stackformers.positional.rope1d import RotaryEmbedding1D
 from stackformers.presets.decoder import TransformerDecoder, plain_decoder_config
 from stackformers.sequence import PaddedInput, make_padded_input
+from tests.conftest import atol
 from tests.export_utils import ONNX_OPSET_CASES, ExportShapeMode, export_and_run
 
 if TYPE_CHECKING:
     from stackformers.norm.config import NormPlacement
 
-B, N, S, D, H = 2, 4, 6, 64, 1
+B, N, S, D, H = 2, 4, 6, 64, 4
 
 
 def _empty_self_cache(decoder: Decoder, target: PaddedInput) -> torch.Tensor:
     """Allocate the required zero-length self K/V tensor for the first decoder call."""
-    return target.x.new_zeros(len(decoder.layers), 2, target.x.shape[0], H, 0, D // H)
-
-
-def _build_decoder(norm_placement: NormPlacement = "pre") -> Decoder:
-    """Build the low-level decoder owned by the public uniform preset."""
-    preset = TransformerDecoder(
-        plain_decoder_config(
-            dim=D,
-            heads=H,
-            num_layers=2,
-            norm_placement=norm_placement,
-        )
+    return target.x.new_zeros(
+        len(decoder.layers), 2, target.x.shape[0], _kv_heads(decoder), 0, D // H
     )
+
+
+def _build_decoder(norm_placement: NormPlacement = "pre", kv_heads: int = H) -> Decoder:
+    """Build the low-level decoder owned by the public uniform preset."""
+    config = plain_decoder_config(
+        dim=D,
+        heads=H,
+        num_layers=2,
+        norm_placement=norm_placement,
+    )
+    config = config.model_copy(
+        update={
+            "self_attn": config.self_attn.model_copy(update={"kv_heads": kv_heads}),
+            "cross_attn": config.cross_attn.model_copy(update={"kv_heads": kv_heads}),
+        }
+    )
+    preset = TransformerDecoder(config)
     return preset._decoder
+
+
+@pytest.fixture(
+    params=[(False, H), (True, H), (True, 2), (True, 1)],
+    ids=["separate-mha", "packed-mha", "packed-gqa", "packed-mqa"],
+)
+def cache_decoder(request: pytest.FixtureRequest) -> Decoder:
+    """Build ordinary MHA or packed MHA/GQA/MQA for cache and export contracts."""
+    packed, kv_heads = request.param
+    decoder = _build_decoder(kv_heads=kv_heads).eval()
+    if packed:
+        to_packed(decoder)
+    return decoder
+
+
+def _kv_heads(decoder: Decoder) -> int:
+    """Read cache geometry from either supported projection layout."""
+    attention = decoder.layers[0].self_attn
+    assert isinstance(attention, (SelfAttention, PackedSelfAttention))
+    return attention.config.effective_kv_heads
+
+
+def _input_to(input: PaddedInput, device: torch.device, dtype: torch.dtype) -> PaddedInput:
+    """Move model inputs while retaining the boolean mask dtype."""
+    return PaddedInput(
+        x=input.x.to(device=device, dtype=dtype),
+        mask=input.mask.to(device=device),
+        abs_positions=input.abs_positions.to(device=device, dtype=dtype),
+    )
 
 
 @pytest.fixture
@@ -60,14 +100,22 @@ def decoder_inputs() -> tuple[PaddedInput, PaddedInput]:
 
 @pytest.mark.parametrize("norm_placement", ["pre", "post", "sandwich", "reordered"])
 @pytest.mark.parametrize("with_context", [False, True])
+@pytest.mark.parametrize("packed", [False, True])
 def test_decoder_cached_forward_matches_existing_forward(
     decoder_inputs: tuple[PaddedInput, PaddedInput],
     norm_placement: NormPlacement,
     with_context: bool,
+    packed: bool,
+    device_dtype: tuple[torch.device, torch.dtype],
 ) -> None:
     """Every normalization topology has exact full-prefix/one-token output parity."""
     target, context = decoder_inputs
-    decoder = _build_decoder(norm_placement).eval()
+    device, dtype = device_dtype
+    target = _input_to(target, device, dtype)
+    context = _input_to(context, device, dtype)
+    decoder = _build_decoder(norm_placement).to(device=device, dtype=dtype).eval()
+    if packed:
+        to_packed(decoder)
     cache_builder = DecoderCrossAttentionCacheBuilder(decoder)
     cached_decoder = CachedDecoderWrapper(decoder)
     cross_cache = cache_builder(context) if with_context else None
@@ -82,15 +130,55 @@ def test_decoder_cached_forward_matches_existing_forward(
                 token,
                 cross_cache,
                 self_cache,
-                torch.tensor([step], dtype=torch.int64),
+                torch.tensor([step], dtype=torch.int64, device=device),
             )
-            torch.testing.assert_close(result.x, expected)
+            torch.testing.assert_close(result.x, expected, atol=atol(dtype), rtol=atol(dtype))
             self_cache = result.self_kv_cache
 
 
-def test_decoder_cache_preserves_state_dict_contract() -> None:
+def test_integrated_cached_model_survives_packing_round_trip(
+    decoder_inputs: tuple[PaddedInput, PaddedInput],
+    device_dtype: tuple[torch.device, torch.dtype],
+) -> None:
+    """Existing executors and live caches remain usable after registered model conversion."""
+    device, dtype = device_dtype
+    target, context = (_input_to(input, device, dtype) for input in decoder_inputs)
+    decoder = _build_decoder(kv_heads=2).to(device=device, dtype=dtype).eval()
+    builder = DecoderCrossAttentionCacheBuilder(decoder)
+    cached = CachedDecoderWrapper(decoder)
+    integrated = torch.nn.ModuleList([decoder, builder, cached])
+    state = {name: value.clone() for name, value in integrated.state_dict().items()}
+    cross_cache = builder(context)
+    self_cache = _empty_self_cache(decoder, target)
+
+    with torch.no_grad():
+        for step, convert in enumerate((to_packed, to_unpacked)):
+            prefix = PaddedInput(*(tensor[:, : step + 1] for tensor in target))
+            token = PaddedInput(*(tensor[:, step : step + 1] for tensor in target))
+            expected = decoder(prefix, context)[:, -1:]
+            assert convert(integrated) is integrated
+            layer = decoder.layers[0]
+            cached_layer = cached.layers[0]
+            assert isinstance(cached_layer, CachedDecoderLayerBase)
+            assert cached_layer.self_attn.attention is layer.self_attn
+            assert cached_layer.cross_attn.attention is layer.cross_attn
+            assert builder.layers[0].attention is layer.cross_attn
+            rebuilt_cache = builder(context)
+            torch.testing.assert_close(
+                rebuilt_cache.kv, cross_cache.kv, atol=atol(dtype), rtol=atol(dtype)
+            )
+            result = cached(token, cross_cache, self_cache, torch.tensor([step], device=device))
+            torch.testing.assert_close(result.x, expected, atol=atol(dtype), rtol=atol(dtype))
+            self_cache = result.self_kv_cache
+            assert self_cache.shape == (2, 2, B, 2, step + 1, D // H)
+
+    for name, value in integrated.state_dict().items():
+        assert torch.equal(value, state[name])
+
+
+def test_decoder_cache_preserves_state_dict_contract(cache_decoder: Decoder) -> None:
     """Composing cache executors leaves ordinary parameters and checkpoint keys unchanged."""
-    decoder = _build_decoder()
+    decoder = cache_decoder
     keys_before = tuple(decoder.state_dict())
     parameter_count_before = sum(parameter.numel() for parameter in decoder.parameters())
     parameter_ids = {id(parameter) for parameter in decoder.parameters()}
@@ -110,7 +198,7 @@ def test_decoder_cache_preserves_state_dict_contract() -> None:
     assert cache._fields == ("kv", "context")
     assert cache.context._fields == ("mask",)
     assert cache.context.mask is context.mask
-    assert cache.kv.shape == (2, 2, B, H, S, D // H)
+    assert cache.kv.shape == (2, 2, B, _kv_heads(decoder), S, D // H)
 
 
 def test_cache_support_does_not_add_methods_to_existing_classes() -> None:
@@ -124,12 +212,16 @@ def test_cache_support_does_not_add_methods_to_existing_classes() -> None:
     assert not hasattr(TransformerDecoder, "forward_cached")
 
 
+@pytest.mark.parametrize("packed", [False, True])
 def test_transformer_decoder_exposes_cached_path(
+    packed: bool,
     decoder_inputs: tuple[PaddedInput, PaddedInput],
 ) -> None:
     """Cache wrappers compose the public preset without changing its existing API."""
     target, context = decoder_inputs
     decoder = TransformerDecoder(plain_decoder_config(dim=D, heads=H, num_layers=2)).eval()
+    if packed:
+        to_packed(decoder)
     builder = DecoderCrossAttentionCacheBuilder(decoder)
     cached_decoder = CachedDecoderWrapper(decoder)
     self_cache = target.x.new_zeros(2, 2, B, H, 0, D // H)
@@ -147,7 +239,9 @@ def test_transformer_decoder_exposes_cached_path(
     assert not cached_decoder.training
 
 
+@pytest.mark.parametrize("packed", [False, True])
 def test_decoder_cached_forward_supports_cross_attention_rope(
+    packed: bool,
     decoder_inputs: tuple[PaddedInput, PaddedInput],
 ) -> None:
     """The decoder positions cross K once and cross Q on every cached step."""
@@ -157,6 +251,8 @@ def test_decoder_cached_forward_supports_cross_attention_rope(
         assert isinstance(layer.cross_attn, CrossAttention)
         layer.cross_attn.pos_encoding = RotaryEmbedding1D(RoPE1DConfig(dim_head=D // H))
     decoder.eval()
+    if packed:
+        to_packed(decoder)
     cache_builder = DecoderCrossAttentionCacheBuilder(decoder)
     cached_decoder = CachedDecoderWrapper(decoder)
     cross_cache = cache_builder(context)
@@ -203,13 +299,14 @@ def test_decoder_rejects_cache_for_different_layer_count(
 @pytest.mark.parametrize("shape_mode", tuple(ExportShapeMode), ids=lambda mode: mode.value)
 @pytest.mark.parametrize("opset_version", ONNX_OPSET_CASES)
 def test_decoder_cache_builder_exports_to_onnx(
+    cache_decoder: Decoder,
     decoder_inputs: tuple[PaddedInput, PaddedInput],
     shape_mode: ExportShapeMode,
     opset_version: int,
 ) -> None:
     """The once-per-context cache builder supports static and dynamic ONNX export."""
     _, context = decoder_inputs
-    decoder = _build_decoder()
+    decoder = cache_decoder
     builder = DecoderCrossAttentionCacheBuilder(decoder)
     resized_context = make_padded_input(
         torch.randn(1, S - 2, D),
@@ -235,6 +332,7 @@ def test_decoder_cache_builder_exports_to_onnx(
 @pytest.mark.parametrize("opset_version", ONNX_OPSET_CASES)
 @pytest.mark.parametrize("with_context", [False, True])
 def test_cached_decoder_exports_to_onnx(
+    cache_decoder: Decoder,
     decoder_inputs: tuple[PaddedInput, PaddedInput],
     shape_mode: ExportShapeMode,
     opset_version: int,
@@ -242,11 +340,11 @@ def test_cached_decoder_exports_to_onnx(
 ) -> None:
     """Required dense caches export with dynamic batch and context length."""
     target, context = decoder_inputs
-    decoder = _build_decoder()
+    decoder = cache_decoder
     cached_decoder = CachedDecoderWrapper(decoder)
     cache_builder = DecoderCrossAttentionCacheBuilder(decoder)
     cross_cache = cache_builder(context) if with_context else None
-    self_cache = target.x.new_zeros(2, 2, B, H, 2, D // H)
+    self_cache = target.x.new_zeros(2, 2, B, _kv_heads(decoder), 2, D // H)
     target_token = PaddedInput(*(tensor[:, :1] for tensor in target))
     step_i = torch.tensor([2], dtype=torch.int64)
     resized_target = make_padded_input(torch.randn(1, 1, D), torch.ones(1, 1, dtype=torch.bool))
@@ -255,7 +353,7 @@ def test_cached_decoder_exports_to_onnx(
         torch.ones(1, S - 2, dtype=torch.bool),
     )
     resized_cross_cache = cache_builder(resized_context) if with_context else None
-    resized_self_cache = resized_target.x.new_zeros(2, 2, 1, H, 0, D // H)
+    resized_self_cache = resized_target.x.new_zeros(2, 2, 1, _kv_heads(decoder), 0, D // H)
     resized_step_i = torch.tensor([0], dtype=torch.int64)
     batch = torch.export.Dim("batch", min=1, max=B)
     context_tokens = torch.export.Dim("context_tokens", min=1, max=S)
@@ -287,13 +385,17 @@ def test_cached_decoder_exports_to_onnx(
 
 
 @pytest.mark.parametrize("norm_placement", ["pre", "post", "sandwich", "reordered"])
+@pytest.mark.parametrize("packed", [False, True])
 def test_context_free_cached_decoder_compiles_and_exports(
     decoder_inputs: tuple[PaddedInput, PaddedInput],
     norm_placement: NormPlacement,
+    packed: bool,
 ) -> None:
     """Cached execution exports without context inputs or cross projections."""
     target, _ = decoder_inputs
     decoder = _build_decoder(norm_placement).eval()
+    if packed:
+        to_packed(decoder)
     cached = CachedDecoderWrapper(decoder)
     token = PaddedInput(*(tensor[:, :1] for tensor in target))
     cache = _empty_self_cache(decoder, target)

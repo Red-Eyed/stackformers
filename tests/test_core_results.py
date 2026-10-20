@@ -157,19 +157,22 @@ def test_rotary_width_keeps_constructor_assertion(dim_head: int, divisor: int) -
 
 
 @pytest.mark.parametrize(("causal", "window_size"), [(False, None), (True, 4)])
+@pytest.mark.parametrize("packed", [False, True])
 def test_unsupported_cache_equation_is_data_then_exception(
     causal: bool,
     window_size: int | None,
+    packed: bool,
 ) -> None:
     """Cache admission reports unsupported equations before the wrapper applies policy."""
     attention = SelfAttention(
         SelfAttentionConfig(dim=64, heads=1, causal=causal, window_size=window_size),
         NoPosEncoding(),
     )
-    outcome = supported_self_attention(attention)
+    wrapped = attention.to_packed() if packed else attention
+    outcome = supported_self_attention(wrapped)
     assert isinstance(outcome, Err)
     with pytest.raises(NotImplementedError) as caught:
-        CachedSelfAttentionWrapper(attention)
+        CachedSelfAttentionWrapper(wrapped)
     assert caught.value.args == outcome.error.args
 
 

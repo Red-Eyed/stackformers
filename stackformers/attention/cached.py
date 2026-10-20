@@ -2,24 +2,58 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, assert_never
 
 import torch
 import torch.nn as nn
-from einops import rearrange, repeat
+from einops import rearrange
 from torch import Tensor
 from typing_extensions import override
 
 from stackformers._result import unwrap_or_raise
 from stackformers.attention.cache import CrossAttentionKVCache
 from stackformers.attention.cache_validation import single_token, supported_self_attention
-from stackformers.attention.ops import padded_sdpa
+from stackformers.attention.cross_attn import CrossAttention
+from stackformers.attention.ops import _repeat_padded_kv_heads, padded_sdpa
+from stackformers.attention.packed_cross_attn import PackedCrossAttention
+from stackformers.attention.packed_self_attn import PackedSelfAttention
+from stackformers.attention.self_attn import SelfAttention
 
 if TYPE_CHECKING:
-    from stackformers.attention.cross_attn import CrossAttention
-    from stackformers.attention.self_attn import SelfAttention
+    from jaxtyping import Float
+
     from stackformers.positional.protocols import PosEncoding
     from stackformers.sequence import PaddedInput, PaddedSequence
+
+
+def _project_qkv(
+    attention: SelfAttention | PackedSelfAttention, x: Float[Tensor, "b n d"]
+) -> tuple[Tensor, Tensor, Tensor]:
+    """Reuse the owned projection layout without copying or unpacking weights."""
+    match attention:
+        case SelfAttention():
+            return attention.to_q(x), attention.to_k(x), attention.to_v(x)
+        case PackedSelfAttention():
+            projected: Tensor = attention.qkv(x)
+            q, k, v = projected.split(attention.projection_widths, dim=-1)
+            return q, k, v
+        case _:
+            assert_never(attention)
+
+
+def _project_kv(
+    attention: CrossAttention | PackedCrossAttention, x: Float[Tensor, "b s d"]
+) -> tuple[Tensor, Tensor]:
+    """Project a fixed context once using separate K/V or a packed KV matrix."""
+    match attention:
+        case CrossAttention():
+            return attention.to_k(x), attention.to_v(x)
+        case PackedCrossAttention():
+            projected: Tensor = attention.kv(x)
+            k, v = projected.chunk(2, dim=-1)
+            return k, v
+        case _:
+            assert_never(attention)
 
 
 def _position_query(encoding: PosEncoding, q: Tensor, positions: Tensor) -> Tensor:
@@ -53,13 +87,14 @@ class CachedSelfAttentionWrapper(nn.Module):
 
     The wrapped module owns every parameter. The incoming cache is required and stores
     position-encoded K plus raw V at KV-head width. Its token dimension must equal ``step_i``.
-    Parameters and train/eval state are shared with the wrapped attention module.
+    Ordinary and packed projections share this cache layout. Parameters and train/eval state
+    are shared with the wrapped attention module.
 
     Example:
         ``output, next_cache = CachedSelfAttentionWrapper(attention)(token, cache, step_i)``
     """
 
-    def __init__(self, attention: SelfAttention) -> None:
+    def __init__(self, attention: SelfAttention | PackedSelfAttention) -> None:
         """Validate the supported cached equation and retain the original attention weights."""
         super().__init__()
         self.attention = unwrap_or_raise(supported_self_attention(attention))
@@ -79,9 +114,10 @@ class CachedSelfAttentionWrapper(nn.Module):
         config = attention.config
         heads = config.heads
         kv_heads = config.effective_kv_heads
-        q = attention.q_norm(rearrange(attention.to_q(input.x), "b n (h d) -> b h n d", h=heads))
-        k = attention.k_norm(rearrange(attention.to_k(input.x), "b n (h d) -> b h n d", h=kv_heads))
-        v = rearrange(attention.to_v(input.x), "b n (h d) -> b h n d", h=kv_heads)
+        projected_q, projected_k, projected_v = _project_qkv(attention, input.x)
+        q = attention.q_norm(rearrange(projected_q, "b n (h d) -> b h n d", h=heads))
+        k = attention.k_norm(rearrange(projected_k, "b n (h d) -> b h n d", h=kv_heads))
+        v = rearrange(projected_v, "b n (h d) -> b h n d", h=kv_heads)
         q, k = attention.pos_encoding.forward_padded(
             q,
             k,
@@ -95,8 +131,8 @@ class CachedSelfAttentionWrapper(nn.Module):
         attended_k = updated_k
         attended_v = updated_v
         if config.groups > 1:
-            attended_k = repeat(attended_k, "b h s d -> b (h g) s d", g=config.groups)
-            attended_v = repeat(attended_v, "b h s d -> b (h g) s d", g=config.groups)
+            attended_k = _repeat_padded_kv_heads(attended_k, config.groups)
+            attended_v = _repeat_padded_kv_heads(attended_v, config.groups)
 
         cache_positions = torch.arange(updated_k.shape[2], device=cache.device)
         cache_mask = cache_positions.unsqueeze(0) <= step_i
@@ -121,14 +157,15 @@ class CachedSelfAttentionWrapper(nn.Module):
 class CachedCrossAttentionWrapper(nn.Module):
     """Add reusable-context execution around an existing cross-attention module.
 
-    Parameters and train/eval state are shared with the wrapped attention module.
+    Ordinary and packed KV projections use the same cache record. Parameters and train/eval
+    state are shared with the wrapped attention module.
 
     Example:
         ``wrapper = CachedCrossAttentionWrapper(attention)``
         ``output = wrapper(target, wrapper.build_cache(context), context_sequence)``
     """
 
-    def __init__(self, attention: CrossAttention) -> None:
+    def __init__(self, attention: CrossAttention | PackedCrossAttention) -> None:
         """Retain the original attention module so cached and ordinary paths share weights."""
         super().__init__()
         self.attention = attention
@@ -138,10 +175,9 @@ class CachedCrossAttentionWrapper(nn.Module):
         """Project and position one context while retaining configured KV-head width."""
         attention = self.attention
         kv_heads = attention.config.effective_kv_heads
-        k = attention.k_norm(
-            rearrange(attention.to_k(context.x), "b s (h d) -> b h s d", h=kv_heads)
-        )
-        v = rearrange(attention.to_v(context.x), "b s (h d) -> b h s d", h=kv_heads)
+        projected_k, projected_v = _project_kv(attention, context.x)
+        k = attention.k_norm(rearrange(projected_k, "b s (h d) -> b h s d", h=kv_heads))
+        v = rearrange(projected_v, "b s (h d) -> b h s d", h=kv_heads)
         k = _position_key(attention.pos_encoding, k, context.abs_positions)
         return CrossAttentionKVCache(k=k, v=v)
 
@@ -161,8 +197,8 @@ class CachedCrossAttentionWrapper(nn.Module):
         q = _position_query(attention.pos_encoding, q, input.abs_positions)
         k, v = cache
         if config.groups > 1:
-            k = repeat(k, "b h s d -> b (h g) s d", g=config.groups)
-            v = repeat(v, "b h s d -> b (h g) s d", g=config.groups)
+            k = _repeat_padded_kv_heads(k, config.groups)
+            v = _repeat_padded_kv_heads(v, config.groups)
         out = padded_sdpa(
             q,
             k,
