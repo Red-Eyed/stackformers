@@ -4,6 +4,11 @@ from importlib.metadata import version
 
 __version__ = version("stackformers")
 
+from stackformers.all_valid_decoder import (
+    AllValidCachedDecoderWrapper,
+    AllValidCrossAttentionCacheBuilder,
+    AllValidDecoderStepOutput,
+)
 from stackformers.attention import (
     AttnBias,
     AttnBiasConfig,
@@ -114,6 +119,11 @@ from stackformers.positional import (
     YaRNConfig,
     build_pos_encoding,
 )
+from stackformers.preallocated_decoder import (
+    PreallocatedCachedDecoderWrapper,
+    PreallocatedDecoderCache,
+    PreallocatedDecoderStepOutput,
+)
 from stackformers.presets.cross_attender import (
     CrossAttender,
     CrossAttenderBase,
@@ -142,6 +152,7 @@ from stackformers.presets.variable_width_encoder import (
 )
 from stackformers.result import Err, Ok, Result
 from stackformers.sequence import (
+    AllValidInput,
     PackedInput,
     PackedSequence,
     PaddedInput,
@@ -162,6 +173,13 @@ from stackformers.sequence import (
 )
 
 __all__ = [
+    "AllValidInput",
+    "AllValidCachedDecoderWrapper",
+    "AllValidCrossAttentionCacheBuilder",
+    "AllValidDecoderStepOutput",
+    "PreallocatedCachedDecoderWrapper",
+    "PreallocatedDecoderCache",
+    "PreallocatedDecoderStepOutput",
     "to_packed",
     "to_unpacked",
     "SelfAttentionMask",

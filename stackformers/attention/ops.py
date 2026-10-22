@@ -10,6 +10,7 @@ from einops import rearrange, repeat
 from torch import Tensor
 
 from stackformers.attention.varlen_backend import try_varlen_attn
+from stackformers.sequence import AllValidInput, PaddedInput
 
 if TYPE_CHECKING:
     from jaxtyping import Float
@@ -159,3 +160,36 @@ def packed_attn_or_fallback(
     v_pad, _ = _packed_heads_to_padded(v, k_seq.cu_seqlens, b, k_seq.max_seqlen)
     out_pad = padded_sdpa(q_pad, k_pad, v_pad, k_mask, causal, window_size, bias, allowed_pairs)
     return _padded_heads_to_packed(out_pad, q_mask)
+
+
+def dense_sdpa(
+    q: Tensor,
+    k: Tensor,
+    v: Tensor,
+    input: PaddedInput | AllValidInput,
+    causal: bool,
+    window_size: int | None,
+    bias: Tensor | None,
+    allowed_pairs: Tensor | None = None,
+) -> Tensor:
+    """Select mask-free global attention only for an explicit all-valid record."""
+    match input:
+        case AllValidInput():
+            if window_size is not None or bias is not None or allowed_pairs is not None:
+                raise ValueError(
+                    "all-valid attention requires global attention without bias or pair masks"
+                )
+            if k.shape[-2] == 0:
+                raise ValueError("all-valid attention requires at least one key")
+            return F.scaled_dot_product_attention(q, k, v, is_causal=causal)
+        case PaddedInput(mask=mask):
+            return padded_sdpa(q, k, v, mask, causal, window_size, bias, allowed_pairs)
+
+
+def mask_query_output(output: Tensor, input: PaddedInput | AllValidInput) -> Tensor:
+    """Keep the padded query contract without multiplying all-valid outputs by ones."""
+    match input:
+        case AllValidInput():
+            return output
+        case PaddedInput(mask=mask):
+            return output * mask.unsqueeze(-1)

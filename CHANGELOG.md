@@ -6,6 +6,25 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/): MAJOR for breaking public API changes,
 MINOR for backwards-compatible features, PATCH for bug fixes and internal changes.
 
+## [5.0.0rc19]
+
+### Backwards Incompatible Changes
+
+- Extend the closed `SequenceInput` union with `AllValidInput`. Custom exhaustive dispatchers
+  must handle this record. Existing padded and packed call behavior is unchanged.
+
+### New Features
+
+- Add `AllValidInput` for global dense attention without padding masks or fully masked-row
+  guards, preserving ordinary and packed projections.
+- Add `AllValidCrossAttentionCacheBuilder` and `AllValidCachedDecoderWrapper` for explicit
+  batch-one, single-token decoding with functional per-layer K/V caches at ONNX opsets 23/24.
+- Add inference-only `PreallocatedCachedDecoderWrapper` with fixed-capacity, exclusively owned
+  buffers and explicit valid length. Its opset-24 export uses `TensorScatter` and valid-length
+  `Attention`; ORT CPU buffer reuse requires matching cache input/output bindings. Exported
+  and compiled callers must check overflow before executing. Existing functional APIs remain
+  unchanged. No target-device latency improvement is claimed.
+
 ## [5.0.0rc18]
 
 ### Improvements

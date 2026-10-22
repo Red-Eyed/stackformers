@@ -19,6 +19,7 @@ from stackformers.norm.config import RMSNormConfig
 from stackformers.norm.factory import build_norm
 from stackformers.positional.none import NoPosEncoding
 from stackformers.sequence import (
+    AllValidInput,
     PackedInput,
     PaddedInput,
     SequenceInput,
@@ -37,6 +38,8 @@ class AllMasking(nn.Module):
     @override
     def forward(self, input: SequenceInput) -> torch.Tensor:
         match input:
+            case AllValidInput(x=x):
+                return torch.ones(x.shape[:2], dtype=torch.bool, device=x.device)
             case PaddedInput(mask=mask):
                 return mask.clone()
             case PackedInput(x=x):

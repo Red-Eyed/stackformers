@@ -33,6 +33,10 @@ One call site covers both modes: in training, `mlm_wrapper` runs the encoder twi
 
 ## Design
 
+`RandomMasking` also accepts `AllValidInput`: every dense position is eligible, with the same
+output shape as padded inputs and no validity-mask intersection. Custom masking strategies
+dispatching on `SequenceInput` must handle this record alongside padded and packed inputs.
+
 **`out` is always clean; only `mlm_loss` ever reflects masking.** `forward(input, encoder)` runs `encoder(input)` unconditionally for `out`. In training it additionally runs `encoder` a second time on a masked copy, purely to produce `mlm_loss` — that corrupted copy is never returned. This means the main pipeline sees byte-identical output whether or not the aux loss is being trained alongside it, and callers never need to special-case which pass produced `out`.
 
 **Training/eval is the one branch `forward()` is allowed, because it isn't tensor control flow.** `self.training` gates whether the second (masked) pass runs — the same mechanism `nn.Dropout` and `nn.BatchNorm` already use. It lets callers invoke `mlm_wrapper(input, encoder)` unconditionally in both modes, instead of an external `if training: ...` at every call site.

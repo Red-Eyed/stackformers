@@ -86,6 +86,49 @@ def _position_key(encoding: PosEncoding, k: Tensor, positions: Tensor) -> Tensor
     return positioned_k
 
 
+def _positioned_qkv(
+    attention: SelfAttention | PackedSelfAttention,
+    x: Float[Tensor, "b n d"],
+    positions: Tensor,
+) -> tuple[Tensor, Tensor, Tensor]:
+    """Project, normalize and position new self keys and queries with owned modules."""
+    config = attention.config
+    projected_q, projected_k, projected_v = _project_qkv(attention, x)
+    q = attention.q_norm(rearrange(projected_q, "b n (h d) -> b h n d", h=config.heads))
+    k = attention.k_norm(
+        rearrange(projected_k, "b n (h d) -> b h n d", h=config.effective_kv_heads)
+    )
+    v = rearrange(projected_v, "b n (h d) -> b h n d", h=config.effective_kv_heads)
+    q, k = attention.pos_encoding.forward_padded(q, k, positions, positions)
+    return q, k, v
+
+
+def _positioned_cross_kv(
+    attention: CrossAttention | PackedCrossAttention,
+    x: Float[Tensor, "b s d"],
+    positions: Tensor,
+) -> CrossAttentionKVCache:
+    """Build immutable normalized and positioned context keys and raw values."""
+    projected_k, projected_v = _project_kv(attention, x)
+    heads = attention.config.effective_kv_heads
+    k = attention.k_norm(rearrange(projected_k, "b s (h d) -> b h s d", h=heads))
+    v = rearrange(projected_v, "b s (h d) -> b h s d", h=heads)
+    k = _position_key(attention.pos_encoding, k, positions)
+    return CrossAttentionKVCache(k=k, v=v)
+
+
+def _positioned_cross_query(
+    attention: CrossAttention | PackedCrossAttention,
+    x: Float[Tensor, "b n d"],
+    positions: Tensor,
+) -> Tensor:
+    """Apply the same query projection, normalization and RoPE as ordinary attention."""
+    q = attention.q_norm(
+        rearrange(attention.to_q(x), "b n (h d) -> b h n d", h=attention.config.heads)
+    )
+    return _position_query(attention.pos_encoding, q, positions)
+
+
 class CachedSelfAttentionWrapper(nn.Module):
     """Add growing one-token K/V execution around an existing self-attention module.
 
@@ -118,18 +161,7 @@ class CachedSelfAttentionWrapper(nn.Module):
 
         attention = self.attention
         config = attention.config
-        heads = config.heads
-        kv_heads = config.effective_kv_heads
-        projected_q, projected_k, projected_v = _project_qkv(attention, input.x)
-        q = attention.q_norm(rearrange(projected_q, "b n (h d) -> b h n d", h=heads))
-        k = attention.k_norm(rearrange(projected_k, "b n (h d) -> b h n d", h=kv_heads))
-        v = rearrange(projected_v, "b n (h d) -> b h n d", h=kv_heads)
-        q, k = attention.pos_encoding.forward_padded(
-            q,
-            k,
-            input.abs_positions,
-            input.abs_positions,
-        )
+        q, k, v = _positioned_qkv(attention, input.x, input.abs_positions)
 
         cache_k, cache_v = cache.unbind(dim=0)
         updated_k = torch.cat((cache_k, k), dim=2)
@@ -181,12 +213,7 @@ class CachedCrossAttentionWrapper(nn.Module):
     def build_cache(self, context: PaddedInput) -> CrossAttentionKVCache:
         """Project and position one context while retaining configured KV-head width."""
         attention = self.attention
-        kv_heads = attention.config.effective_kv_heads
-        projected_k, projected_v = _project_kv(attention, context.x)
-        k = attention.k_norm(rearrange(projected_k, "b s (h d) -> b h s d", h=kv_heads))
-        v = rearrange(projected_v, "b s (h d) -> b h s d", h=kv_heads)
-        k = _position_key(attention.pos_encoding, k, context.abs_positions)
-        return CrossAttentionKVCache(k=k, v=v)
+        return _positioned_cross_kv(attention, context.x, context.abs_positions)
 
     @override
     def forward(
@@ -198,10 +225,7 @@ class CachedCrossAttentionWrapper(nn.Module):
         """Attend one padded target input to a preprojected fixed context."""
         attention = self.attention
         config = attention.config
-        q = attention.q_norm(
-            rearrange(attention.to_q(input.x), "b n (h d) -> b h n d", h=config.heads)
-        )
-        q = _position_query(attention.pos_encoding, q, input.abs_positions)
+        q = _positioned_cross_query(attention, input.x, input.abs_positions)
         k, v = cache
         if config.groups > 1:
             k = _repeat_padded_kv_heads(k, config.groups)

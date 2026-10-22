@@ -4,6 +4,24 @@ Multi-head self-attention and cross-attention.
 
 ## Design
 
+**Explicit all-valid dense input.** `AllValidInput(x, abs_positions)` asserts that every
+position is valid and deliberately has no mask. Ordinary and packed projection modules
+reuse their existing math with mask-free SDPA. Only global attention without learned bias
+or pair masks is admitted; use `PaddedInput` for those restrictions and fully excluded rows.
+Full-prefix self-attention retains configured causal visibility. Single-token cached
+attention appends the current key before attending and uses `is_causal=False`, so every
+past/current key remains visible. The generic padded path and its empty-row guards are
+unchanged. Adding another dense validity contract belongs in the shared `dense_sdpa`
+dispatcher, rather than another implementation of projection, QK normalization or RoPE.
+
+**Two explicit all-valid cache strategies.** `AllValidCachedDecoderWrapper` returns separate
+growing K/V tensors per layer. `PreallocatedCachedDecoderWrapper` uses exclusively owned
+fixed-capacity buffers and requires ONNX opset 24 for its `TensorScatter`/valid-length
+`Attention` export. Both reuse existing decoder residual equations and positioned projection
+helpers; both accept ordinary and packed weights. The original padded functional API remains
+available. See [the inference contract](../../docs/inference.md) for ownership, overflow,
+buffer sharing, and export requirements before selecting the mutable strategy.
+
 **Two configs, two modules.** `SelfAttentionConfig` and `CrossAttentionConfig` are separate types because their parameter sets differ: self-attention has `causal` and `window_size`; cross-attention has neither.
 
 **Defaults vs per-call visibility.** `SelfAttentionConfig.causal` and `window_size` set

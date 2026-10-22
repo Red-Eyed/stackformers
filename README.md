@@ -233,6 +233,12 @@ together so their attention references remain shared. Packing a wrapper alone co
 registered children; references outside that tree still point to the original attention modules.
 Projection packing is independent of the `PackedInput` sequence layout.
 
+For deployments with no padding, `AllValidInput` selects mask-free global attention.
+`AllValidCachedDecoderWrapper` provides functional one-token decoding at ONNX opsets 23/24;
+`PreallocatedCachedDecoderWrapper` adds a separate fixed-capacity opset-24 strategy with
+explicit ownership and ORT buffer-binding requirements. See the
+[inference contracts and examples](docs/inference.md) before selecting either path.
+
 ## What's included
 
 | Area | Variants |

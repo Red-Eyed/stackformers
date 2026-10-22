@@ -7,7 +7,7 @@ import torch.nn as nn
 from torch import Tensor
 from typing_extensions import override
 
-from stackformers.sequence import PackedInput, PaddedInput, SequenceInput
+from stackformers.sequence import AllValidInput, PackedInput, PaddedInput, SequenceInput
 
 if TYPE_CHECKING:
     from jaxtyping import Bool
@@ -28,7 +28,10 @@ class RandomMasking(nn.Module):
 
     @override
     def forward(self, input: SequenceInput) -> Bool[Tensor, "*batch"]:
+        """Sample each valid position independently in the supplied sequence layout."""
         match input:
+            case AllValidInput(x=x):
+                return torch.rand(x.shape[:2], device=x.device) < self.mask_ratio
             case PaddedInput(mask=mask):
                 candidate = torch.rand(mask.shape, device=mask.device) < self.mask_ratio
                 return candidate & mask

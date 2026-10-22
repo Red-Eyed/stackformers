@@ -1,5 +1,52 @@
 # Transformer model development log
 
+## 2026-10-22 — Explicit all-valid inference and opset-24 cache buffers (5.0.0rc19)
+
+### Observation and decision
+
+Projection packing already survives construction, model conversion, cached wrappers and ONNX
+export. Ordinary preset/config selection produces ordinary projections; no packing feature or
+automatic conversion is needed. Verify QKV, GLU gate/value and cross-cache KV projections in
+the exported graph rather than inferring packing from the sequence layout.
+
+Generic padded SDPA deliberately constructs masks and guards fully excluded rows, even when
+the caller knows every token is valid. Add a mask-free `AllValidInput` record and a conservative
+global attention route that rejects windows, pair masks and learned biases. Reuse the existing
+projection, QK normalization, RoPE and decoder residual equations. Add explicit batch-one,
+one-token cached execution; append the current token before noncausal attention over every
+valid past/current key. Leave the generic padded attention and functional cache APIs intact.
+
+Keep growing functional per-layer caches separate from the mutable preallocated strategy.
+The latter owns separate contiguous K/V buffers per layer and an explicit valid length. Eager
+execution validates overflow before mutation. Captured/ORT execution requires host validation
+before each call and matching cache input/output buffer bindings. Use standard opset-24
+`TensorScatter` and valid-length `Attention`; expose updates directly without cache stacking.
+GQA passes KV-head tensors directly to that Attention operator. Full ownership, capacity,
+overflow, dtype and ORT lifetime requirements are in `docs/inference.md`.
+
+### Verified result and limits
+
+Deterministic tests cover empty caches, multiple steps against padded/full-prefix decoding,
+all four normalization topologies, ordinary/packed weights, MHA/GQA, float32/float16 and CPU
+bf16 autocast. Conversion restores exact source checkpoint tensors and retains shared
+references. Wrapper construction preserves individual source training modes. Both functional
+and preallocated paths pass fullgraph compilation and PyTorch export checks.
+
+ONNX Runtime 1.29 CPU executes opsets 23/24 with projection/split assertions and no all-valid
+mask-construction/empty-row guards. The opset-24 full decoder preserves cache buffer pointers
+through four I/O-bound steps from zero length, with updates wired directly from cache inputs
+to outputs. Ordinary standalone TensorScatter execution copies unless sharing is activated;
+I/O binding is a necessary host arrangement, not a general promise about intermediate copies.
+
+Torch-harness summaries for a one-layer packed example show 85 generic decoder nodes versus
+43 all-valid functional nodes at opset 23, retaining six projection MatMuls and two projection
+splits. These are graph simplification and cache-storage results, not measured latency gains.
+Target-phone latency, allocator behavior and temporary allocations within attention remain
+unmeasured. The verified exporter environment is PyTorch 2.11 and ONNX 1.22 on a desktop CPU.
+`just check` passes formatting, lint, types and the full suite: 3,154 passed, 21 skipped,
+252 expected failures and 111 optional-case unexpected passes. The 178 focused inference
+cases also pass serially, including isolated compilation across model configurations.
+
 ## 2026-10-22 — Share decoder equations and tighten cache contracts (5.0.0rc18)
 
 ### Observation and decision

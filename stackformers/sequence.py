@@ -39,6 +39,18 @@ class PaddedInput(NamedTuple):
     abs_positions: Float[Tensor, "b n c"]  # c=1 for 1-D (text), c=2 for grids, c=3 for 3-D
 
 
+class AllValidInput(NamedTuple):
+    """Dense sequences whose every position is valid, asserted by construction.
+
+    There is deliberately no padding mask. Do not construct this record from a
+    padded batch unless every position is valid. Positions retain their original
+    coordinate meaning; they need not be consecutive.
+    """
+
+    x: Float[Tensor, "b n d"]
+    abs_positions: Float[Tensor, "b n c"]
+
+
 class PackedInput(NamedTuple):
     x: Float[Tensor, "nt d"]
     cu_seqlens: Int[Tensor, "bp1"]
@@ -46,11 +58,14 @@ class PackedInput(NamedTuple):
     abs_positions: Float[Tensor, "nt c"]  # c matches PaddedInput convention
 
 
-SequenceInput = PaddedInput | PackedInput
+SequenceInput = PaddedInput | PackedInput | AllValidInput
 
 
 def to_seq_info(inp: SequenceInput) -> SequenceInfo:
+    """Return legacy metadata, materializing an all-true mask only for all-valid records."""
     match inp:
+        case AllValidInput(x=x):
+            return PaddedSequence(mask=torch.ones(x.shape[:2], dtype=torch.bool, device=x.device))
         case PaddedInput(mask=mask):
             return PaddedSequence(mask=mask)
         case PackedInput(cu_seqlens=cu, max_seqlen=ms):
