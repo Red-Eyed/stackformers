@@ -14,6 +14,7 @@ from stackformers import (
     make_padded_input,
     plain_encoder_config,
 )
+from stackformers.sequence import materialize_padding_mask
 
 DIM = 64
 SEQUENCE_LENGTHS = (4, 2)
@@ -56,7 +57,7 @@ def run_example() -> LayoutParityResult:
         padded_output = model(padded)
         packed_output = model(packed)
 
-    valid_padded_output = padded_output[padded.mask]
+    valid_padded_output = padded_output[materialize_padding_mask(padded)]
     max_abs_error = float((valid_padded_output - packed_output).abs().max())
     return LayoutParityResult(
         padded_shape=tuple(padded_output.shape),

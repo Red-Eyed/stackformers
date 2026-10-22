@@ -7,7 +7,7 @@ if TYPE_CHECKING:
     from torch import Tensor
 
     from stackformers.attention.masking import CrossAttentionMask, SelfAttentionMask
-    from stackformers.sequence import AllValidInput, PackedInput, PaddedInput, SequenceInput
+    from stackformers.sequence import PackedInput, PaddedInput, SequenceInput
 
 
 @runtime_checkable
@@ -37,17 +37,6 @@ class SelfAttn(Protocol):
 @runtime_checkable
 class CrossAttn(Protocol):
     """Map queries and context of the same layout to query-shaped embeddings."""
-
-    @overload
-    def __call__(
-        self,
-        x_input: AllValidInput,
-        ctx_input: AllValidInput,
-        *,
-        cross_attn_mask: CrossAttentionMask = None,
-    ) -> Tensor:
-        """Attend between explicitly all-valid dense sequences."""
-        ...
 
     @overload
     def __call__(

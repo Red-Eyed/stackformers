@@ -14,7 +14,12 @@ from stackformers.attention.packed_cross_attn import PackedCrossAttention
 from stackformers.positional.config import RoPE1DConfig
 from stackformers.positional.none import NoPosEncoding
 from stackformers.positional.rope1d import RotaryEmbedding1D
-from stackformers.sequence import PaddedInput, PaddedSequence, make_padded_input
+from stackformers.sequence import (
+    PaddedInput,
+    PaddedSequence,
+    make_padded_input,
+    materialize_padding_mask,
+)
 from tests.conftest import atol
 
 B, N, S, D, H, DH = 2, 8, 12, 64, 4, 16
@@ -70,7 +75,7 @@ def test_cached_cross_attention_matches_ordinary_forward(
         actual = cached(
             target,
             cache,
-            PaddedSequence(mask=context.mask),
+            PaddedSequence(mask=materialize_padding_mask(context)),
         )
 
     torch.testing.assert_close(actual, expected, atol=atol(dtype), rtol=atol(dtype))
@@ -124,7 +129,7 @@ def test_cached_calls_do_not_repeat_context_projections(
             cached(
                 target,
                 cache,
-                PaddedSequence(mask=context.mask),
+                PaddedSequence(mask=materialize_padding_mask(context)),
             )
 
     assert q_calls.call_count == 2
@@ -149,6 +154,6 @@ def test_cached_cross_attention_matches_ordinary_forward_with_rope(
     with torch.no_grad():
         expected = attention(target, context)
         cache = cached.build_cache(context)
-        actual = cached(target, cache, PaddedSequence(mask=context.mask))
+        actual = cached(target, cache, PaddedSequence(mask=materialize_padding_mask(context)))
 
     torch.testing.assert_close(actual, expected, atol=atol(dtype), rtol=atol(dtype))

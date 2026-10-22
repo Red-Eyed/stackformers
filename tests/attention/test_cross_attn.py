@@ -6,7 +6,7 @@ import torch
 from stackformers.attention.config import CrossAttentionConfig
 from stackformers.attention.cross_attn import CrossAttention
 from stackformers.positional.none import NoPosEncoding
-from stackformers.sequence import PaddedInput, make_padded_input
+from stackformers.sequence import PaddedInput, make_padded_input, materialize_padding_mask
 
 B, N, S, D, H, DH = 2, 8, 12, 64, 4, 16
 
@@ -170,7 +170,7 @@ def test_runtime_cross_visibility(
     )
     expected = queries.x.new_tensor([[1, 0, 0], [25, 40, 0]])[..., None].expand(-1, -1, 4)
     if packed:
-        expected = expected[queries.mask]
+        expected = expected[materialize_padding_mask(queries)]
         actual = mean_cross_attention(
             padded_to_packed(queries), padded_to_packed(context), cross_attn_mask=allowed
         )

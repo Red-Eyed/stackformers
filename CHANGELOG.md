@@ -6,6 +6,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/): MAJOR for breaking public API changes,
 MINOR for backwards-compatible features, PATCH for bug fixes and internal changes.
 
+## [5.0.0rc20]
+
+### Backwards Incompatible Changes
+
+- Replace prerelease `AllValidInput(x, positions)` with
+  `PaddedInput(x, AllValid(), positions)`. The required `mask` field accepts a boolean tensor
+  or an explicit static marker; `SequenceInput` again has only padded and packed variants.
+  Consumers requiring tensor masks can call `materialize_padding_mask`.
+
+### Improvements
+
+- Add `AllValidCachedDecoderWrapper.empty_cache(dtype=...)`, deriving each self-cache's
+  geometry/device from the actual layer rather than assuming matching cross-attention heads.
+  Share allocation with the separate preallocated strategy.
+- Consolidate dense mask dispatch and isolate opset-24 cache lowerings from decoder
+  orchestration, preserving numerical behavior, packed projections and buffer ownership.
+
 ## [5.0.0rc19]
 
 ### Backwards Incompatible Changes

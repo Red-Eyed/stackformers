@@ -4,9 +4,13 @@ from typing import TYPE_CHECKING, NamedTuple
 
 import torch
 from torch import Tensor
+from torch.utils._pytree import register_pytree_node
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from jaxtyping import Bool, Float, Int
+    from torch.utils._pytree import KeyEntry
 
 # NamedTuple instead of dataclass: PyTorch's pytree system handles tuples natively,
 # so torch.export and torch.compile see the tensor fields without any registration.
@@ -33,22 +37,51 @@ class PackedSequence(NamedTuple):
 SequenceInfo = PaddedSequence | PackedSequence
 
 
+class AllValid:
+    """Stateless assertion that every dense position is valid; never inferred from values."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        """Keep dense input representations readable without instance addresses."""
+        return "AllValid()"
+
+
+def _flatten_all_valid(marker: AllValid) -> tuple[list[object], None]:
+    """Expose the marker as a static pytree node with no graph input tensors."""
+    return [], None
+
+
+def _flatten_all_valid_keys(marker: AllValid) -> tuple[list[tuple[KeyEntry, object]], None]:
+    """Expose no keyed leaves for the stateless marker."""
+    return [], None
+
+
+def _unflatten_all_valid(values: Iterable[object], context: None) -> AllValid:
+    """Restore the value-free validity assertion while rebuilding an input tree."""
+    return AllValid()
+
+
+# A zero-leaf node keeps the assertion static across compile, export and shape conversion.
+register_pytree_node(
+    AllValid,
+    _flatten_all_valid,
+    _unflatten_all_valid,
+    serialized_type_name="stackformers.AllValid",
+    flatten_with_keys_fn=_flatten_all_valid_keys,
+)
+
+
 class PaddedInput(NamedTuple):
-    x: Float[Tensor, "b n d"]
-    mask: Bool[Tensor, "b n"]
-    abs_positions: Float[Tensor, "b n c"]  # c=1 for 1-D (text), c=2 for grids, c=3 for 3-D
+    """Dense values and coordinates with required tensor validity or explicit AllValid.
 
-
-class AllValidInput(NamedTuple):
-    """Dense sequences whose every position is valid, asserted by construction.
-
-    There is deliberately no padding mask. Do not construct this record from a
-    padded batch unless every position is valid. Positions retain their original
-    coordinate meaning; they need not be consecutive.
+    The marker asserts that every position is valid without creating a mask tensor.
+    It is a static pytree node and contributes no exported graph input.
     """
 
     x: Float[Tensor, "b n d"]
-    abs_positions: Float[Tensor, "b n c"]
+    mask: Bool[Tensor, "b n"] | AllValid
+    abs_positions: Float[Tensor, "b n c"]  # c=1 for 1-D (text), c=2 for grids, c=3 for 3-D
 
 
 class PackedInput(NamedTuple):
@@ -58,22 +91,20 @@ class PackedInput(NamedTuple):
     abs_positions: Float[Tensor, "nt c"]  # c matches PaddedInput convention
 
 
-SequenceInput = PaddedInput | PackedInput | AllValidInput
+SequenceInput = PaddedInput | PackedInput
 
 
 def to_seq_info(inp: SequenceInput) -> SequenceInfo:
     """Return legacy metadata, materializing an all-true mask only for all-valid records."""
     match inp:
-        case AllValidInput(x=x):
-            return PaddedSequence(mask=torch.ones(x.shape[:2], dtype=torch.bool, device=x.device))
-        case PaddedInput(mask=mask):
-            return PaddedSequence(mask=mask)
+        case PaddedInput():
+            return PaddedSequence(mask=materialize_padding_mask(inp))
         case PackedInput(cu_seqlens=cu, max_seqlen=ms):
             return PackedSequence(cu_seqlens=cu, max_seqlen=ms)
 
 
-def make_padded_input(x: Tensor, mask: Bool[Tensor, "b n"]) -> PaddedInput:
-    """Build PaddedInput with sequential 1-D positions (shape b n 1)."""
+def make_padded_input(x: Tensor, mask: Bool[Tensor, "b n"] | AllValid) -> PaddedInput:
+    """Build dense input with required validity and sequential 1-D positions (b n 1)."""
     n = x.shape[1]
     pos = torch.arange(n, device=x.device, dtype=torch.float32)
     positions = pos.unsqueeze(0).unsqueeze(-1).expand(x.shape[0], -1, -1)  # b n 1
@@ -113,14 +144,15 @@ def padded_to_packed(inp: PaddedInput) -> PackedInput:
 
     Output shape is data-dependent (nt = mask.sum()); not compatible with torch.export.
     """
-    lengths = inp.mask.sum(dim=1)
+    mask = materialize_padding_mask(inp)
+    lengths = mask.sum(dim=1)
     cu = lengths_to_cu_seqlens(lengths)
     max_seqlen = int(lengths.max().item())
     return PackedInput(
-        x=inp.x[inp.mask],
+        x=inp.x[mask],
         cu_seqlens=cu,
         max_seqlen=max_seqlen,
-        abs_positions=inp.abs_positions[inp.mask],
+        abs_positions=inp.abs_positions[mask],
     )
 
 
@@ -174,3 +206,18 @@ def position_ids_from_packed(seq: PackedSequence) -> Int[Tensor, "nt"]:
     )  # (nt,)
     nt = batch_idx.shape[0]
     return torch.arange(nt, device=cu.device, dtype=torch.long) - cu[batch_idx]
+
+
+def materialize_padding_mask(input: PaddedInput) -> Bool[Tensor, "b n"]:
+    """Return the tensor mask unchanged, allocating ones only for explicit AllValid.
+
+    Use this at adapters requiring a tensor mask. Attention dispatches on the
+    marker directly and does not materialize it on the all-valid inference path.
+    """
+    match input.mask:
+        case Tensor() as mask:
+            return mask
+        case AllValid():
+            return torch.ones(input.x.shape[:2], dtype=torch.bool, device=input.x.device)
+        case _:
+            raise TypeError("mask must be a tensor or explicit AllValid()")

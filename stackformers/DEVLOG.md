@@ -1,5 +1,36 @@
 # Transformer model development log
 
+## 2026-10-22 — Consolidate dense validity and cache setup (5.0.0rc20)
+
+### Observation and decision
+
+The separate `AllValidInput` record duplicated dense-layout dispatch across protocols,
+attention modules and consumers. Replace it with required `PaddedInput.mask: Tensor | AllValid`.
+The stateless marker is explicit, has no default/None mode, and is registered as a zero-leaf
+pytree so it does not become a tensor input during compilation or export. An empty NamedTuple
+marker triggered PyTorch 2.11's ONNX dynamic-shape conversion bug, so use a stateless class
+with registered flattening and serialization metadata. Tensor-bearing records remain NamedTuples.
+
+`padded_sdpa` owns both dense mask variants; cached all-valid attention uses the same dispatcher.
+Keep generic masked-row guards and specialized decoder marker admission intact. Materialize
+an all-true tensor only at legacy tensor-mask adapters, preserving existing tensor identity.
+
+Add `AllValidCachedDecoderWrapper.empty_cache(dtype=...)` and share its allocator with the
+preallocated strategy. Derive each cache's geometry/device from the actual self-attention
+module, independently of cross-attention heads and preset metadata. Keep the shared per-layer
+K/V record and distinct functional/mutable ownership contracts. Move TensorScatter and
+valid-length Attention lowerings plus eager equivalents into `attention/onnx_backend.py`.
+
+### Verified result and limits
+
+Focused checks retain opset-23/24 numerical parity, packed projections, mask-free exports,
+bf16/autocast and ORT CPU cache-buffer reuse. Additional checks cover marker argument-tree
+serialization and heterogeneous self/cross head geometry across multiple decoding steps.
+`just check` passes formatting, lint, typing and the full suite: 3164 passed, 21 skipped,
+252 xfailed and 111 xpassed. Refreshed torch-harness graphs retain packed projections and
+contain no Where or IsInf operators in the all-valid exports.
+No new kernel, precision transformation, cache ownership mode or latency claim is introduced.
+
 ## 2026-10-22 — Explicit all-valid inference and opset-24 cache buffers (5.0.0rc19)
 
 ### Observation and decision

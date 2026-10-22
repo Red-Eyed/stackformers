@@ -26,7 +26,12 @@ from stackformers.positional.config import RoPE1DConfig
 from stackformers.positional.rope1d import RotaryEmbedding1D
 from stackformers.presets.decoder import TransformerDecoder, plain_decoder_config
 from stackformers.result import Err, Ok
-from stackformers.sequence import PaddedInput, PaddedSequence, make_padded_input
+from stackformers.sequence import (
+    PaddedInput,
+    PaddedSequence,
+    make_padded_input,
+    materialize_padding_mask,
+)
 from tests.conftest import atol
 from tests.export_utils import ONNX_OPSET_CASES, ExportShapeMode, export_and_run
 
@@ -93,7 +98,7 @@ def _input_to(input: PaddedInput, device: torch.device, dtype: torch.dtype) -> P
     """Move model inputs while retaining the boolean mask dtype."""
     return PaddedInput(
         x=input.x.to(device=device, dtype=dtype),
-        mask=input.mask.to(device=device),
+        mask=materialize_padding_mask(input).to(device=device),
         abs_positions=input.abs_positions.to(device=device, dtype=dtype),
     )
 
@@ -156,12 +161,17 @@ def test_cached_layer_rejects_incomplete_cross_context(
     """Half-present context fails before self-attention or any cache computation."""
     target, context = decoder_inputs
     cross_cache = torch.zeros(2, B, H, S, D // H) if missing != "cache" else None
-    sequence = PaddedSequence(context.mask) if missing != "context" else None
+    sequence = PaddedSequence(materialize_padding_mask(context)) if missing != "context" else None
     outcome = _cross_context(cross_cache, sequence)
     assert isinstance(outcome, Err)
     calls = Mock(side_effect=AssertionError("attention must not run before admission"))
     monkeypatch.setattr(cached_layer.self_attn, "forward", calls)
-    token = PaddedInput(*(tensor[:, :1] for tensor in target))
+    token = PaddedInput(
+        *(
+            tensor[:, :1]
+            for tensor in (target.x, materialize_padding_mask(target), target.abs_positions)
+        )
+    )
     self_cache = torch.zeros(2, B, H, 0, D // H)
     with pytest.raises(ValueError) as caught:
         cached_layer(token, cross_cache, self_cache, sequence, torch.tensor([0]))
@@ -213,8 +223,18 @@ def test_decoder_cached_forward_matches_existing_forward(
 
     with torch.no_grad():
         for step in range(N):
-            prefix = PaddedInput(*(tensor[:, : step + 1] for tensor in target))
-            token = PaddedInput(*(tensor[:, step : step + 1] for tensor in target))
+            prefix = PaddedInput(
+                *(
+                    tensor[:, : step + 1]
+                    for tensor in (target.x, materialize_padding_mask(target), target.abs_positions)
+                )
+            )
+            token = PaddedInput(
+                *(
+                    tensor[:, step : step + 1]
+                    for tensor in (target.x, materialize_padding_mask(target), target.abs_positions)
+                )
+            )
             expected = decoder(prefix, context if with_context else None)[:, -1:]
             result = cached_decoder(
                 token,
@@ -243,8 +263,18 @@ def test_integrated_cached_model_survives_packing_round_trip(
 
     with torch.no_grad():
         for step, convert in enumerate((to_packed, to_unpacked)):
-            prefix = PaddedInput(*(tensor[:, : step + 1] for tensor in target))
-            token = PaddedInput(*(tensor[:, step : step + 1] for tensor in target))
+            prefix = PaddedInput(
+                *(
+                    tensor[:, : step + 1]
+                    for tensor in (target.x, materialize_padding_mask(target), target.abs_positions)
+                )
+            )
+            token = PaddedInput(
+                *(
+                    tensor[:, step : step + 1]
+                    for tensor in (target.x, materialize_padding_mask(target), target.abs_positions)
+                )
+            )
             expected = decoder(prefix, context)[:, -1:]
             assert convert(integrated) is integrated
             layer = decoder.layers[0]
@@ -315,7 +345,12 @@ def test_transformer_decoder_exposes_cached_path(
     builder = DecoderCrossAttentionCacheBuilder(decoder)
     cached_decoder = CachedDecoderWrapper(decoder)
     self_cache = target.x.new_zeros(2, 2, B, H, 0, D // H)
-    token = PaddedInput(*(tensor[:, :1] for tensor in target))
+    token = PaddedInput(
+        *(
+            tensor[:, :1]
+            for tensor in (target.x, materialize_padding_mask(target), target.abs_positions)
+        )
+    )
     step_i = torch.tensor([0], dtype=torch.int64)
 
     with torch.no_grad():
@@ -350,8 +385,18 @@ def test_decoder_cached_forward_supports_cross_attention_rope(
 
     with torch.no_grad():
         for step in range(N):
-            prefix = PaddedInput(*(tensor[:, : step + 1] for tensor in target))
-            token = PaddedInput(*(tensor[:, step : step + 1] for tensor in target))
+            prefix = PaddedInput(
+                *(
+                    tensor[:, : step + 1]
+                    for tensor in (target.x, materialize_padding_mask(target), target.abs_positions)
+                )
+            )
+            token = PaddedInput(
+                *(
+                    tensor[:, step : step + 1]
+                    for tensor in (target.x, materialize_padding_mask(target), target.abs_positions)
+                )
+            )
             expected = decoder(prefix, context)[:, -1:]
             result = cached_decoder(
                 token,
@@ -379,7 +424,12 @@ def test_decoder_rejects_cache_for_different_layer_count(
 
     with pytest.raises(ValueError, match="cross cache has 1 layers, decoder has 2"):
         cached_decoder(
-            PaddedInput(*(tensor[:, :1] for tensor in target)),
+            PaddedInput(
+                *(
+                    tensor[:, :1]
+                    for tensor in (target.x, materialize_padding_mask(target), target.abs_positions)
+                )
+            ),
             invalid_cache,
             self_cache,
             torch.tensor([0], dtype=torch.int64),
@@ -435,7 +485,12 @@ def test_cached_decoder_exports_to_onnx(
     cache_builder = DecoderCrossAttentionCacheBuilder(decoder)
     cross_cache = cache_builder(context) if with_context else None
     self_cache = target.x.new_zeros(2, 2, B, _kv_heads(decoder), 2, D // H)
-    target_token = PaddedInput(*(tensor[:, :1] for tensor in target))
+    target_token = PaddedInput(
+        *(
+            tensor[:, :1]
+            for tensor in (target.x, materialize_padding_mask(target), target.abs_positions)
+        )
+    )
     step_i = torch.tensor([2], dtype=torch.int64)
     resized_target = make_padded_input(torch.randn(1, 1, D), torch.ones(1, 1, dtype=torch.bool))
     resized_context = make_padded_input(
@@ -487,7 +542,12 @@ def test_context_free_cached_decoder_compiles_and_exports(
     if packed:
         to_packed(decoder)
     cached = CachedDecoderWrapper(decoder)
-    token = PaddedInput(*(tensor[:, :1] for tensor in target))
+    token = PaddedInput(
+        *(
+            tensor[:, :1]
+            for tensor in (target.x, materialize_padding_mask(target), target.abs_positions)
+        )
+    )
     cache = _empty_self_cache(decoder, target)
     args = (token, None, cache, torch.tensor([0], dtype=torch.int64))
     expected = cached(*args)
@@ -508,6 +568,11 @@ def test_context_free_decoder_rejects_wrong_self_cache_layer_count(
     target, _ = decoder_inputs
     decoder = _build_decoder()
     cached = CachedDecoderWrapper(decoder)
-    token = PaddedInput(*(tensor[:, :1] for tensor in target))
+    token = PaddedInput(
+        *(
+            tensor[:, :1]
+            for tensor in (target.x, materialize_padding_mask(target), target.abs_positions)
+        )
+    )
     with pytest.raises(ValueError, match="self cache has 1 layers, decoder has 2"):
         cached(token, None, _empty_self_cache(decoder, target)[:-1], torch.tensor([0]))

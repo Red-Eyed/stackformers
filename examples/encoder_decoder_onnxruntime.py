@@ -24,6 +24,7 @@ from stackformers import (
     plain_decoder_config,
     plain_encoder_config,
 )
+from stackformers.sequence import materialize_padding_mask
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -233,7 +234,7 @@ def _padded_feeds(prefix: str, input: PaddedInput) -> dict[str, np.ndarray]:
     """Flatten a padded input into the explicit names used by the ONNX graphs."""
     return {
         f"{prefix}_x": _numpy(input.x),
-        f"{prefix}_mask": _numpy(input.mask),
+        f"{prefix}_mask": _numpy(materialize_padding_mask(input)),
         f"{prefix}_positions": _numpy(input.abs_positions),
     }
 
@@ -242,7 +243,7 @@ def _prefix(input: PaddedInput, tokens: int) -> PaddedInput:
     """Take one growing autoregressive prefix without rebuilding its metadata."""
     return PaddedInput(
         x=input.x[:, :tokens],
-        mask=input.mask[:, :tokens],
+        mask=materialize_padding_mask(input)[:, :tokens],
         abs_positions=input.abs_positions[:, :tokens],
     )
 
@@ -251,7 +252,7 @@ def _token(input: PaddedInput, step: int) -> PaddedInput:
     """Select the one target token consumed by a cached decoder invocation."""
     return PaddedInput(
         x=input.x[:, step : step + 1],
-        mask=input.mask[:, step : step + 1],
+        mask=materialize_padding_mask(input)[:, step : step + 1],
         abs_positions=input.abs_positions[:, step : step + 1],
     )
 

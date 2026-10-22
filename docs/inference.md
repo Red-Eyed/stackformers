@@ -23,12 +23,21 @@ project only Q. Graph structure is verified separately from eager numerical pari
 
 ## Explicit validity
 
-Use `sf.AllValidInput(x, abs_positions)` only when every token is valid. It contains no mask
-to discard accidentally. Encoder/full-prefix paths accept this record through the existing
-stacks, in both projection layouts. Its global attention path excludes padding construction,
-empty-row detection and guards. Learned attention biases, sliding windows and explicit pair
-masks are rejected; use the generic `PaddedInput` path for those cases. Custom collaborators
-that consume the closed `SequenceInput` union must handle the additional record variant.
+Use `sf.PaddedInput(x, sf.AllValid(), abs_positions)` only when every token is valid. The
+mask field is required and accepts either a boolean tensor or the explicit `AllValid()`
+marker. There is no `None` mode or omitted-mask default. `SequenceInput` retains just its
+padded and packed layouts. This replaces the prerelease `AllValidInput` record.
+
+Encoder/full-prefix paths accept both mask variants through the existing stacks, in both
+projection layouts. `padded_sdpa` owns their common dispatch. The marker's global attention
+path excludes padding construction, empty-row detection and guards. Learned biases, sliding
+windows and explicit pair masks are rejected for the marker; use a tensor mask for those
+cases. Cross-attention query and context masks are handled independently.
+
+`AllValid` is stateless and registered as a zero-leaf pytree, so it contributes no graph input.
+`sf.materialize_padding_mask(input)` adapts to consumers requiring a boolean tensor: existing
+tensors retain identity, and only the marker allocates an all-true mask. Attention does not
+call this adapter on its all-valid path. Legacy `PaddedSequence` metadata remains tensor-only.
 
 `sf.AllValidCachedDecoderWrapper` requires exactly one token and batch size one. Its self
 cache includes only valid past tokens, and the new token is appended before attention.
@@ -44,14 +53,9 @@ builder = sf.AllValidCrossAttentionCacheBuilder(decoder)
 cached = sf.AllValidCachedDecoderWrapper(decoder)
 
 with torch.no_grad():
-    cross = builder(sf.AllValidInput(memory_x, memory_positions))
-    self_config = decoder.config.self_attn
-    empty = token_x.new_empty(1, self_config.effective_kv_heads, 0, self_config.dim_head)
-    past = tuple(
-        sf.CrossAttentionKVCache(empty.clone(), empty.clone())
-        for _ in cached.layers
-    )
-    result = cached(sf.AllValidInput(token_x, token_positions), cross, past)
+    cross = builder(sf.PaddedInput(memory_x, sf.AllValid(), memory_positions))
+    past = cached.empty_cache(dtype=torch.float32)
+    result = cached(sf.PaddedInput(token_x, sf.AllValid(), token_positions), cross, past)
     past = result.self_kv_cache
 ```
 
@@ -59,9 +63,11 @@ The functional all-valid path supports opsets 23 and 24. It preserves incoming c
 and returns separate per-layer pairs, avoiding the original API's stacking. It still copies
 past keys/values through concatenation. The original `CachedDecoderWrapper` remains available
 with its existing padded records, dense cache tensors, `step_i`, and fully masked-row behavior.
-Initialize self caches from each self-attention layer's geometry and projection dtype; the
-cross-attention head geometry may differ. The snippet assumes a homogeneous decoder preset
-without autocast. Under autocast, create empty caches at the autocast projection dtype.
+`empty_cache` derives each layer's geometry/device directly from its self-attention module;
+cross-attention heads and preset metadata need not match. Both cache strategies share this
+allocator and the existing per-layer K/V record. The snippet assumes float32 execution; use
+the autocast projection dtype under autocast. The specialized all-valid wrappers require the
+marker explicitly and reject even an all-true tensor mask.
 
 When describing dynamic cache dimensions with `torch.export.ShapesCollection`, assign `{}`
 to static tensor leaves as well as `{2: past_dim}` to self-cache leaves. PyTorch 2.11's ONNX
@@ -104,7 +110,8 @@ or compiled host must validate the length before every call**, as well as buffer
 allocation/binding. Export does not embed an overflow exception. Do not rely on an out-of-range
 TensorScatter error to provide the same pre-mutation guarantee.
 
-The exported graph uses `TensorScatter` for each K/V update and `Attention`'s
+`attention/onnx_backend.py` owns the update and valid-length attention lowerings and their
+eager PyTorch equivalents. The exported graph uses `TensorScatter` for each K/V update and `Attention`'s
 `nonpad_kv_seqlen` input for valid-prefix attention. No padding mask is built and `is_causal`
 is false. GQA consumes the smaller KV-head tensors directly, avoiding an explicit expansion
 of the entire cache to query-head width. This exporter uses `torch.onnx.ops.symbolic`; the

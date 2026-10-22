@@ -18,7 +18,7 @@ from stackformers.positional.config import (
     RoPENDConfig,
 )
 from stackformers.positional.factory import build_pos_encoding
-from stackformers.sequence import PaddedInput, PaddedSequence
+from stackformers.sequence import PaddedInput, PaddedSequence, materialize_padding_mask
 
 DIM = 64
 HEADS = 2
@@ -64,6 +64,6 @@ def test_cached_cross_attention_matches_joint_positional_encoding(
     with torch.no_grad():
         expected = attention(target, context)
         cache = cached.build_cache(context)
-        actual = cached(target, cache, PaddedSequence(mask=context.mask))
+        actual = cached(target, cache, PaddedSequence(mask=materialize_padding_mask(context)))
 
     torch.testing.assert_close(actual, expected)

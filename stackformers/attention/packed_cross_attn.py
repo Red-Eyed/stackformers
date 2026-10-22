@@ -19,12 +19,11 @@ from stackformers.attention.layout import matching_layouts
 from stackformers.attention.masking import CrossAttentionMask, validate_cross_mask
 from stackformers.attention.ops import (
     _repeat_padded_kv_heads,
-    dense_sdpa,
     mask_query_output,
     packed_attn_or_fallback,
+    padded_sdpa,
 )
 from stackformers.sequence import (
-    AllValidInput,
     PackedInput,
     PackedSequence,
     PaddedInput,
@@ -92,8 +91,8 @@ class PackedCrossAttention(nn.Module):
 
     def _forward_padded(
         self,
-        x_input: PaddedInput | AllValidInput,
-        ctx_input: PaddedInput | AllValidInput,
+        x_input: PaddedInput,
+        ctx_input: PaddedInput,
         *,
         cross_attn_mask: CrossAttentionMask = None,
     ) -> Tensor:
@@ -114,11 +113,11 @@ class PackedCrossAttention(nn.Module):
         allowed = unwrap_or_raise(
             validate_cross_mask(cross_attn_mask, x.shape[1], context.shape[1], x.device)
         )
-        out = dense_sdpa(
+        out = padded_sdpa(
             q,
             k,
             v,
-            ctx_input,
+            ctx_input.mask,
             causal=False,
             window_size=None,
             bias=None,
@@ -170,17 +169,6 @@ class PackedCrossAttention(nn.Module):
     @overload
     def forward(
         self,
-        x_input: AllValidInput,
-        ctx_input: AllValidInput,
-        *,
-        cross_attn_mask: CrossAttentionMask = None,
-    ) -> Tensor:
-        """Attend between explicitly all-valid dense sequences."""
-        ...
-
-    @overload
-    def forward(
-        self,
         x_input: PaddedInput,
         ctx_input: PaddedInput,
         *,
@@ -211,8 +199,6 @@ class PackedCrossAttention(nn.Module):
         """Attend within one shared layout; raise ValueError for mixed layouts."""
         match unwrap_or_raise(matching_layouts(x_input, ctx_input)):
             case PaddedInput() as queries, PaddedInput() as context:
-                return self._forward_padded(queries, context, cross_attn_mask=cross_attn_mask)
-            case AllValidInput() as queries, AllValidInput() as context:
                 return self._forward_padded(queries, context, cross_attn_mask=cross_attn_mask)
             case PackedInput() as queries, PackedInput() as context:
                 return self._forward_packed(queries, context, cross_attn_mask=cross_attn_mask)

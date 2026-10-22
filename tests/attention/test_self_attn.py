@@ -16,7 +16,13 @@ from stackformers.attention.self_attn import SelfAttention
 from stackformers.positional.config import RoPE1DConfig
 from stackformers.positional.none import NoPosEncoding
 from stackformers.positional.rope1d import RotaryEmbedding1D
-from stackformers.sequence import PackedInput, PaddedInput, make_packed_input, make_padded_input
+from stackformers.sequence import (
+    PackedInput,
+    PaddedInput,
+    make_packed_input,
+    make_padded_input,
+    materialize_padding_mask,
+)
 from tests.conftest import atol
 
 
@@ -189,8 +195,18 @@ def test_cached_self_attn_matches_full_causal_prefix(
 
     with torch.no_grad():
         for step in range(N):
-            prefix = PaddedInput(*(tensor[:, : step + 1] for tensor in x_pad))
-            token = PaddedInput(*(tensor[:, step : step + 1] for tensor in x_pad))
+            prefix = PaddedInput(
+                *(
+                    tensor[:, : step + 1]
+                    for tensor in (x_pad.x, materialize_padding_mask(x_pad), x_pad.abs_positions)
+                )
+            )
+            token = PaddedInput(
+                *(
+                    tensor[:, step : step + 1]
+                    for tensor in (x_pad.x, materialize_padding_mask(x_pad), x_pad.abs_positions)
+                )
+            )
             expected = attention(prefix)[:, -1:]
             actual, cache = cached(
                 token,
@@ -315,7 +331,7 @@ def test_runtime_self_visibility(
     input = padded_to_packed(mean_input) if packed else mean_input
     expected = mean_input.x.new_tensor(expected_values)[..., None].expand(-1, -1, 4)
     if packed:
-        expected = expected[mean_input.mask]
+        expected = expected[materialize_padding_mask(mean_input)]
     actual = mean_attention(input, self_attn_mask=mask)
     torch.testing.assert_close(actual, expected, atol=atol(actual.dtype), rtol=0)
     assert mean_attention.config.causal

@@ -7,8 +7,6 @@ from typing import TYPE_CHECKING, NamedTuple, cast
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from einops import rearrange
 from torch import Tensor
 from typing_extensions import override
 
@@ -16,6 +14,7 @@ from stackformers._result import unwrap_or_raise
 from stackformers.all_valid_decoder import (
     LayerCaches,
     _admit_decoder,
+    _allocate_self_cache,
     _decode_layer,
     _validate_layer_counts,
     _validate_token,
@@ -24,12 +23,13 @@ from stackformers.attention.all_valid import SelfAttentionModule, project_output
 from stackformers.attention.cache import CrossAttentionKVCache
 from stackformers.attention.cache_validation import supported_self_attention
 from stackformers.attention.cached import _positioned_qkv
+from stackformers.attention.onnx_backend import update_buffer, valid_length_attention
 
 if TYPE_CHECKING:
     from jaxtyping import Float, Int
 
     from stackformers.decoder import DecoderLayerBase
-    from stackformers.sequence import AllValidInput
+    from stackformers.sequence import PaddedInput
 
 
 class PreallocatedDecoderCache(NamedTuple):
@@ -52,58 +52,17 @@ class PreallocatedDecoderStepOutput(NamedTuple):
     self_cache: PreallocatedDecoderCache
 
 
-def _update_buffer(
-    cache: Float[Tensor, "b h capacity dh"],
-    update: Float[Tensor, "b h n dh"],
-    index: Int[Tensor, "b"],
-) -> Tensor:
-    """Expose TensorScatter to ONNX; eager execution writes into the owned buffer."""
-    if torch.onnx.is_in_onnx_export():
-        return torch.onnx.ops.symbolic(
-            "::TensorScatter",
-            (cache, update, index),
-            {"axis": 2},
-            dtype=cache.dtype,
-            shape=cache.shape,
-            version=24,
-        )
-    return cache.index_copy_(2, index, update)
-
-
-def _preallocated_attention(
-    q: Float[Tensor, "b h n dh"],
-    k: Float[Tensor, "b kv_h capacity dh"],
-    v: Float[Tensor, "b kv_h capacity dh"],
-    valid_length: Int[Tensor, "b"],
-) -> Tensor:
-    """Exclude unused capacity using Attention-24's valid-length input during export."""
-    if torch.onnx.is_in_onnx_export():
-        return torch.onnx.ops.symbolic(
-            "::Attention",
-            (q, k, v, None, None, None, valid_length),
-            {"is_causal": 0},
-            dtype=q.dtype,
-            shape=q.shape,
-            version=24,
-        )
-    positions = torch.arange(k.shape[2], device=k.device)
-    valid = rearrange(positions < valid_length, "s -> 1 s")
-    return F.scaled_dot_product_attention(
-        q, k, v, attn_mask=valid, is_causal=False, enable_gqa=q.shape[1] != k.shape[1]
-    )
-
-
 def _preallocated_self_attention(
     attention: SelfAttentionModule,
-    input: AllValidInput,
+    input: PaddedInput,
     cache: CrossAttentionKVCache,
     index: Int[Tensor, "b"],
 ) -> tuple[Tensor, CrossAttentionKVCache]:
     """Write only the new positioned K/raw V, then attend to the valid prefix."""
     q, k, v = _positioned_qkv(attention, input.x, input.abs_positions)
-    updated_k = _update_buffer(cache.k, k, index)
-    updated_v = _update_buffer(cache.v, v, index)
-    output = _preallocated_attention(q, updated_k, updated_v, index + 1)
+    updated_k = update_buffer(cache.k, k, index)
+    updated_v = update_buffer(cache.v, v, index)
+    output = valid_length_attention(q, updated_k, updated_v, index + 1)
     return project_output(attention, output), CrossAttentionKVCache(updated_k, updated_v)
 
 
@@ -135,20 +94,8 @@ class PreallocatedCachedDecoderWrapper(nn.Module):
         if capacity < 1:
             raise ValueError("cache capacity must be positive")
         device = next(self.parameters()).device
-        buffers: list[CrossAttentionKVCache] = []
-        for layer in self.layers:
-            source = cast("DecoderLayerBase", layer)
-            config = unwrap_or_raise(supported_self_attention(source.self_attn)).config
-            shape = (1, config.effective_kv_heads, capacity, config.dim_head)
-            buffers.append(
-                CrossAttentionKVCache(
-                    torch.zeros(shape, device=device, dtype=dtype),
-                    torch.zeros(shape, device=device, dtype=dtype),
-                )
-            )
-        return PreallocatedDecoderCache(
-            tuple(buffers), torch.zeros(1, device=device, dtype=torch.int64)
-        )
+        buffers = _allocate_self_cache(self.layers, capacity, dtype)
+        return PreallocatedDecoderCache(buffers, torch.zeros(1, device=device, dtype=torch.int64))
 
     def validate_cache(self, cache: PreallocatedDecoderCache) -> None:
         """Check the host length/shape contract before execution, without writing buffers.
@@ -195,7 +142,7 @@ class PreallocatedCachedDecoderWrapper(nn.Module):
     @torch.no_grad()
     def forward(
         self,
-        input: AllValidInput,
+        input: PaddedInput,
         cross_cache: LayerCaches | None,
         self_cache: PreallocatedDecoderCache,
     ) -> PreallocatedDecoderStepOutput:

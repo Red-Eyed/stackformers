@@ -5,22 +5,22 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import torch
-import torch.nn.functional as F
 from einops import rearrange
 from torch import Tensor
 
 from stackformers.attention.cache import CrossAttentionKVCache
 from stackformers.attention.cached import _positioned_cross_query, _positioned_qkv
 from stackformers.attention.cross_attn import CrossAttention
-from stackformers.attention.ops import _repeat_padded_kv_heads
+from stackformers.attention.ops import _repeat_padded_kv_heads, padded_sdpa
 from stackformers.attention.packed_cross_attn import PackedCrossAttention
 from stackformers.attention.packed_self_attn import PackedSelfAttention
 from stackformers.attention.self_attn import SelfAttention
+from stackformers.sequence import AllValid
 
 if TYPE_CHECKING:
     from jaxtyping import Float
 
-    from stackformers.sequence import AllValidInput
+    from stackformers.sequence import PaddedInput
 
 Attention = SelfAttention | PackedSelfAttention | CrossAttention | PackedCrossAttention
 SelfAttentionModule = SelfAttention | PackedSelfAttention
@@ -40,18 +40,16 @@ def attend(
     v: Float[Tensor, "b kv_h s dh"],
 ) -> Tensor:
     """Attend to valid keys; one cached query must see every past/current position."""
-    if k.shape[2] == 0:
-        raise ValueError("all-valid attention requires at least one key")
     if attention.config.groups > 1:
         k = _repeat_padded_kv_heads(k, attention.config.groups)
         v = _repeat_padded_kv_heads(v, attention.config.groups)
-    output = F.scaled_dot_product_attention(q, k, v, attn_mask=None, is_causal=False)
+    output = padded_sdpa(q, k, v, AllValid(), causal=False, window_size=None, bias=None)
     return project_output(attention, output)
 
 
 def functional_self_attention(
     attention: SelfAttentionModule,
-    input: AllValidInput,
+    input: PaddedInput,
     cache: CrossAttentionKVCache,
 ) -> tuple[Tensor, CrossAttentionKVCache]:
     """Append one positioned key and raw value without mutating the incoming cache."""
@@ -64,7 +62,7 @@ def functional_self_attention(
 
 def cross_attention(
     attention: CrossAttention | PackedCrossAttention,
-    input: AllValidInput,
+    input: PaddedInput,
     cache: CrossAttentionKVCache,
 ) -> Tensor:
     """Project only the current query against an immutable, all-valid context cache."""

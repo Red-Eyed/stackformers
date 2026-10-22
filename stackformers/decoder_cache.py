@@ -44,7 +44,7 @@ from stackformers.decoder import (
     SandwichNormDecoderLayer,
 )
 from stackformers.result import Err, Ok, Result
-from stackformers.sequence import PaddedInput, PaddedSequence
+from stackformers.sequence import PaddedInput, PaddedSequence, materialize_padding_mask
 
 if TYPE_CHECKING:
     from jaxtyping import Float
@@ -381,7 +381,7 @@ class DecoderCrossAttentionCacheBuilder(nn.Module):
         )
         return DecoderCrossAttentionCache(
             kv=kv,
-            context=PaddedSequence(mask=context.mask),
+            context=PaddedSequence(mask=materialize_padding_mask(context)),
         )
 
     if TYPE_CHECKING:

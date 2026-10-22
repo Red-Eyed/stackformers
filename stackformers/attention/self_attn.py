@@ -14,11 +14,11 @@ from stackformers.attention.bias import NoAttnBias
 from stackformers.attention.masking import SelfAttentionMask, resolve_self_mask
 from stackformers.attention.ops import (
     _repeat_padded_kv_heads,
-    dense_sdpa,
     packed_attn_or_fallback,
+    padded_sdpa,
 )
 from stackformers.sequence import (
-    AllValidInput,
+    AllValid,
     PackedInput,
     PackedSequence,
     PaddedInput,
@@ -64,9 +64,7 @@ class SelfAttention(nn.Module):
         self.k_norm: nn.Module = nn.RMSNorm(dh) if config.qk_norm else nn.Identity()
         nn.init.normal_(self.to_out.weight, std=0.02)
 
-    def _forward_padded(
-        self, input: PaddedInput | AllValidInput, self_attn_mask: SelfAttentionMask
-    ) -> Tensor:
+    def _forward_padded(self, input: PaddedInput, self_attn_mask: SelfAttentionMask) -> Tensor:
         """Share projection and positional math across the two dense validity contracts."""
         cfg = self.config
         h, kv_h, groups = cfg.heads, cfg.effective_kv_heads, cfg.groups
@@ -78,19 +76,19 @@ class SelfAttention(nn.Module):
             k = _repeat_padded_kv_heads(k, groups)
             v = _repeat_padded_kv_heads(v, groups)
         q, k = self.pos_encoding.forward_padded(q, k, input.abs_positions, input.abs_positions)
-        match input:
-            case AllValidInput():
+        match input.mask:
+            case AllValid():
                 if type(self.attn_bias) is not NoAttnBias:
                     raise ValueError("all-valid attention requires NoAttnBias")
                 bias = None
-            case PaddedInput():
+            case Tensor():
                 bias = self.attn_bias(input)
         causal, window, allowed = unwrap_or_raise(
             resolve_self_mask(
                 self_attn_mask, cfg.causal, cfg.window_size, input.x.shape[1], input.x.device
             )
         )
-        out = dense_sdpa(q, k, v, input, causal, window, bias, allowed)
+        out = padded_sdpa(q, k, v, input.mask, causal, window, bias, allowed)
         projected: Tensor = self.dropout(self.to_out(rearrange(out, "b h n d -> b n (h d)")))
         return projected
 
@@ -126,7 +124,7 @@ class SelfAttention(nn.Module):
     ) -> Tensor:
         """Attend with per-call visibility; explicit masks override causal/window defaults."""
         match input:
-            case PaddedInput() | AllValidInput():
+            case PaddedInput():
                 return self._forward_padded(input, self_attn_mask)
             case PackedInput():
                 return self._forward_packed(input, self_attn_mask)

@@ -18,7 +18,7 @@ from stackformers.attention.cache_validation import (
     supported_self_attention,
 )
 from stackformers.attention.cross_attn import CrossAttention
-from stackformers.attention.ops import _repeat_padded_kv_heads, padded_sdpa
+from stackformers.attention.ops import _repeat_padded_kv_heads, mask_query_output, padded_sdpa
 from stackformers.attention.packed_cross_attn import PackedCrossAttention
 from stackformers.attention.packed_self_attn import PackedSelfAttention
 from stackformers.attention.self_attn import SelfAttention
@@ -186,7 +186,7 @@ class CachedSelfAttentionWrapper(nn.Module):
         )
         out = attention.dropout(attention.to_out(rearrange(out, "b h n d -> b n (h d)")))
         updated_cache = torch.stack((updated_k, updated_v), dim=0)
-        return out * input.mask.unsqueeze(-1), updated_cache
+        return mask_query_output(out, input), updated_cache
 
     if TYPE_CHECKING:
         __call__ = forward
@@ -242,7 +242,7 @@ class CachedCrossAttentionWrapper(nn.Module):
         projected: Tensor = attention.dropout(
             attention.to_out(rearrange(out, "b h n d -> b n (h d)"))
         )
-        return projected * input.mask.unsqueeze(-1)
+        return mask_query_output(projected, input)
 
     if TYPE_CHECKING:
         __call__ = forward

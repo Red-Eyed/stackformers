@@ -152,7 +152,7 @@ from stackformers.presets.variable_width_encoder import (
 )
 from stackformers.result import Err, Ok, Result
 from stackformers.sequence import (
-    AllValidInput,
+    AllValid,
     PackedInput,
     PackedSequence,
     PaddedInput,
@@ -164,6 +164,7 @@ from stackformers.sequence import (
     make_packed_input,
     make_padded,
     make_padded_input,
+    materialize_padding_mask,
     packed_batch_size,
     packed_to_padded,
     padded_to_key_padding_mask,
@@ -173,7 +174,8 @@ from stackformers.sequence import (
 )
 
 __all__ = [
-    "AllValidInput",
+    "AllValid",
+    "materialize_padding_mask",
     "AllValidCachedDecoderWrapper",
     "AllValidCrossAttentionCacheBuilder",
     "AllValidDecoderStepOutput",

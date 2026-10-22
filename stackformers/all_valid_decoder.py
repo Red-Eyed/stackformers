@@ -5,6 +5,7 @@ from __future__ import annotations
 from functools import partial
 from typing import TYPE_CHECKING, NamedTuple, TypeVar, assert_never, cast
 
+import torch
 import torch.nn as nn
 from torch import Tensor
 from typing_extensions import override
@@ -38,7 +39,7 @@ from stackformers.decoder import (
 )
 from stackformers.decoder_cache import _decoder_layers, _supported_layer, _unwrap_decoder
 from stackformers.result import Err, Ok, Result
-from stackformers.sequence import AllValidInput
+from stackformers.sequence import AllValid, PaddedInput
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -73,10 +74,27 @@ def _admit_decoder(decoder: nn.Module) -> tuple[nn.ModuleList, nn.Module]:
     return nn.ModuleList(layers), cast("nn.Module", source.final_norm)
 
 
-def _validate_token(input: AllValidInput) -> Result[tuple[()], TypeError | ValueError]:
+def _allocate_self_cache(layers: nn.ModuleList, capacity: int, dtype: torch.dtype) -> LayerCaches:
+    """Allocate separate K/V tensors using each self-attention layer's own geometry/device."""
+    buffers: list[CrossAttentionKVCache] = []
+    for layer in layers:
+        attention = cast("SelfAttentionModule", cast("DecoderLayerBase", layer).self_attn)
+        config = attention.config
+        shape = (1, config.effective_kv_heads, capacity, config.dim_head)
+        device = next(attention.parameters()).device
+        buffers.append(
+            CrossAttentionKVCache(
+                torch.zeros(shape, device=device, dtype=dtype),
+                torch.zeros(shape, device=device, dtype=dtype),
+            )
+        )
+    return tuple(buffers)
+
+
+def _validate_token(input: PaddedInput) -> Result[tuple[()], TypeError | ValueError]:
     """Reject padding records, multi-sequence batches and multi-token decoder calls."""
-    if not isinstance(input, AllValidInput):
-        return Err(TypeError("all-valid decoding requires AllValidInput"))
+    if not isinstance(input, PaddedInput) or not isinstance(input.mask, AllValid):
+        return Err(TypeError("all-valid decoding requires PaddedInput with mask=AllValid()"))
     if input.x.shape[0] != 1 or input.x.shape[1] != 1:
         return Err(ValueError("all-valid decoding requires batch size one and exactly one token"))
     if input.abs_positions.shape[:2] != input.x.shape[:2]:
@@ -86,10 +104,10 @@ def _validate_token(input: AllValidInput) -> Result[tuple[()], TypeError | Value
 
 def _decode_layer(
     layer: DecoderLayerBase,
-    input: AllValidInput,
-    self_attention: Callable[[AllValidInput], tuple[Tensor, StateT]],
+    input: PaddedInput,
+    self_attention: Callable[[PaddedInput], tuple[Tensor, StateT]],
     context: CrossAttentionKVCache | None,
-) -> tuple[AllValidInput, StateT]:
+) -> tuple[PaddedInput, StateT]:
     """Select the existing residual equation while substituting only attention execution."""
     cross = partial(
         cross_attention, cast("CrossAttention | PackedCrossAttention", layer.cross_attn)
@@ -171,10 +189,12 @@ class AllValidCrossAttentionCacheBuilder(nn.Module):
         self.layers.training = decoder.training
 
     @override
-    def forward(self, context: AllValidInput) -> LayerCaches:
+    def forward(self, context: PaddedInput) -> LayerCaches:
         """Return separate immutable K/V tensors; reject empty or multi-sequence memory."""
-        if not isinstance(context, AllValidInput):
-            raise TypeError("all-valid cache construction requires AllValidInput")
+        if not isinstance(context, PaddedInput) or not isinstance(context.mask, AllValid):
+            raise TypeError(
+                "all-valid cache construction requires PaddedInput with mask=AllValid()"
+            )
         if context.x.shape[0] != 1 or context.x.shape[1] == 0:
             raise ValueError("all-valid context requires one nonempty sequence")
         return tuple(
@@ -207,9 +227,17 @@ class AllValidCachedDecoderWrapper(nn.Module):
         self.training = decoder.training
         self.layers.training = decoder.training
 
+    def empty_cache(self, *, dtype: torch.dtype) -> LayerCaches:
+        """Create independent empty self caches at the intended projection dtype.
+
+        Geometry and device come from each self-attention layer, independently
+        of the cross-attention heads. Use the autocast dtype under autocast.
+        """
+        return _allocate_self_cache(self.layers, 0, dtype)
+
     @override
     def forward(
-        self, input: AllValidInput, cross_cache: LayerCaches | None, self_kv_cache: LayerCaches
+        self, input: PaddedInput, cross_cache: LayerCaches | None, self_kv_cache: LayerCaches
     ) -> AllValidDecoderStepOutput:
         """Append one token to each layer cache and return the normalized decoder output."""
         unwrap_or_raise(_validate_token(input))

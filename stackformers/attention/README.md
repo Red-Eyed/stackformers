@@ -4,21 +4,25 @@ Multi-head self-attention and cross-attention.
 
 ## Design
 
-**Explicit all-valid dense input.** `AllValidInput(x, abs_positions)` asserts that every
-position is valid and deliberately has no mask. Ordinary and packed projection modules
+**Explicit dense validity.** `PaddedInput(x, AllValid(), abs_positions)` asserts that every
+position is valid without allocating a mask tensor. The mask field is required; a tensor
+retains generic padded semantics. Ordinary and packed projection modules
 reuse their existing math with mask-free SDPA. Only global attention without learned bias
-or pair masks is admitted; use `PaddedInput` for those restrictions and fully excluded rows.
+or pair masks is admitted for the marker; use a tensor mask for those restrictions and fully
+excluded rows.
 Full-prefix self-attention retains configured causal visibility. Single-token cached
 attention appends the current key before attending and uses `is_causal=False`, so every
 past/current key remains visible. The generic padded path and its empty-row guards are
-unchanged. Adding another dense validity contract belongs in the shared `dense_sdpa`
+unchanged. Adding another dense validity contract belongs in the shared `padded_sdpa`
 dispatcher, rather than another implementation of projection, QK normalization or RoPE.
 
 **Two explicit all-valid cache strategies.** `AllValidCachedDecoderWrapper` returns separate
-growing K/V tensors per layer. `PreallocatedCachedDecoderWrapper` uses exclusively owned
+growing K/V tensors per layer; `empty_cache(dtype=...)` allocates using each self-attention
+module's actual geometry/device. Both strategies reuse that allocation helper. `PreallocatedCachedDecoderWrapper` uses exclusively owned
 fixed-capacity buffers and requires ONNX opset 24 for its `TensorScatter`/valid-length
 `Attention` export. Both reuse existing decoder residual equations and positioned projection
-helpers; both accept ordinary and packed weights. The original padded functional API remains
+helpers; both accept ordinary and packed weights. Opset-24 update/attention lowerings and their
+eager equivalents live in `onnx_backend.py`, separate from decoder orchestration. The original padded functional API remains
 available. See [the inference contract](../../docs/inference.md) for ownership, overflow,
 buffer sharing, and export requirements before selecting the mutable strategy.
 

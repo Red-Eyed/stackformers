@@ -50,18 +50,18 @@ if TYPE_CHECKING:
 @pytest.mark.usefixtures("inference")
 def test_preallocated_steps(
     decoder: sf.TransformerDecoder,
-    memory: sf.AllValidInput,
-    target: sf.AllValidInput,
+    memory: sf.PaddedInput,
+    target: sf.PaddedInput,
     device_dtype: tuple[torch.device, torch.dtype],
 ) -> None:
     """Append from length zero through capacity without changing storage or model state."""
     device, dtype = device_dtype
     decoder.to(device=device, dtype=dtype)
-    memory = sf.AllValidInput(
-        memory.x.to(device=device, dtype=dtype), memory.abs_positions.to(device)
+    memory = sf.PaddedInput(
+        memory.x.to(device=device, dtype=dtype), sf.AllValid(), memory.abs_positions.to(device)
     )
-    target = sf.AllValidInput(
-        target.x.to(device=device, dtype=dtype), target.abs_positions.to(device)
+    target = sf.PaddedInput(
+        target.x.to(device=device, dtype=dtype), sf.AllValid(), target.abs_positions.to(device)
     )
     state = {name: value.clone() for name, value in decoder.state_dict().items()}
     wrapper = sf.PreallocatedCachedDecoderWrapper(decoder)
@@ -109,7 +109,7 @@ def test_reject_aliases_and_wrong_dtype(decoder: sf.TransformerDecoder) -> None:
 @pytest.mark.usefixtures("inference", "compilation_cache")
 def test_preallocated_export_and_compile(
     decoder: sf.TransformerDecoder,
-    target: sf.AllValidInput,
+    target: sf.PaddedInput,
 ) -> None:
     """PyTorch capture preserves one-token outputs and the explicit mutable cache contract."""
     wrapper = sf.PreallocatedCachedDecoderWrapper(decoder)
@@ -126,8 +126,8 @@ def test_preallocated_export_and_compile(
 @pytest.mark.usefixtures("inference")
 def test_onnx24_shared_buffers(
     decoder: sf.TransformerDecoder,
-    memory: sf.AllValidInput,
-    target: sf.AllValidInput,
+    memory: sf.PaddedInput,
+    target: sf.PaddedInput,
     tmp_path: Path,
 ) -> None:
     """Full CPU decoder aliases cache I/O and preserves prefixes over multiple runs."""

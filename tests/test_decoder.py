@@ -21,7 +21,7 @@ from stackformers.feedforward.config import SwiGLUConfig
 from stackformers.norm.config import NormPlacement, RMSNormConfig
 from stackformers.positional.config import NoPosEncodingConfig, RoPE1DConfig
 from stackformers.presets.decoder import TransformerDecoder, TransformerDecoderConfig
-from stackformers.sequence import PaddedInput, make_padded_input
+from stackformers.sequence import PaddedInput, make_padded_input, materialize_padding_mask
 from tests.export_utils import ONNX_OPSET_CASES, ExportShapeMode, export_and_run
 from tests.norm_topology_helpers import (
     AffineNorm,
@@ -583,8 +583,18 @@ def test_decoder_runtime_masks_onnx(
         shapes[tensor] = {1: s}
     shapes[self_mask] = {0: n, 1: n}
     shapes[cross_mask] = {0: n, 1: s}
-    resized_input = PaddedInput(*(tensor[:, :3] for tensor in input))
-    resized_context = PaddedInput(*(tensor[:, :5] for tensor in context))
+    resized_input = PaddedInput(
+        *(
+            tensor[:, :3]
+            for tensor in (input.x, materialize_padding_mask(input), input.abs_positions)
+        )
+    )
+    resized_context = PaddedInput(
+        *(
+            tensor[:, :5]
+            for tensor in (context.x, materialize_padding_mask(context), context.abs_positions)
+        )
+    )
     export_and_run(
         masked_decoder_export,
         args,

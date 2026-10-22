@@ -17,8 +17,6 @@ from tests.conftest import atol
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from stackformers.all_valid_decoder import LayerCaches
-
 
 @pytest.fixture(params=[False, True], ids=["ordinary", "packed"])
 def packed(request: pytest.FixtureRequest) -> bool:
@@ -64,45 +62,37 @@ def decoder(packed: bool, topology: sf.NormPlacement, kv_heads: int) -> sf.Trans
 
 
 @pytest.fixture
-def memory() -> sf.AllValidInput:
+def memory() -> sf.PaddedInput:
     """Use nonzero, nonconsecutive context coordinates to expose lost cross RoPE."""
     x = torch.linspace(-0.8, 1.2, 80).reshape(1, 5, 16)
     positions = torch.tensor([0.5, 1.75, 3.0, 5.5, 8.0]).reshape(1, 5, 1)
-    return sf.AllValidInput(x, positions)
+    return sf.PaddedInput(x, sf.AllValid(), positions)
 
 
 @pytest.fixture
-def target() -> sf.AllValidInput:
+def target() -> sf.PaddedInput:
     """Four distinct target tokens with explicit absolute positions."""
     x = torch.cos(torch.arange(64).reshape(1, 4, 16) * 0.23)
     positions = torch.arange(4, dtype=torch.float32).reshape(1, 4, 1)
-    return sf.AllValidInput(x, positions)
+    return sf.PaddedInput(x, sf.AllValid(), positions)
 
 
-def _padded(input: sf.AllValidInput) -> sf.PaddedInput:
+def _padded(input: sf.PaddedInput) -> sf.PaddedInput:
     """Represent the same values through the generic all-true padded contract."""
     mask = torch.ones(input.x.shape[:2], dtype=torch.bool, device=input.x.device)
     return sf.PaddedInput(input.x, mask, input.abs_positions)
 
 
-def _token(input: sf.AllValidInput, index: int) -> sf.AllValidInput:
+def _token(input: sf.PaddedInput, index: int) -> sf.PaddedInput:
     """Select one token without resetting its absolute coordinates."""
-    return sf.AllValidInput(
-        input.x[:, index : index + 1], input.abs_positions[:, index : index + 1]
+    return sf.PaddedInput(
+        input.x[:, index : index + 1], sf.AllValid(), input.abs_positions[:, index : index + 1]
     )
 
 
-def _prefix(input: sf.AllValidInput, length: int) -> sf.AllValidInput:
+def _prefix(input: sf.PaddedInput, length: int) -> sf.PaddedInput:
     """Retain a complete causal prefix for the independent reference path."""
-    return sf.AllValidInput(input.x[:, :length], input.abs_positions[:, :length])
-
-
-def _empty(cross: LayerCaches) -> LayerCaches:
-    """Create independently owned empty self caches at projection dtype and KV width."""
-    return tuple(
-        sf.CrossAttentionKVCache(pair.k[:, :, :0].clone(), pair.v[:, :, :0].clone())
-        for pair in cross
-    )
+    return sf.PaddedInput(input.x[:, :length], sf.AllValid(), input.abs_positions[:, :length])
 
 
 @pytest.fixture
@@ -123,18 +113,18 @@ def compilation_cache() -> Iterator[None]:
 @pytest.mark.usefixtures("inference")
 def test_multi_step_parity(
     decoder: sf.TransformerDecoder,
-    memory: sf.AllValidInput,
-    target: sf.AllValidInput,
+    memory: sf.PaddedInput,
+    target: sf.PaddedInput,
     device_dtype: tuple[torch.device, torch.dtype],
 ) -> None:
     """Functional cached decoding matches padded/full-prefix paths without changing state."""
     device, dtype = device_dtype
     decoder.to(device=device, dtype=dtype)
-    memory = sf.AllValidInput(
-        memory.x.to(device=device, dtype=dtype), memory.abs_positions.to(device)
+    memory = sf.PaddedInput(
+        memory.x.to(device=device, dtype=dtype), sf.AllValid(), memory.abs_positions.to(device)
     )
-    target = sf.AllValidInput(
-        target.x.to(device=device, dtype=dtype), target.abs_positions.to(device)
+    target = sf.PaddedInput(
+        target.x.to(device=device, dtype=dtype), sf.AllValid(), target.abs_positions.to(device)
     )
     state = {name: value.clone() for name, value in decoder.state_dict().items()}
     wrapper = sf.AllValidCachedDecoderWrapper(decoder)
@@ -142,7 +132,7 @@ def test_multi_step_parity(
     assert {id(p) for p in wrapper.parameters()} == {id(p) for p in decoder.parameters()}
     cross = builder(memory)
     cross_before = tuple(sf.CrossAttentionKVCache(pair.k.clone(), pair.v.clone()) for pair in cross)
-    cache = _empty(cross)
+    cache = wrapper.empty_cache(dtype=dtype)
     for step in range(target.x.shape[1]):
         old = tuple(sf.CrossAttentionKVCache(pair.k.clone(), pair.v.clone()) for pair in cache)
         actual = wrapper(_token(target, step), cross, cache)
@@ -161,15 +151,15 @@ def test_multi_step_parity(
 @pytest.mark.usefixtures("inference")
 def test_bfloat16_autocast(
     decoder: sf.TransformerDecoder,
-    memory: sf.AllValidInput,
-    target: sf.AllValidInput,
+    memory: sf.PaddedInput,
+    target: sf.PaddedInput,
 ) -> None:
     """Both cache strategies retain bf16 projections under float32-weight autocast."""
     functional = sf.AllValidCachedDecoderWrapper(decoder)
     fixed = sf.PreallocatedCachedDecoderWrapper(decoder)
     with torch.autocast("cpu", dtype=torch.bfloat16):
         cross = sf.AllValidCrossAttentionCacheBuilder(decoder)(memory)
-        cache = _empty(cross)
+        cache = functional.empty_cache(dtype=torch.bfloat16)
         preallocated = fixed.allocate_cache(4, dtype=torch.bfloat16)
         for step in range(4):
             token = _token(target, step)
@@ -188,7 +178,7 @@ def test_bfloat16_autocast(
 @pytest.mark.usefixtures("inference", "compilation_cache")
 def test_context_free_export_and_compile(
     decoder: sf.TransformerDecoder,
-    target: sf.AllValidInput,
+    target: sf.PaddedInput,
 ) -> None:
     """Functional all-valid decoding remains traceable without cross-attention."""
     wrapper = sf.AllValidCachedDecoderWrapper(decoder)
@@ -203,13 +193,13 @@ def test_context_free_export_and_compile(
     torch.testing.assert_close(compiled(*args), expected)
 
 
-def test_admission(decoder: sf.TransformerDecoder, target: sf.AllValidInput) -> None:
+def test_admission(decoder: sf.TransformerDecoder, target: sf.PaddedInput) -> None:
     """Reject multi-token calls and padded records before projection execution."""
     wrapper = sf.AllValidCachedDecoderWrapper(decoder)
     with pytest.raises(ValueError, match="exactly one token"):
         wrapper(target, None, ())
-    with pytest.raises(TypeError, match="AllValidInput"):
-        wrapper(_padded(_token(target, 0)), None, ())  # pyrefly: ignore [bad-argument-type]
+    with pytest.raises(TypeError, match="AllValid"):
+        wrapper(_padded(_token(target, 0)), None, ())
 
 
 @pytest.mark.parametrize("topology", ["pre"])
@@ -254,8 +244,8 @@ def test_packed_glu_graph(
 @pytest.mark.usefixtures("inference")
 def test_integrated_conversion(
     decoder: sf.TransformerDecoder,
-    memory: sf.AllValidInput,
-    target: sf.AllValidInput,
+    memory: sf.PaddedInput,
+    target: sf.PaddedInput,
 ) -> None:
     """Conversion retains shared wrapper references and restores exact source checkpoints."""
     sf.to_unpacked(decoder)
@@ -268,7 +258,7 @@ def test_integrated_conversion(
     for convert in (sf.to_packed, sf.to_unpacked):
         convert(tree)
         cross = builder(memory)
-        actual = functional(_token(target, 0), cross, _empty(cross))
+        actual = functional(_token(target, 0), cross, functional.empty_cache(dtype=torch.float32))
         updated = fixed(_token(target, 0), cross, fixed.allocate_cache(4, dtype=torch.float32))
         torch.testing.assert_close(actual.x, expected)
         torch.testing.assert_close(updated.x, expected)
@@ -279,20 +269,64 @@ def test_integrated_conversion(
         torch.testing.assert_close(tensor, state[name], rtol=0, atol=0)
 
 
+@pytest.fixture
+def heterogeneous_decoder(decoder: sf.TransformerDecoder, packed: bool) -> sf.TransformerDecoder:
+    """Use a self-attention geometry that differs from cross-attention and preset metadata."""
+    layer = cast("sf.DecoderLayerBase", decoder._decoder.layers[0])
+    with torch.random.fork_rng():
+        torch.manual_seed(43)
+        attention = sf.SelfAttention(
+            sf.SelfAttentionConfig(dim=16, heads=4, kv_heads=1, dim_head=4, causal=True),
+            sf.NoPosEncoding(),
+        ).eval()
+    layer.self_attn = attention.to_packed() if packed else attention
+    return decoder
+
+
+@pytest.mark.parametrize("topology", ["pre"])
+@pytest.mark.parametrize("kv_heads", [2])
+@pytest.mark.usefixtures("inference")
+def test_allocate_from_actual_self_attention(
+    heterogeneous_decoder: sf.TransformerDecoder,
+    memory: sf.PaddedInput,
+    target: sf.PaddedInput,
+) -> None:
+    """Both allocators honor per-layer self geometry and keep decoding numerically correct."""
+    decoder = heterogeneous_decoder
+    functional = sf.AllValidCachedDecoderWrapper(decoder)
+    fixed = sf.PreallocatedCachedDecoderWrapper(decoder)
+    cross = sf.AllValidCrossAttentionCacheBuilder(decoder)(memory)
+    cache = functional.empty_cache(dtype=torch.float32)
+    preallocated = fixed.allocate_cache(4, dtype=torch.float32)
+    assert cache[0].k.shape == (1, 1, 0, 4)
+    assert cache[1].k.shape == (1, 2, 0, 8)
+    assert cross[0].k.shape == (1, 2, 5, 8)
+    assert preallocated.kv[0].k.shape == (1, 1, 4, 4)
+    assert preallocated.kv[1].k.shape == (1, 2, 4, 8)
+    for step in range(4):
+        result = functional(_token(target, step), cross, cache)
+        updated = fixed(_token(target, step), cross, preallocated)
+        expected = decoder(_padded(_prefix(target, step + 1)), _padded(memory))[:, -1:]
+        torch.testing.assert_close(result.x, expected)
+        torch.testing.assert_close(updated.x, expected)
+        cache = result.self_kv_cache
+        preallocated = updated.self_cache
+
+
 @pytest.mark.parametrize("topology", ["sandwich"])
 @pytest.mark.parametrize("opset", [23, 24])
 @pytest.mark.usefixtures("inference")
 def test_onnx_dynamic_past(
     decoder: sf.TransformerDecoder,
-    memory: sf.AllValidInput,
-    target: sf.AllValidInput,
+    memory: sf.PaddedInput,
+    target: sf.PaddedInput,
     packed: bool,
     opset: int,
 ) -> None:
     """One graph runs empty/growing caches and keeps packed projections mask-free."""
     wrapper = sf.AllValidCachedDecoderWrapper(decoder)
     cross = sf.AllValidCrossAttentionCacheBuilder(decoder)(memory)
-    cache = _empty(cross)
+    cache = wrapper.empty_cache(dtype=torch.float32)
     for step in range(2):
         cache = wrapper(_token(target, step), cross, cache).self_kv_cache
     args = (_token(target, 2), cross, cache)
@@ -324,7 +358,7 @@ def test_onnx_dynamic_past(
             attributes = {a.name: onnx.helper.get_attribute_value(a) for a in node.attribute}
             assert attributes.get("is_causal", 0) == 0
     session = ort.InferenceSession(model.SerializeToString(), providers=["CPUExecutionProvider"])
-    cache = _empty(cross)
+    cache = wrapper.empty_cache(dtype=torch.float32)
     for step in range(4):
         args = (_token(target, step), cross, cache)
         leaves, _ = tree_flatten(args)
@@ -349,7 +383,7 @@ def test_onnx_dynamic_past(
 @pytest.mark.usefixtures("inference")
 def test_encoder_and_cross_builder_export(
     decoder: sf.TransformerDecoder,
-    memory: sf.AllValidInput,
+    memory: sf.PaddedInput,
     packed: bool,
     opset: int,
 ) -> None:
@@ -377,7 +411,7 @@ def test_encoder_and_cross_builder_export(
             None,
             {
                 v.name: tensor.numpy()
-                for v, tensor in zip(session.get_inputs(), memory, strict=True)
+                for v, tensor in zip(session.get_inputs(), tree_flatten(memory)[0], strict=True)
             },
         )
         expected, _ = tree_flatten(module(memory))

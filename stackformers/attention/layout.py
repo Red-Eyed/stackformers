@@ -6,22 +6,18 @@ from stackformers._result import unwrap_or_raise
 from stackformers.attention.masking import CrossAttentionMask, SelfAttentionMask
 from stackformers.attention.protocols import CrossAttn, SelfAttn
 from stackformers.result import Err, Ok, Result
-from stackformers.sequence import AllValidInput, PackedInput, PaddedInput, SequenceInput
+from stackformers.sequence import PackedInput, PaddedInput, SequenceInput
 
 
 def matching_layouts(
     queries: SequenceInput, context: SequenceInput
 ) -> Result[
-    tuple[PaddedInput, PaddedInput]
-    | tuple[PackedInput, PackedInput]
-    | tuple[AllValidInput, AllValidInput],
+    tuple[PaddedInput, PaddedInput] | tuple[PackedInput, PackedInput],
     ValueError,
 ]:
     """Return a jointly narrowed pair, carrying a layout mismatch as failure data."""
     match queries, context:
         case PaddedInput(), PaddedInput():
-            return Ok((queries, context))
-        case AllValidInput(), AllValidInput():
             return Ok((queries, context))
         case PackedInput(), PackedInput():
             return Ok((queries, context))
@@ -42,8 +38,6 @@ def call_cross_attention(
             if cross_attn_mask is None:
                 return attention(padded_queries, padded_context)
             return attention(padded_queries, padded_context, cross_attn_mask=cross_attn_mask)
-        case AllValidInput() as valid_queries, AllValidInput() as valid_context:
-            return attention(valid_queries, valid_context, cross_attn_mask=cross_attn_mask)
         case PackedInput() as packed_queries, PackedInput() as packed_context:
             if cross_attn_mask is None:
                 return attention(packed_queries, packed_context)

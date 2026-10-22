@@ -17,6 +17,7 @@ from stackformers.sequence import (
     make_packed_input,
     make_padded,
     make_padded_input,
+    materialize_padding_mask,
     packed_batch_size,
     packed_to_padded,
     padded_to_packed,
@@ -78,8 +79,11 @@ def test_padded_to_packed_to_padded_roundtrip(padded_input_ragged: PaddedInput) 
     inp = padded_input_ragged
     out = packed_to_padded(padded_to_packed(inp))
     # out is padded to max_seqlen, not the original n — compare valid tokens only.
-    assert torch.equal(out.x[out.mask], inp.x[inp.mask])
-    assert torch.equal(out.abs_positions[out.mask], inp.abs_positions[inp.mask])
+    assert torch.equal(out.x[materialize_padding_mask(out)], inp.x[materialize_padding_mask(inp)])
+    assert torch.equal(
+        out.abs_positions[materialize_padding_mask(out)],
+        inp.abs_positions[materialize_padding_mask(inp)],
+    )
 
 
 def test_packed_to_padded_to_packed_roundtrip(packed_input_ragged: PackedInput) -> None:

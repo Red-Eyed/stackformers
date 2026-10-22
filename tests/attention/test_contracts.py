@@ -14,7 +14,13 @@ from stackformers.attention.cross_attn import CrossAttention
 from stackformers.attention.layout import call_cross_attention
 from stackformers.attention.self_attn import SelfAttention
 from stackformers.positional.none import NoPosEncoding
-from stackformers.sequence import PackedInput, PaddedInput, make_padded_input, padded_to_packed
+from stackformers.sequence import (
+    PackedInput,
+    PaddedInput,
+    make_padded_input,
+    materialize_padding_mask,
+    padded_to_packed,
+)
 
 if TYPE_CHECKING:
     from stackformers.sequence import SequenceInput
@@ -59,7 +65,7 @@ def test_no_bias_does_not_repad_features(
 ) -> None:
     """The no-bias path never materializes padded features merely to calculate no bias."""
     attention = SelfAttention(SelfAttentionConfig(dim=64, heads=1), NoPosEncoding())
-    expected = attention(padded_input)[padded_input.mask]
+    expected = attention(padded_input)[materialize_padding_mask(padded_input)]
 
     def reject_repadding(input: PackedInput) -> PaddedInput:
         """Fail at the feature-allocation boundary, independently of attention backend."""
