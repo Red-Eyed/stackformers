@@ -12,7 +12,11 @@ from typing_extensions import override
 
 from stackformers._result import unwrap_or_raise
 from stackformers.attention.cache import CrossAttentionKVCache
-from stackformers.attention.cache_validation import single_token, supported_self_attention
+from stackformers.attention.cache_validation import (
+    cacheable_cross_attention,
+    single_token,
+    supported_self_attention,
+)
 from stackformers.attention.cross_attn import CrossAttention
 from stackformers.attention.ops import _repeat_padded_kv_heads, padded_sdpa
 from stackformers.attention.packed_cross_attn import PackedCrossAttention
@@ -89,6 +93,8 @@ class CachedSelfAttentionWrapper(nn.Module):
     position-encoded K plus raw V at KV-head width. Its token dimension must equal ``step_i``.
     Ordinary and packed projections share this cache layout. Parameters and train/eval state
     are shared with the wrapped attention module.
+    Only exact built-in attention types are admitted; unsupported subclasses raise TypeError
+    rather than silently replacing their forward behavior with the built-in cached equation.
 
     Example:
         ``output, next_cache = CachedSelfAttentionWrapper(attention)(token, cache, step_i)``
@@ -159,6 +165,7 @@ class CachedCrossAttentionWrapper(nn.Module):
 
     Ordinary and packed KV projections use the same cache record. Parameters and train/eval
     state are shared with the wrapped attention module.
+    Unsupported subclasses raise TypeError before context projections are evaluated.
 
     Example:
         ``wrapper = CachedCrossAttentionWrapper(attention)``
@@ -168,7 +175,7 @@ class CachedCrossAttentionWrapper(nn.Module):
     def __init__(self, attention: CrossAttention | PackedCrossAttention) -> None:
         """Retain the original attention module so cached and ordinary paths share weights."""
         super().__init__()
-        self.attention = attention
+        self.attention = unwrap_or_raise(cacheable_cross_attention(attention))
         self.train(attention.training)
 
     def build_cache(self, context: PaddedInput) -> CrossAttentionKVCache:

@@ -3,28 +3,38 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, assert_never, cast
+from functools import partial
+from typing import TYPE_CHECKING, NamedTuple, assert_never, cast
 
 import torch
 import torch.nn as nn
 from torch import Tensor
 from typing_extensions import override
 
+from stackformers._decoder_equations import (
+    NoContext,
+    WithContext,
+    post_norm_decoder,
+    pre_norm_decoder,
+    reordered_norm_decoder,
+    sandwich_norm_decoder,
+)
 from stackformers._result import unwrap_or_raise
 from stackformers.attention.cache import (
     CrossAttentionKVCache,
     DecoderCrossAttentionCache,
     DecoderStepOutput,
 )
-from stackformers.attention.cache_validation import matching_layer_counts, supported_self_attention
+from stackformers.attention.cache_validation import (
+    cacheable_cross_attention,
+    cacheable_self_attention,
+    matching_layer_counts,
+    supported_self_attention,
+)
 from stackformers.attention.cached import (
     CachedCrossAttentionWrapper,
     CachedSelfAttentionWrapper,
 )
-from stackformers.attention.cross_attn import CrossAttention
-from stackformers.attention.packed_cross_attn import PackedCrossAttention
-from stackformers.attention.packed_self_attn import PackedSelfAttention
-from stackformers.attention.self_attn import SelfAttention
 from stackformers.decoder import (
     Decoder,
     DecoderLayer,
@@ -37,46 +47,66 @@ from stackformers.result import Err, Ok, Result
 from stackformers.sequence import PaddedInput, PaddedSequence
 
 if TYPE_CHECKING:
-    from stackformers.attention.protocols import CrossAttn, SelfAttn
+    from jaxtyping import Float
 
 
 def _unwrap_decoder(module: nn.Module) -> Result[Decoder, TypeError]:
     """Resolve a low-level decoder from either a stack or its existing preset wrapper."""
     candidate = module if isinstance(module, Decoder) else getattr(module, "_decoder", module)
-    if not isinstance(candidate, Decoder):
+    if type(candidate) is not Decoder:
         return Err(TypeError(f"{type(module).__name__} does not contain a Stackformers Decoder"))
     return Ok(candidate)
 
 
-def _self_attention(module: SelfAttn) -> Result[SelfAttention | PackedSelfAttention, TypeError]:
-    """Admit the closed set of self-attention projection layouts supported by caching."""
-    match module:
-        case SelfAttention() | PackedSelfAttention():
-            return Ok(module)
+class _CachedCrossContext(NamedTuple):
+    """Keep projected keys/values inseparable from their context validity mask."""
+
+    kv: CrossAttentionKVCache
+    sequence: PaddedSequence
+
+
+def _cross_context(
+    cache: Float[Tensor, "two b kv_h s dh"] | None,
+    context: PaddedSequence | None,
+) -> Result[NoContext | WithContext[_CachedCrossContext], ValueError]:
+    """Validate the legacy argument pair before entering the shared layer equation."""
+    match cache, context:
+        case None, None:
+            return Ok(NoContext())
+        case Tensor(), PaddedSequence():
+            kv = CrossAttentionKVCache(k=cache[0], v=cache[1])
+            return Ok(WithContext(_CachedCrossContext(kv=kv, sequence=context)))
         case _:
-            return Err(
-                TypeError(
-                    f"cached decoding does not support {type(module).__name__} self-attention"
-                )
-            )
+            return Err(ValueError("cross cache and context must both be present or both be absent"))
 
 
-def _cross_attention(module: CrossAttn) -> Result[CrossAttention | PackedCrossAttention, TypeError]:
-    """Admit the closed set of cross-attention projection layouts supported by caching."""
-    match module:
-        case CrossAttention() | PackedCrossAttention():
-            return Ok(module)
+def _cached_cross_attention(
+    attention: CachedCrossAttentionWrapper,
+    input: PaddedInput,
+    context: _CachedCrossContext,
+) -> Tensor:
+    """Adapt a complete cached context to the shared cross-attention branch contract."""
+    return attention(input, context.kv, context.sequence)
+
+
+def _supported_layer(
+    layer: DecoderLayerBase,
+) -> Result[
+    DecoderLayer | PostNormDecoderLayer | SandwichNormDecoderLayer | ReorderedNormDecoderLayer,
+    TypeError,
+]:
+    """Admit built-in topologies without silently discarding subclass forward overrides."""
+    match layer:
+        case DecoderLayer() if type(layer) is DecoderLayer:
+            return Ok(layer)
+        case PostNormDecoderLayer() if type(layer) is PostNormDecoderLayer:
+            return Ok(layer)
+        case SandwichNormDecoderLayer() if type(layer) is SandwichNormDecoderLayer:
+            return Ok(layer)
+        case ReorderedNormDecoderLayer() if type(layer) is ReorderedNormDecoderLayer:
+            return Ok(layer)
         case _:
-            return Err(
-                TypeError(
-                    f"cached decoding does not support {type(module).__name__} cross-attention"
-                )
-            )
-
-
-def _layer_cross_cache(cache: Tensor) -> CrossAttentionKVCache:
-    """Expose one dense decoder-layer cache through the attention-level named record."""
-    return CrossAttentionKVCache(k=cache[0], v=cache[1])
+            return Err(TypeError(f"cached decoding does not support {type(layer).__name__}"))
 
 
 class CachedDecoderLayerBase(nn.Module, ABC):
@@ -85,11 +115,12 @@ class CachedDecoderLayerBase(nn.Module, ABC):
     def __init__(self, layer: DecoderLayerBase) -> None:
         """Wrap the layer attentions while sharing its feed-forward parameters."""
         super().__init__()
+        unwrap_or_raise(_supported_layer(layer))
         self.self_attn = CachedSelfAttentionWrapper(
-            unwrap_or_raise(_self_attention(layer.self_attn))
+            unwrap_or_raise(cacheable_self_attention(layer.self_attn))
         )
         self.cross_attn = CachedCrossAttentionWrapper(
-            unwrap_or_raise(_cross_attention(layer.cross_attn))
+            unwrap_or_raise(cacheable_cross_attention(layer.cross_attn))
         )
         self.ff = layer.ff
 
@@ -103,7 +134,7 @@ class CachedDecoderLayerBase(nn.Module, ABC):
         context: PaddedSequence | None,
         step_i: Tensor,
     ) -> tuple[PaddedInput, Tensor]:
-        """Decode one token and return this layer's extended self cache."""
+        """Decode one token; reject half-present cross cache/context pairs with ValueError."""
 
     if TYPE_CHECKING:
         __call__ = forward
@@ -127,24 +158,18 @@ class CachedDecoderLayer(CachedDecoderLayerBase):
         context: PaddedSequence | None,
         step_i: Tensor,
     ) -> tuple[PaddedInput, Tensor]:
-        """Mirror the ordinary pre-norm residual equation using cached attention."""
-        normalized_self = self.norm_self(input.x)
-        self_input = input._replace(x=normalized_self)
-        self_out, updated_self_cache = self.self_attn(self_input, self_cache, step_i)
-        x = input.x + self_out
-
-        input = input._replace(x=x)
-        if cross_cache is not None and context is not None:
-            normalized_cross = self.norm_cross(input.x)
-            cross_input = input._replace(x=normalized_cross)
-            cross_kv = _layer_cross_cache(cross_cache)
-            cross_out = self.cross_attn(cross_input, cross_kv, context)
-            x = x + cross_out
-
-        normalized_ff = self.norm_ff(x)
-        ff_out = self.ff(normalized_ff)
-        x = x + ff_out
-        return input._replace(x=x), updated_self_cache
+        """Run the shared pre-norm equation with validated cache state."""
+        cross_context = unwrap_or_raise(_cross_context(cross_cache, context))
+        return pre_norm_decoder(
+            input,
+            partial(self.self_attn, cache=self_cache, step_i=step_i),
+            partial(_cached_cross_attention, self.cross_attn),
+            cross_context,
+            self.ff,
+            self.norm_self,
+            self.norm_cross,
+            self.norm_ff,
+        )
 
     if TYPE_CHECKING:
         __call__ = forward
@@ -168,22 +193,18 @@ class CachedPostNormDecoderLayer(CachedDecoderLayerBase):
         context: PaddedSequence | None,
         step_i: Tensor,
     ) -> tuple[PaddedInput, Tensor]:
-        """Mirror the ordinary post-norm residual equation using cached attention."""
-        self_out, updated_self_cache = self.self_attn(input, self_cache, step_i)
-        x = input.x + self_out
-        x = self.norm_self(x)
-
-        input = input._replace(x=x)
-        if cross_cache is not None and context is not None:
-            cross_kv = _layer_cross_cache(cross_cache)
-            cross_out = self.cross_attn(input, cross_kv, context)
-            x = x + cross_out
-            x = self.norm_cross(x)
-
-        ff_out = self.ff(x)
-        x = x + ff_out
-        x = self.norm_ff(x)
-        return input._replace(x=x), updated_self_cache
+        """Run the shared post-norm equation with validated cache state."""
+        cross_context = unwrap_or_raise(_cross_context(cross_cache, context))
+        return post_norm_decoder(
+            input,
+            partial(self.self_attn, cache=self_cache, step_i=step_i),
+            partial(_cached_cross_attention, self.cross_attn),
+            cross_context,
+            self.ff,
+            self.norm_self,
+            self.norm_cross,
+            self.norm_ff,
+        )
 
     if TYPE_CHECKING:
         __call__ = forward
@@ -210,27 +231,21 @@ class CachedSandwichNormDecoderLayer(CachedDecoderLayerBase):
         context: PaddedSequence | None,
         step_i: Tensor,
     ) -> tuple[PaddedInput, Tensor]:
-        """Mirror the ordinary sandwich-norm residual equation using cached attention."""
-        normalized_self = self.norm_self_pre(input.x)
-        self_input = input._replace(x=normalized_self)
-        self_out, updated_self_cache = self.self_attn(self_input, self_cache, step_i)
-        self_branch = self.norm_self_post(self_out)
-        x = input.x + self_branch
-
-        input = input._replace(x=x)
-        if cross_cache is not None and context is not None:
-            normalized_cross = self.norm_cross_pre(input.x)
-            cross_input = input._replace(x=normalized_cross)
-            cross_kv = _layer_cross_cache(cross_cache)
-            cross_out = self.cross_attn(cross_input, cross_kv, context)
-            cross_branch = self.norm_cross_post(cross_out)
-            x = x + cross_branch
-
-        normalized_ff = self.norm_ff_pre(x)
-        ff_out = self.ff(normalized_ff)
-        ff_branch = self.norm_ff_post(ff_out)
-        x = x + ff_branch
-        return input._replace(x=x), updated_self_cache
+        """Run the shared sandwich-norm equation with validated cache state."""
+        cross_context = unwrap_or_raise(_cross_context(cross_cache, context))
+        return sandwich_norm_decoder(
+            input,
+            partial(self.self_attn, cache=self_cache, step_i=step_i),
+            partial(_cached_cross_attention, self.cross_attn),
+            cross_context,
+            self.ff,
+            self.norm_self_pre,
+            self.norm_self_post,
+            self.norm_cross_pre,
+            self.norm_cross_post,
+            self.norm_ff_pre,
+            self.norm_ff_post,
+        )
 
     if TYPE_CHECKING:
         __call__ = forward
@@ -254,22 +269,18 @@ class CachedReorderedNormDecoderLayer(CachedDecoderLayerBase):
         context: PaddedSequence | None,
         step_i: Tensor,
     ) -> tuple[PaddedInput, Tensor]:
-        """Mirror the ordinary reordered residual equation using cached attention."""
-        self_out, updated_self_cache = self.self_attn(input, self_cache, step_i)
-        self_branch = self.norm_self(self_out)
-        x = input.x + self_branch
-
-        input = input._replace(x=x)
-        if cross_cache is not None and context is not None:
-            cross_kv = _layer_cross_cache(cross_cache)
-            cross_out = self.cross_attn(input, cross_kv, context)
-            cross_branch = self.norm_cross(cross_out)
-            x = x + cross_branch
-
-        ff_out = self.ff(x)
-        ff_branch = self.norm_ff(ff_out)
-        x = x + ff_branch
-        return input._replace(x=x), updated_self_cache
+        """Run the shared reordered-norm equation with validated cache state."""
+        cross_context = unwrap_or_raise(_cross_context(cross_cache, context))
+        return reordered_norm_decoder(
+            input,
+            partial(self.self_attn, cache=self_cache, step_i=step_i),
+            partial(_cached_cross_attention, self.cross_attn),
+            cross_context,
+            self.ff,
+            self.norm_self,
+            self.norm_cross,
+            self.norm_ff,
+        )
 
     if TYPE_CHECKING:
         __call__ = forward
@@ -279,16 +290,14 @@ def _cached_layer(
     layer: DecoderLayerBase,
 ) -> Result[CachedDecoderLayerBase, TypeError | NotImplementedError]:
     """Validate cache admission before constructing an executor, without exception recovery."""
-    match layer:
-        case (
-            DecoderLayer()
-            | PostNormDecoderLayer()
-            | SandwichNormDecoderLayer()
-            | ReorderedNormDecoderLayer()
-        ):
+    supported_layer = _supported_layer(layer)
+    match supported_layer:
+        case Ok(value=layer):
             pass
+        case Err() as failure:
+            return failure
         case _:
-            return Err(TypeError(f"cached decoding does not support {type(layer).__name__}"))
+            assert_never(supported_layer)
     admission = _cached_attention_admission(layer)
     match admission:
         case Err() as failure:
@@ -314,15 +323,7 @@ def _cached_attention_admission(
     layer: DecoderLayerBase,
 ) -> Result[tuple[()], TypeError | NotImplementedError]:
     """Reject unsupported attention types and cache equations before invoking constructors."""
-    self_attention = _self_attention(layer.self_attn)
-    match self_attention:
-        case Err() as failure:
-            return failure
-        case Ok(value=attention):
-            pass
-        case _:
-            assert_never(self_attention)
-    supported = supported_self_attention(attention)
+    supported = supported_self_attention(layer.self_attn)
     match supported:
         case Err() as failure:
             return failure
@@ -330,7 +331,7 @@ def _cached_attention_admission(
             pass
         case _:
             assert_never(supported)
-    cross_attention = _cross_attention(layer.cross_attn)
+    cross_attention = cacheable_cross_attention(layer.cross_attn)
     match cross_attention:
         case Err() as failure:
             return failure
@@ -361,7 +362,9 @@ class DecoderCrossAttentionCacheBuilder(nn.Module):
         super().__init__()
         source = unwrap_or_raise(_unwrap_decoder(decoder))
         self.layers = nn.ModuleList(
-            CachedCrossAttentionWrapper(unwrap_or_raise(_cross_attention(layer.cross_attn)))
+            CachedCrossAttentionWrapper(
+                unwrap_or_raise(cacheable_cross_attention(layer.cross_attn))
+            )
             for layer in unwrap_or_raise(_decoder_layers(source))
         )
         self.train(source.training)
@@ -390,6 +393,8 @@ class CachedDecoderWrapper(nn.Module):
 
     Every parameter and train/eval state remains shared with the ordinary decoder. Calling
     ``train()`` or ``eval()`` on either view therefore affects the same underlying modules.
+    Only the built-in Decoder stack and four built-in layer topologies are supported;
+    subclasses raise TypeError because their overridden equations cannot be inferred safely.
 
     Example:
         ``cache_builder = DecoderCrossAttentionCacheBuilder(decoder)``

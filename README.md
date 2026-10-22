@@ -168,6 +168,15 @@ the OLMo 2 residual layout; enable QK-Norm separately in the attention config wh
 broader OLMo 2 stabilization recipe. Preset construction maps each value to a focused encoder,
 decoder, or cross-attender layer class. Decoder and cross-attender placement applies to the
 target/query residual stream; the context sequence is not normalized or mutated by these layers.
+Ordinary and cached decoder layers call the same normalization/residual equation functions.
+Attention execution is supplied through small call adapters, while norm and projection modules
+remain registered under their existing checkpoint names. Internal context variants encode either
+omission or a complete context value; cached contexts keep K/V and their validity mask together.
+
+Cached deployment adapters support exact built-in attention, decoder-stack, and decoder-layer
+classes. Unsupported subclasses raise `TypeError` because the adapters cannot infer overridden
+forward behavior. Custom collaborators continue to work in ordinary decoding. Direct cached-layer
+calls require both cross cache and context, or neither; a half-present pair raises `ValueError`.
 
 ### Custom wiring
 

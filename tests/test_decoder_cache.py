@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
 import pytest
 import torch
@@ -11,17 +12,21 @@ from stackformers.attention.cache import DecoderCrossAttentionCache
 from stackformers.attention.cross_attn import CrossAttention
 from stackformers.attention.packed_self_attn import PackedSelfAttention
 from stackformers.attention.self_attn import SelfAttention
-from stackformers.decoder import Decoder
+from stackformers.decoder import Decoder, DecoderLayer, DecoderLayerBase
 from stackformers.decoder_cache import (
+    CachedDecoderLayer,
     CachedDecoderLayerBase,
     CachedDecoderWrapper,
     DecoderCrossAttentionCacheBuilder,
+    _cached_layer,
+    _cross_context,
 )
 from stackformers.packing import to_packed, to_unpacked
 from stackformers.positional.config import RoPE1DConfig
 from stackformers.positional.rope1d import RotaryEmbedding1D
 from stackformers.presets.decoder import TransformerDecoder, plain_decoder_config
-from stackformers.sequence import PaddedInput, make_padded_input
+from stackformers.result import Err, Ok
+from stackformers.sequence import PaddedInput, PaddedSequence, make_padded_input
 from tests.conftest import atol
 from tests.export_utils import ONNX_OPSET_CASES, ExportShapeMode, export_and_run
 
@@ -29,6 +34,14 @@ if TYPE_CHECKING:
     from stackformers.norm.config import NormPlacement
 
 B, N, S, D, H = 2, 4, 6, 64, 4
+
+
+class CustomDecoderLayer(DecoderLayer):
+    """Represent an extension whose full-layer behavior cannot be inferred by caching."""
+
+
+class CustomDecoder(Decoder):
+    """Represent an extension whose stack forward may differ from the built-in equation."""
 
 
 def _empty_self_cache(decoder: Decoder, target: PaddedInput) -> torch.Tensor:
@@ -96,6 +109,83 @@ def decoder_inputs() -> tuple[PaddedInput, PaddedInput]:
     context_mask[1, -2:] = False
     context = make_padded_input(torch.randn(B, S, D), context_mask)
     return target, context
+
+
+@pytest.fixture(params=["pre", "post", "sandwich", "reordered"])
+def cached_layer(request: pytest.FixtureRequest) -> CachedDecoderLayerBase:
+    """Construct every public cached topology for direct-call boundary validation."""
+    decoder = _build_decoder(request.param)
+    layer = decoder.layers[0]
+    assert isinstance(layer, DecoderLayerBase)
+    outcome = _cached_layer(layer)
+    assert isinstance(outcome, Ok)
+    return outcome.value
+
+
+@pytest.fixture
+def custom_decoder_layer() -> CustomDecoderLayer:
+    """Retain supported collaborators so only subclass admission can reject this layer."""
+    layer = _build_decoder().layers[0]
+    assert isinstance(layer, DecoderLayer)
+    return CustomDecoderLayer(
+        layer.self_attn,
+        layer.cross_attn,
+        layer.ff,
+        layer.norm_self,
+        layer.norm_cross,
+        layer.norm_ff,
+    )
+
+
+@pytest.fixture
+def custom_decoder() -> CustomDecoder:
+    """Retain built-in layers so only stack subclass admission can reject this decoder."""
+    decoder = _build_decoder()
+    layer = decoder.layers[0]
+    assert isinstance(layer, DecoderLayerBase)
+    return CustomDecoder([layer], decoder.final_norm)
+
+
+@pytest.mark.parametrize("missing", ["cache", "context"])
+def test_cached_layer_rejects_incomplete_cross_context(
+    cached_layer: CachedDecoderLayerBase,
+    decoder_inputs: tuple[PaddedInput, PaddedInput],
+    missing: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Half-present context fails before self-attention or any cache computation."""
+    target, context = decoder_inputs
+    cross_cache = torch.zeros(2, B, H, S, D // H) if missing != "cache" else None
+    sequence = PaddedSequence(context.mask) if missing != "context" else None
+    outcome = _cross_context(cross_cache, sequence)
+    assert isinstance(outcome, Err)
+    calls = Mock(side_effect=AssertionError("attention must not run before admission"))
+    monkeypatch.setattr(cached_layer.self_attn, "forward", calls)
+    token = PaddedInput(*(tensor[:, :1] for tensor in target))
+    self_cache = torch.zeros(2, B, H, 0, D // H)
+    with pytest.raises(ValueError) as caught:
+        cached_layer(token, cross_cache, self_cache, sequence, torch.tensor([0]))
+    assert caught.value.args == outcome.error.args
+    calls.assert_not_called()
+
+
+def test_custom_decoder_layer_rejected(custom_decoder_layer: CustomDecoderLayer) -> None:
+    """Both direct cached-layer construction and decoder admission reject unknown equations."""
+    outcome = _cached_layer(custom_decoder_layer)
+    assert isinstance(outcome, Err)
+    with pytest.raises(TypeError) as caught:
+        CachedDecoderLayer(custom_decoder_layer)
+    assert caught.value.args == outcome.error.args
+
+
+@pytest.mark.parametrize("adapter", [CachedDecoderWrapper, DecoderCrossAttentionCacheBuilder])
+def test_custom_decoder_stack_rejected(
+    custom_decoder: CustomDecoder,
+    adapter: type[CachedDecoderWrapper] | type[DecoderCrossAttentionCacheBuilder],
+) -> None:
+    """Neither deployment adapter may bypass an unknown decoder stack equation."""
+    with pytest.raises(TypeError, match="does not contain a Stackformers Decoder"):
+        adapter(custom_decoder)
 
 
 @pytest.mark.parametrize("norm_placement", ["pre", "post", "sandwich", "reordered"])

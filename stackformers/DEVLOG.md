@@ -1,5 +1,32 @@
 # Transformer model development log
 
+## 2026-10-22 — Share decoder equations and tighten cache contracts (5.0.0rc18)
+
+### Observation and decision
+
+Cached layers duplicated all four normalization/residual topologies and accepted subclasses
+whose overridden forward behavior they bypassed. Move each topology into one ordinary function
+that accepts attention callables and carries self-attention state without interpreting it.
+Ordinary calls return unit state; cached calls return the updated K/V tensor. Keep all modules
+registered under their existing names so parameter ownership and checkpoint layouts stay stable.
+
+Represent context as `NoContext | WithContext[...]`; cached context values pair projected K/V
+with their validity mask. Keep the public cached-layer argument list, but reject half-present
+cache/context pairs before evaluating attention. Centralize exact-type attention admission and
+reject unsupported attention, no-op bias, decoder-stack, and decoder-layer subclasses instead
+of silently substituting the built-in equation. Ordinary protocol-based extension remains intact.
+
+### Verified result and limits
+
+Independent topology expectations, gradients, cache parity, compilation/export smoke tests,
+and state-dict compatibility checks pass. New tests cover exact-type subclass rejection,
+incomplete context admission before attention, opaque state identity, sequence metadata, and
+complete omission of the absent cross branch. Checks use PyTorch 2.11 on CPU; target-device
+latency, GPU providers, and quantized execution remain unverified.
+All 192 required cached ONNX cases pass across opsets 18–25 with static and dynamic inputs.
+`just check` passes formatting, lint, types, and the full suite: 2,969 passed, 21 skipped,
+252 expected failures, and 111 optional-case unexpected passes.
+
 ## 2026-10-20 — Packed attention in KV-cache executors (5.0.0rc17)
 
 ### Observation and decision

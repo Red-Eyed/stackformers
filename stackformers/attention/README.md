@@ -47,7 +47,8 @@ module and projects one fixed padded context at the configured `kv_heads` width.
 required cache tensor whose sequence length equals `step_i`, then returns a cache extended by one
 position. `DecoderCrossAttentionCacheBuilder` stacks every decoder layer into one dense
 `(layers, 2, batch, kv_heads, source, dim_head)` tensor and retains the shared context mask;
-`CachedDecoderWrapper` mirrors each normalization topology for the one-token graph. The wrappers position
+`CachedDecoderWrapper` uses the same normalization/residual equations as ordinary decoding.
+The wrappers position
 K before storage and Q on each step through the existing joint positional API. Ordinary attention,
 decoder, preset, and positional classes contain no cache-specific methods.
 The wrappers accept a closed union of ordinary and packed attention classes. Exhaustive projection
@@ -56,6 +57,13 @@ Cache records, head widths, and wrapper calls are independent of projection layo
 self-attention still requires global causal attention, `NoAttnBias`, and one token per call.
 Add a supported projection variant to the union, admission checks, and projection dispatch together;
 keep the shared normalization, positioning, and cache update equation outside that dispatch.
+Admission requires exact built-in attention classes and the exact `NoAttnBias` implementation;
+subclasses may override the equation and are rejected rather than silently bypassed. The decoder
+adapter likewise requires the built-in stack and layer topologies. A new cached implementation
+must have explicit admission, projection/topology handling, and independent parity/export tests.
+Public cached-layer calls retain their separate cache/context arguments, but a half-present pair
+raises `ValueError` before attention runs. Internally, `NoContext | WithContext[...]` represents
+absence or a complete cache/mask pair, so the shared equations cannot silently skip invalid state.
 
 **Geometry a rotary encoding cannot carry.** `RelativeDistanceBias` adds a learned function of the Euclidean distance between node positions to the logits, making attention invariant to any global translation or rotation of the input. It lives here rather than in `positional/` because it *cannot* live there: RoPE rotates by `ω·p`, which is linear in position by construction — and that linearity is exactly what makes the query and key rotations cancel into a relative offset. Distance is not linear in position, so no rotary encoding, axial or otherwise, can express it; a bias is the only route. Pair it with `NoPosEncoding` — a rotary encoding alongside it would reintroduce the preferred frame it exists to remove. Use it when node coordinates have no meaningful axes; when up and right *do* mean something, RoPE-2D keeps direction and stays varlen-compatible.
 

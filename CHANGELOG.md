@@ -6,6 +6,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/): MAJOR for breaking public API changes,
 MINOR for backwards-compatible features, PATCH for bug fixes and internal changes.
 
+## [5.0.0rc18]
+
+### Improvements
+
+- Share decoder normalization and residual equations between ordinary and cached execution
+  while preserving public call signatures, checkpoint names, and cache tensor layouts.
+
+### Bug Fixes
+
+- Reject unsupported attention, decoder-stack, and decoder-layer subclasses in cache
+  adapters instead of silently bypassing their custom forward behavior. Cached self-attention
+  also requires the exact `NoAttnBias` implementation. Custom implementations remain supported
+  by ordinary execution; use built-in classes for the existing cached adapters.
+- Raise `ValueError` when a direct cached-layer call supplies only one of cross cache and
+  context. Previously this silently skipped cross-attention. Supply both arguments or omit both.
+
 ## [5.0.0rc17]
 
 ### New Features

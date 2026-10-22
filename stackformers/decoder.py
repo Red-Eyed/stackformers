@@ -3,12 +3,21 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from functools import partial
 from typing import TYPE_CHECKING
 
 import torch.nn as nn
 from torch import Tensor
 from typing_extensions import override
 
+from stackformers._decoder_equations import (
+    NoContext,
+    WithContext,
+    post_norm_decoder,
+    pre_norm_decoder,
+    reordered_norm_decoder,
+    sandwich_norm_decoder,
+)
 from stackformers.attention.layout import call_cross_attention, call_self_attention
 from stackformers.attention.masking import CrossAttentionMask, SelfAttentionMask, require_context
 
@@ -19,6 +28,17 @@ if TYPE_CHECKING:
     from stackformers.feedforward.protocols import FeedForward
     from stackformers.norm.protocols import Norm
     from stackformers.sequence import SequenceInput
+
+
+def _ordinary_self_attention(
+    attention: SelfAttn,
+    input: SequenceInput,
+    *,
+    self_attn_mask: SelfAttentionMask,
+) -> tuple[Tensor, tuple[()]]:
+    """Adapt ordinary attention to the shared equation's explicit state-return contract."""
+    output = call_self_attention(attention, input, self_attn_mask=self_attn_mask)
+    return output, ()
 
 
 class DecoderLayerBase(nn.Module, ABC):
@@ -82,26 +102,20 @@ class DecoderLayer(DecoderLayerBase):
         self_attn_mask: SelfAttentionMask = "default",
         cross_attn_mask: CrossAttentionMask = None,
     ) -> SequenceInput:
-        """Apply pre-norm self-attention, cross-attention, and FFN branches."""
+        """Apply the shared pre-norm equation with ordinary attention."""
         require_context(ctx_input is not None, cross_attn_mask)
-        normalized_self = self.norm_self(x_input.x)
-        self_input = x_input._replace(x=normalized_self)
-        self_out = call_self_attention(self.self_attn, self_input, self_attn_mask=self_attn_mask)
-        x = x_input.x + self_out
-
-        x_input = x_input._replace(x=x)
-        if ctx_input is not None:
-            normalized_cross = self.norm_cross(x_input.x)
-            cross_input = x_input._replace(x=normalized_cross)
-            cross_out = call_cross_attention(
-                self.cross_attn, cross_input, ctx_input, cross_attn_mask=cross_attn_mask
-            )
-            x = x + cross_out
-
-        normalized_ff = self.norm_ff(x)
-        ff_out = self.ff(normalized_ff)
-        x = x + ff_out
-        return x_input._replace(x=x)
+        context = NoContext() if ctx_input is None else WithContext(ctx_input)
+        output, _ = pre_norm_decoder(
+            x_input,
+            partial(_ordinary_self_attention, self.self_attn, self_attn_mask=self_attn_mask),
+            partial(call_cross_attention, self.cross_attn, cross_attn_mask=cross_attn_mask),
+            context,
+            self.ff,
+            self.norm_self,
+            self.norm_cross,
+            self.norm_ff,
+        )
+        return output
 
     if TYPE_CHECKING:
         __call__ = forward
@@ -137,24 +151,20 @@ class PostNormDecoderLayer(DecoderLayerBase):
         self_attn_mask: SelfAttentionMask = "default",
         cross_attn_mask: CrossAttentionMask = None,
     ) -> SequenceInput:
-        """Normalize each residual sum before evaluating the next branch."""
+        """Apply the shared post-norm equation with ordinary attention."""
         require_context(ctx_input is not None, cross_attn_mask)
-        self_out = call_self_attention(self.self_attn, x_input, self_attn_mask=self_attn_mask)
-        x = x_input.x + self_out
-        x = self.norm_self(x)
-
-        x_input = x_input._replace(x=x)
-        if ctx_input is not None:
-            cross_out = call_cross_attention(
-                self.cross_attn, x_input, ctx_input, cross_attn_mask=cross_attn_mask
-            )
-            x = x + cross_out
-            x = self.norm_cross(x)
-
-        ff_out = self.ff(x)
-        x = x + ff_out
-        x = self.norm_ff(x)
-        return x_input._replace(x=x)
+        context = NoContext() if ctx_input is None else WithContext(ctx_input)
+        output, _ = post_norm_decoder(
+            x_input,
+            partial(_ordinary_self_attention, self.self_attn, self_attn_mask=self_attn_mask),
+            partial(call_cross_attention, self.cross_attn, cross_attn_mask=cross_attn_mask),
+            context,
+            self.ff,
+            self.norm_self,
+            self.norm_cross,
+            self.norm_ff,
+        )
+        return output
 
     if TYPE_CHECKING:
         __call__ = forward
@@ -196,29 +206,23 @@ class SandwichNormDecoderLayer(DecoderLayerBase):
         self_attn_mask: SelfAttentionMask = "default",
         cross_attn_mask: CrossAttentionMask = None,
     ) -> SequenceInput:
-        """Normalize the input and output of every decoder residual branch."""
+        """Apply the shared sandwich-norm equation with ordinary attention."""
         require_context(ctx_input is not None, cross_attn_mask)
-        normalized_self = self.norm_self_pre(x_input.x)
-        self_input = x_input._replace(x=normalized_self)
-        self_out = call_self_attention(self.self_attn, self_input, self_attn_mask=self_attn_mask)
-        self_branch = self.norm_self_post(self_out)
-        x = x_input.x + self_branch
-
-        x_input = x_input._replace(x=x)
-        if ctx_input is not None:
-            normalized_cross = self.norm_cross_pre(x_input.x)
-            cross_input = x_input._replace(x=normalized_cross)
-            cross_out = call_cross_attention(
-                self.cross_attn, cross_input, ctx_input, cross_attn_mask=cross_attn_mask
-            )
-            cross_branch = self.norm_cross_post(cross_out)
-            x = x + cross_branch
-
-        normalized_ff = self.norm_ff_pre(x)
-        ff_out = self.ff(normalized_ff)
-        ff_branch = self.norm_ff_post(ff_out)
-        x = x + ff_branch
-        return x_input._replace(x=x)
+        context = NoContext() if ctx_input is None else WithContext(ctx_input)
+        output, _ = sandwich_norm_decoder(
+            x_input,
+            partial(_ordinary_self_attention, self.self_attn, self_attn_mask=self_attn_mask),
+            partial(call_cross_attention, self.cross_attn, cross_attn_mask=cross_attn_mask),
+            context,
+            self.ff,
+            self.norm_self_pre,
+            self.norm_self_post,
+            self.norm_cross_pre,
+            self.norm_cross_post,
+            self.norm_ff_pre,
+            self.norm_ff_post,
+        )
+        return output
 
     if TYPE_CHECKING:
         __call__ = forward
@@ -255,24 +259,20 @@ class ReorderedNormDecoderLayer(DecoderLayerBase):
         self_attn_mask: SelfAttentionMask = "default",
         cross_attn_mask: CrossAttentionMask = None,
     ) -> SequenceInput:
-        """Normalize each decoder branch result immediately before residual addition."""
+        """Apply the shared reordered-norm equation with ordinary attention."""
         require_context(ctx_input is not None, cross_attn_mask)
-        self_out = call_self_attention(self.self_attn, x_input, self_attn_mask=self_attn_mask)
-        self_branch = self.norm_self(self_out)
-        x = x_input.x + self_branch
-
-        x_input = x_input._replace(x=x)
-        if ctx_input is not None:
-            cross_out = call_cross_attention(
-                self.cross_attn, x_input, ctx_input, cross_attn_mask=cross_attn_mask
-            )
-            cross_branch = self.norm_cross(cross_out)
-            x = x + cross_branch
-
-        ff_out = self.ff(x)
-        ff_branch = self.norm_ff(ff_out)
-        x = x + ff_branch
-        return x_input._replace(x=x)
+        context = NoContext() if ctx_input is None else WithContext(ctx_input)
+        output, _ = reordered_norm_decoder(
+            x_input,
+            partial(_ordinary_self_attention, self.self_attn, self_attn_mask=self_attn_mask),
+            partial(call_cross_attention, self.cross_attn, cross_attn_mask=cross_attn_mask),
+            context,
+            self.ff,
+            self.norm_self,
+            self.norm_cross,
+            self.norm_ff,
+        )
+        return output
 
     if TYPE_CHECKING:
         __call__ = forward
