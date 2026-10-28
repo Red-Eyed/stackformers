@@ -9,6 +9,7 @@ import pytest
 import torch
 import torch.nn as nn
 from onnx import defs
+from onnxruntime.capi.onnxruntime_pybind11_state import InvalidGraph
 from onnxscript import ir
 from torch.utils import _pytree
 
@@ -29,25 +30,10 @@ OPTIONAL_ONNX_OPSET_VERSIONS = tuple(
 )
 
 
-def _optional_onnx_opset_reason(opset_version: int) -> str:
-    """Describe why an opset remains compatibility coverage rather than a requirement."""
-    if opset_version < 18:
-        return "PyTorch's ONNX C API cannot down-convert Transformer reductions below 18"
-    return "This installed opset has not been promoted to required compatibility"
-
-
 def _onnx_opset_case(opset_version: int) -> ParameterSet:
-    """Build one required or optional opset compatibility case."""
-    if opset_version in REQUIRED_ONNX_OPSET_VERSIONS:
-        return pytest.param(opset_version, id=f"required-opset-{opset_version}")
-    return pytest.param(
-        opset_version,
-        marks=pytest.mark.xfail(
-            reason=_optional_onnx_opset_reason(opset_version),
-            strict=False,
-        ),
-        id=f"optional-opset-{opset_version}",
-    )
+    """Label compatibility coverage without predicting whether a whole test will fail."""
+    coverage = "required" if opset_version in REQUIRED_ONNX_OPSET_VERSIONS else "optional"
+    return pytest.param(opset_version, id=f"{coverage}-opset-{opset_version}")
 
 
 ONNX_OPSET_CASES = tuple(_onnx_opset_case(version) for version in ONNX_OPSET_VERSIONS)
@@ -84,7 +70,18 @@ def _assert_onnx_opset_version(
     opset_version: int,
 ) -> None:
     """Verify that down-conversion produced the requested standard ONNX opset."""
-    assert program.model.opset_imports[""] == opset_version
+    actual_version = program.model.opset_imports[""]
+    reductions = {node.op_type for node in program.model.graph if node.domain == ""} & {
+        "ReduceMean",
+        "ReduceL2",
+        "ReduceMin",
+    }
+    if opset_version in OPTIONAL_ONNX_OPSET_VERSIONS and actual_version == 18 and reductions:
+        pytest.xfail(
+            f"ONNX axes-input down-conversion failed for {sorted(reductions)}: "
+            f"requested opset {opset_version}, exporter retained opset 18"
+        )
+    assert actual_version == opset_version
 
 
 def _flatten_tensor_output(output: object) -> tuple[torch.Tensor, ...]:
@@ -92,6 +89,31 @@ def _flatten_tensor_output(output: object) -> tuple[torch.Tensor, ...]:
     leaves, _ = _pytree.tree_flatten(output)
     assert all(isinstance(leaf, torch.Tensor) for leaf in leaves)
     return tuple(leaves)
+
+
+def _run_onnx(
+    program: torch.onnx.ONNXProgram, execution_args: tuple[object, ...], opset_version: int
+) -> tuple[torch.Tensor, ...]:
+    """Execute ONNX, recognizing only the known legacy Split attribute conversion bug."""
+    try:
+        output = program(*execution_args)
+    except InvalidGraph as error:
+        if (
+            opset_version in OPTIONAL_ONNX_OPSET_VERSIONS
+            and "Unrecognized attribute: num_outputs for operator Split" in str(error)
+        ):
+            pytest.xfail(f"ONNX legacy Split down-conversion retained num_outputs: {error}")
+        raise
+    return _flatten_tensor_output(output)
+
+
+def _assert_output_parity(
+    actual: tuple[torch.Tensor, ...], expected: tuple[torch.Tensor, ...]
+) -> None:
+    """Require every exported tensor to agree with eager execution."""
+    assert len(actual) == len(expected)
+    for actual_tensor, expected_tensor in zip(actual, expected, strict=True):
+        torch.testing.assert_close(actual_tensor, expected_tensor)
 
 
 def export_and_run(
@@ -108,7 +130,8 @@ def export_and_run(
     Static modes execute the example shape. Dynamic modes execute ``runtime_args`` when
     supplied, so the same pytest case checks that symbolic dimensions survive export. The ONNX
     graph must declare ``opset_version`` after conversion rather than silently retaining the
-    exporter's native opset.
+    exporter's native opset. Only identified legacy conversion failures are xfailed;
+    successful legacy exports pass normally, and unrelated failures propagate.
     """
     if mode.is_dynamic:
         assert dynamic_shapes is not None
@@ -126,6 +149,7 @@ def export_and_run(
             dynamic_shapes=selected_shapes,
         )
         torch_actual = _flatten_tensor_output(torch_program.module()(*execution_args))
+        _assert_output_parity(torch_actual, expected)
         onnx_program = torch.onnx.export(
             model,
             example_args,
@@ -136,10 +160,7 @@ def export_and_run(
         assert isinstance(onnx_program, torch.onnx.ONNXProgram)
         _assert_onnx_shape_mode(onnx_program, mode)
         _assert_onnx_opset_version(onnx_program, opset_version)
-        onnx_actual = _flatten_tensor_output(onnx_program(*execution_args))
+        onnx_actual = _run_onnx(onnx_program, execution_args, opset_version)
 
-    for actual in (torch_actual, onnx_actual):
-        assert len(actual) == len(expected)
-        for actual_tensor, expected_tensor in zip(actual, expected, strict=True):
-            torch.testing.assert_close(actual_tensor, expected_tensor)
+    _assert_output_parity(onnx_actual, expected)
     return onnx_actual
