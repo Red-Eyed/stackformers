@@ -7,11 +7,9 @@ from typing import NamedTuple
 import torch
 
 from stackformers import (
-    PackedInput,
-    PaddedInput,
+    PackedTensor,
+    PaddedTensor,
     TransformerEncoder,
-    make_packed_input,
-    make_padded_input,
     plain_encoder_config,
 )
 from stackformers.sequence import materialize_padding_mask
@@ -28,22 +26,12 @@ class LayoutParityResult(NamedTuple):
     max_abs_error: float
 
 
-def _equivalent_inputs() -> tuple[PaddedInput, PackedInput]:
+def _equivalent_inputs() -> tuple[PaddedTensor, PackedTensor]:
     """Build padded and packed representations containing identical valid tokens."""
     generator = torch.Generator().manual_seed(1)
     valid_tokens = [torch.randn(length, DIM, generator=generator) for length in SEQUENCE_LENGTHS]
-    padded_x = torch.zeros(len(SEQUENCE_LENGTHS), max(SEQUENCE_LENGTHS), DIM)
-    mask = torch.zeros(len(SEQUENCE_LENGTHS), max(SEQUENCE_LENGTHS), dtype=torch.bool)
-    for batch_index, tokens in enumerate(valid_tokens):
-        padded_x[batch_index, : tokens.shape[0]] = tokens
-        mask[batch_index, : tokens.shape[0]] = True
-
-    packed_x = torch.cat(valid_tokens)
-    cu_seqlens = torch.tensor([0, 4, 6], dtype=torch.int32)
-    return (
-        make_padded_input(padded_x, mask),
-        make_packed_input(packed_x, cu_seqlens, max_seqlen=max(SEQUENCE_LENGTHS)),
-    )
+    padded = PaddedTensor.from_list(valid_tokens)
+    return padded, padded.to_packed()
 
 
 def run_example() -> LayoutParityResult:

@@ -21,7 +21,7 @@ class MaskingStrategy(Protocol):
     """Select which token positions to corrupt for reconstruction.
 
     Returns True at positions to mask, shaped like the leading (non-feature) dims of
-    input.x — (b, n) for PaddedInput, (nt,) for PackedInput. Implementations dispatch
+    input.x — (b, n) for PaddedTensor, (nt,) for PackedTensor. Implementations dispatch
     on the SequenceInput variant internally, so callers never need to know the layout.
     """
 

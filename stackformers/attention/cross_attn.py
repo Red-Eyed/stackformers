@@ -19,9 +19,8 @@ from stackformers.attention.ops import (
     padded_sdpa,
 )
 from stackformers.sequence import (
-    PackedInput,
-    PackedSequence,
-    PaddedInput,
+    PackedTensor,
+    PaddedTensor,
     SequenceInput,
 )
 
@@ -34,7 +33,7 @@ if TYPE_CHECKING:
 class CrossAttention(nn.Module):
     """Multi-head cross-attention: queries from x, keys/values from context.
 
-    Always global (no windowing). Pass PaddedInput for inference or export, PackedInput for
+    Always global (no windowing). Pass PaddedTensor for inference or export, PackedTensor for
     training. Falls back to padded SDPA when varlen_attn is unavailable (CPU, float32,
     torch.export).
     """
@@ -55,8 +54,8 @@ class CrossAttention(nn.Module):
 
     def _forward_padded(
         self,
-        x_input: PaddedInput,
-        ctx_input: PaddedInput,
+        x_input: PaddedTensor,
+        ctx_input: PaddedTensor,
         *,
         cross_attn_mask: CrossAttentionMask = None,
     ) -> Tensor:
@@ -91,8 +90,8 @@ class CrossAttention(nn.Module):
 
     def _forward_packed(
         self,
-        x_input: PackedInput,
-        ctx_input: PackedInput,
+        x_input: PackedTensor,
+        ctx_input: PackedTensor,
         *,
         cross_attn_mask: CrossAttentionMask = None,
     ) -> Tensor:
@@ -108,8 +107,6 @@ class CrossAttention(nn.Module):
         q, k = self.pos_encoding.forward_packed(
             q, k, x_input.abs_positions, ctx_input.abs_positions
         )
-        x_seq = PackedSequence(cu_seqlens=x_input.cu_seqlens, max_seqlen=x_input.max_seqlen)
-        ctx_seq = PackedSequence(cu_seqlens=ctx_input.cu_seqlens, max_seqlen=ctx_input.max_seqlen)
         allowed = unwrap_or_raise(
             validate_cross_mask(cross_attn_mask, x_input.max_seqlen, ctx_input.max_seqlen, x.device)
         )
@@ -117,8 +114,8 @@ class CrossAttention(nn.Module):
             q,
             k,
             v,
-            x_seq,
-            ctx_seq,
+            x_input,
+            ctx_input,
             causal=False,
             window_size=None,
             bias=None,
@@ -130,8 +127,8 @@ class CrossAttention(nn.Module):
     @overload
     def forward(
         self,
-        x_input: PaddedInput,
-        ctx_input: PaddedInput,
+        x_input: PaddedTensor,
+        ctx_input: PaddedTensor,
         *,
         cross_attn_mask: CrossAttentionMask = None,
     ) -> Tensor:
@@ -141,8 +138,8 @@ class CrossAttention(nn.Module):
     @overload
     def forward(
         self,
-        x_input: PackedInput,
-        ctx_input: PackedInput,
+        x_input: PackedTensor,
+        ctx_input: PackedTensor,
         *,
         cross_attn_mask: CrossAttentionMask = None,
     ) -> Tensor:
@@ -159,9 +156,9 @@ class CrossAttention(nn.Module):
     ) -> Tensor:
         """Attend within one shared layout; raise ValueError for mixed layouts."""
         match unwrap_or_raise(matching_layouts(x_input, ctx_input)):
-            case PaddedInput() as queries, PaddedInput() as context:
+            case PaddedTensor() as queries, PaddedTensor() as context:
                 return self._forward_padded(queries, context, cross_attn_mask=cross_attn_mask)
-            case PackedInput() as queries, PackedInput() as context:
+            case PackedTensor() as queries, PackedTensor() as context:
                 return self._forward_packed(queries, context, cross_attn_mask=cross_attn_mask)
 
     def to_packed(self) -> PackedCrossAttention:

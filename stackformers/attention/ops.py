@@ -10,12 +10,12 @@ from einops import rearrange, repeat
 from torch import Tensor
 
 from stackformers.attention.varlen_backend import try_varlen_attn
-from stackformers.sequence import AllValid, PaddedInput
+from stackformers.sequence import AllValid, PaddedTensor
 
 if TYPE_CHECKING:
     from jaxtyping import Float
 
-    from stackformers.sequence import PackedSequence
+    from stackformers.sequence import PackedSequence, PackedTensor
 
 
 def _repeat_padded_kv_heads(
@@ -146,8 +146,8 @@ def packed_attn_or_fallback(
     q: Tensor,
     k: Tensor,
     v: Tensor,
-    q_seq: PackedSequence,
-    k_seq: PackedSequence,
+    q_seq: PackedTensor | PackedSequence,
+    k_seq: PackedTensor | PackedSequence,
     causal: bool,
     window_size: int | None,
     bias: Tensor | None,
@@ -175,7 +175,7 @@ def packed_attn_or_fallback(
     return _padded_heads_to_packed(out_pad, q_mask)
 
 
-def mask_query_output(output: Tensor, input: PaddedInput) -> Tensor:
+def mask_query_output(output: Tensor, input: PaddedTensor) -> Tensor:
     """Keep the padded query contract without multiplying all-valid outputs by ones."""
     match input.mask:
         case AllValid():

@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from jaxtyping import Float, Int
 
     from stackformers.decoder import DecoderLayerBase
-    from stackformers.sequence import PaddedInput
+    from stackformers.sequence import PaddedTensor
 
 
 class PreallocatedDecoderCache(NamedTuple):
@@ -54,7 +54,7 @@ class PreallocatedDecoderStepOutput(NamedTuple):
 
 def _preallocated_self_attention(
     attention: SelfAttentionModule,
-    input: PaddedInput,
+    input: PaddedTensor,
     cache: CrossAttentionKVCache,
     index: Int[Tensor, "b"],
 ) -> tuple[Tensor, CrossAttentionKVCache]:
@@ -142,7 +142,7 @@ class PreallocatedCachedDecoderWrapper(nn.Module):
     @torch.no_grad()
     def forward(
         self,
-        input: PaddedInput,
+        input: PaddedTensor,
         cross_cache: LayerCaches | None,
         self_cache: PreallocatedDecoderCache,
     ) -> PreallocatedDecoderStepOutput:

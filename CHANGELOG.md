@@ -6,6 +6,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/): MAJOR for breaking public API changes,
 MINOR for backwards-compatible features, PATCH for bug fixes and internal changes.
 
+## [5.0.0rc21]
+
+### Deprecations
+
+- Deprecate `PackedInput` and `PaddedInput` in favor of the exact aliases `PackedTensor`
+  and `PaddedTensor`; importing or accessing old names emits `DeprecationWarning`.
+  Existing constructors and model calls remain supported. Mark metadata-only sequence
+  records and legacy constructors/conversion helpers deprecated with static PEP 702
+  guidance; use the tensor records and their methods instead. Decoder cache output
+  structures remain compatible, and cached calls accept `PaddedTensor` directly.
+
+### New Features
+
+- Add pure `from_list`, `from_nested`, `to_list`, `to_nested`, `to_packed`, and `to_padded`
+  APIs to `PackedTensor` and `PaddedTensor`. Preserve gradients, devices, dtypes, empty
+  documents, and custom coordinates across layout conversions. Jagged/list exports
+  contain values only; constructors generate sequential positions unless supplied.
+
 ## [5.0.0rc20]
 
 ### Backwards Incompatible Changes

@@ -5,11 +5,11 @@ from typing import TYPE_CHECKING
 import torch.nn as nn
 
 if TYPE_CHECKING:
-    from stackformers.sequence import PaddedInput
+    from stackformers.sequence import PaddedTensor
 
 
 class NoAttnBias(nn.Module):
     """Null object for AttnBias — signals no bias so varlen_attn remains available."""
 
-    def __call__(self, input: PaddedInput) -> None:
+    def __call__(self, input: PaddedTensor) -> None:
         return None

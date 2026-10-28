@@ -44,7 +44,7 @@ from stackformers.decoder import (
     SandwichNormDecoderLayer,
 )
 from stackformers.result import Err, Ok, Result
-from stackformers.sequence import PaddedInput, PaddedSequence, materialize_padding_mask
+from stackformers.sequence import PaddedSequence, PaddedTensor, materialize_padding_mask
 
 if TYPE_CHECKING:
     from jaxtyping import Float
@@ -62,18 +62,18 @@ class _CachedCrossContext(NamedTuple):
     """Keep projected keys/values inseparable from their context validity mask."""
 
     kv: CrossAttentionKVCache
-    sequence: PaddedSequence
+    sequence: PaddedTensor | PaddedSequence
 
 
 def _cross_context(
     cache: Float[Tensor, "two b kv_h s dh"] | None,
-    context: PaddedSequence | None,
+    context: PaddedTensor | PaddedSequence | None,
 ) -> Result[NoContext | WithContext[_CachedCrossContext], ValueError]:
     """Validate the legacy argument pair before entering the shared layer equation."""
     match cache, context:
         case None, None:
             return Ok(NoContext())
-        case Tensor(), PaddedSequence():
+        case Tensor(), (PaddedTensor() | PaddedSequence()):
             kv = CrossAttentionKVCache(k=cache[0], v=cache[1])
             return Ok(WithContext(_CachedCrossContext(kv=kv, sequence=context)))
         case _:
@@ -82,7 +82,7 @@ def _cross_context(
 
 def _cached_cross_attention(
     attention: CachedCrossAttentionWrapper,
-    input: PaddedInput,
+    input: PaddedTensor,
     context: _CachedCrossContext,
 ) -> Tensor:
     """Adapt a complete cached context to the shared cross-attention branch contract."""
@@ -128,12 +128,12 @@ class CachedDecoderLayerBase(nn.Module, ABC):
     @override
     def forward(
         self,
-        input: PaddedInput,
+        input: PaddedTensor,
         cross_cache: Tensor | None,
         self_cache: Tensor,
-        context: PaddedSequence | None,
+        context: PaddedTensor | PaddedSequence | None,
         step_i: Tensor,
-    ) -> tuple[PaddedInput, Tensor]:
+    ) -> tuple[PaddedTensor, Tensor]:
         """Decode one token; reject half-present cross cache/context pairs with ValueError."""
 
     if TYPE_CHECKING:
@@ -152,12 +152,12 @@ class CachedDecoderLayer(CachedDecoderLayerBase):
 
     def forward(
         self,
-        input: PaddedInput,
+        input: PaddedTensor,
         cross_cache: Tensor | None,
         self_cache: Tensor,
-        context: PaddedSequence | None,
+        context: PaddedTensor | PaddedSequence | None,
         step_i: Tensor,
-    ) -> tuple[PaddedInput, Tensor]:
+    ) -> tuple[PaddedTensor, Tensor]:
         """Run the shared pre-norm equation with validated cache state."""
         cross_context = unwrap_or_raise(_cross_context(cross_cache, context))
         return pre_norm_decoder(
@@ -187,12 +187,12 @@ class CachedPostNormDecoderLayer(CachedDecoderLayerBase):
 
     def forward(
         self,
-        input: PaddedInput,
+        input: PaddedTensor,
         cross_cache: Tensor | None,
         self_cache: Tensor,
-        context: PaddedSequence | None,
+        context: PaddedTensor | PaddedSequence | None,
         step_i: Tensor,
-    ) -> tuple[PaddedInput, Tensor]:
+    ) -> tuple[PaddedTensor, Tensor]:
         """Run the shared post-norm equation with validated cache state."""
         cross_context = unwrap_or_raise(_cross_context(cross_cache, context))
         return post_norm_decoder(
@@ -225,12 +225,12 @@ class CachedSandwichNormDecoderLayer(CachedDecoderLayerBase):
 
     def forward(
         self,
-        input: PaddedInput,
+        input: PaddedTensor,
         cross_cache: Tensor | None,
         self_cache: Tensor,
-        context: PaddedSequence | None,
+        context: PaddedTensor | PaddedSequence | None,
         step_i: Tensor,
-    ) -> tuple[PaddedInput, Tensor]:
+    ) -> tuple[PaddedTensor, Tensor]:
         """Run the shared sandwich-norm equation with validated cache state."""
         cross_context = unwrap_or_raise(_cross_context(cross_cache, context))
         return sandwich_norm_decoder(
@@ -263,12 +263,12 @@ class CachedReorderedNormDecoderLayer(CachedDecoderLayerBase):
 
     def forward(
         self,
-        input: PaddedInput,
+        input: PaddedTensor,
         cross_cache: Tensor | None,
         self_cache: Tensor,
-        context: PaddedSequence | None,
+        context: PaddedTensor | PaddedSequence | None,
         step_i: Tensor,
-    ) -> tuple[PaddedInput, Tensor]:
+    ) -> tuple[PaddedTensor, Tensor]:
         """Run the shared reordered-norm equation with validated cache state."""
         cross_context = unwrap_or_raise(_cross_context(cross_cache, context))
         return reordered_norm_decoder(
@@ -370,7 +370,7 @@ class DecoderCrossAttentionCacheBuilder(nn.Module):
         self.train(source.training)
 
     @override
-    def forward(self, context: PaddedInput) -> DecoderCrossAttentionCache:
+    def forward(self, context: PaddedTensor) -> DecoderCrossAttentionCache:
         """Return dense per-layer cross K/V plus the context validity mask."""
         layer_caches = tuple(
             cast("CachedCrossAttentionWrapper", layer).build_cache(context) for layer in self.layers
@@ -416,7 +416,7 @@ class CachedDecoderWrapper(nn.Module):
     @override
     def forward(
         self,
-        input: PaddedInput,
+        input: PaddedTensor,
         cross_cache: DecoderCrossAttentionCache | None,
         self_kv_cache: Tensor,
         step_i: Tensor,

@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from jaxtyping import Float
 
     from stackformers.positional.protocols import PosEncoding
-    from stackformers.sequence import PaddedInput, PaddedSequence
+    from stackformers.sequence import PaddedSequence, PaddedTensor
 
 
 def _project_qkv(
@@ -152,7 +152,7 @@ class CachedSelfAttentionWrapper(nn.Module):
     @override
     def forward(
         self,
-        input: PaddedInput,
+        input: PaddedTensor,
         cache: Tensor,
         step_i: Tensor,
     ) -> tuple[Tensor, Tensor]:
@@ -210,7 +210,7 @@ class CachedCrossAttentionWrapper(nn.Module):
         self.attention = unwrap_or_raise(cacheable_cross_attention(attention))
         self.train(attention.training)
 
-    def build_cache(self, context: PaddedInput) -> CrossAttentionKVCache:
+    def build_cache(self, context: PaddedTensor) -> CrossAttentionKVCache:
         """Project and position one context while retaining configured KV-head width."""
         attention = self.attention
         return _positioned_cross_kv(attention, context.x, context.abs_positions)
@@ -218,9 +218,9 @@ class CachedCrossAttentionWrapper(nn.Module):
     @override
     def forward(
         self,
-        input: PaddedInput,
+        input: PaddedTensor,
         cache: CrossAttentionKVCache,
-        context: PaddedSequence,
+        context: PaddedTensor | PaddedSequence,
     ) -> Tensor:
         """Attend one padded target input to a preprojected fixed context."""
         attention = self.attention

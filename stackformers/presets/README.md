@@ -28,7 +28,7 @@ Compilation and export specialize to the context presence used when tracing.
 
 **`CrossAttender`** — cross-attn → ff per layer. `x` is a fixed set of queries with no self-attention. Useful for Perceiver-style or slot-attention architectures.
 
-All presets accept `PaddedInput` or `PackedInput` interchangeably.
+All presets accept `PaddedTensor` or `PackedTensor` interchangeably.
 
 ## Projection layout
 

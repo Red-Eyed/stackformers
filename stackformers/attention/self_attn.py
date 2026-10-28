@@ -19,9 +19,8 @@ from stackformers.attention.ops import (
 )
 from stackformers.sequence import (
     AllValid,
-    PackedInput,
-    PackedSequence,
-    PaddedInput,
+    PackedTensor,
+    PaddedTensor,
     SequenceInput,
     packed_to_padded,
 )
@@ -39,7 +38,7 @@ class SelfAttention(nn.Module):
     window_size=None (default) → global attention.
     window_size=w             → sliding-window attention with width w.
 
-    Pass PaddedInput for inference or export, PackedInput for training — same weights.
+    Pass PaddedTensor for inference or export, PackedTensor for training — same weights.
     Falls back to padded SDPA when varlen_attn is unavailable (CPU, float32, torch.export)
     or when an attention bias is provided.
     """
@@ -64,7 +63,7 @@ class SelfAttention(nn.Module):
         self.k_norm: nn.Module = nn.RMSNorm(dh) if config.qk_norm else nn.Identity()
         nn.init.normal_(self.to_out.weight, std=0.02)
 
-    def _forward_padded(self, input: PaddedInput, self_attn_mask: SelfAttentionMask) -> Tensor:
+    def _forward_padded(self, input: PaddedTensor, self_attn_mask: SelfAttentionMask) -> Tensor:
         """Share projection and positional math across the two dense validity contracts."""
         cfg = self.config
         h, kv_h, groups = cfg.heads, cfg.effective_kv_heads, cfg.groups
@@ -92,7 +91,7 @@ class SelfAttention(nn.Module):
         projected: Tensor = self.dropout(self.to_out(rearrange(out, "b h n d -> b n (h d)")))
         return projected
 
-    def _forward_packed(self, input: PackedInput, self_attn_mask: SelfAttentionMask) -> Tensor:
+    def _forward_packed(self, input: PackedTensor, self_attn_mask: SelfAttentionMask) -> Tensor:
         cfg = self.config
         h, kv_h, groups = cfg.heads, cfg.effective_kv_heads, cfg.groups
         x = input.x
@@ -108,13 +107,12 @@ class SelfAttention(nn.Module):
                 bias = None
             case _:
                 bias = self.attn_bias(packed_to_padded(input))
-        seq = PackedSequence(cu_seqlens=input.cu_seqlens, max_seqlen=input.max_seqlen)
         causal, window, allowed = unwrap_or_raise(
             resolve_self_mask(
                 self_attn_mask, cfg.causal, cfg.window_size, input.max_seqlen, input.x.device
             )
         )
-        out = packed_attn_or_fallback(q, k, v, seq, seq, causal, window, bias, allowed)
+        out = packed_attn_or_fallback(q, k, v, input, input, causal, window, bias, allowed)
         projected: Tensor = self.dropout(self.to_out(rearrange(out, "nt h d -> nt (h d)")))
         return projected
 
@@ -124,9 +122,9 @@ class SelfAttention(nn.Module):
     ) -> Tensor:
         """Attend with per-call visibility; explicit masks override causal/window defaults."""
         match input:
-            case PaddedInput():
+            case PaddedTensor():
                 return self._forward_padded(input, self_attn_mask)
-            case PackedInput():
+            case PackedTensor():
                 return self._forward_packed(input, self_attn_mask)
 
     def to_packed(self) -> PackedSelfAttention:

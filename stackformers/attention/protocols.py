@@ -7,7 +7,7 @@ if TYPE_CHECKING:
     from torch import Tensor
 
     from stackformers.attention.masking import CrossAttentionMask, SelfAttentionMask
-    from stackformers.sequence import PackedInput, PaddedInput, SequenceInput
+    from stackformers.sequence import PackedTensor, PaddedTensor, SequenceInput
 
 
 @runtime_checkable
@@ -21,7 +21,7 @@ class AttnBias(Protocol):
 
     def __call__(
         self,
-        input: PaddedInput,
+        input: PaddedTensor,
     ) -> Float[Tensor, "b h n s"] | None: ...
 
 
@@ -41,8 +41,8 @@ class CrossAttn(Protocol):
     @overload
     def __call__(
         self,
-        x_input: PaddedInput,
-        ctx_input: PaddedInput,
+        x_input: PaddedTensor,
+        ctx_input: PaddedTensor,
         *,
         cross_attn_mask: CrossAttentionMask = None,
     ) -> Tensor:
@@ -52,8 +52,8 @@ class CrossAttn(Protocol):
     @overload
     def __call__(
         self,
-        x_input: PackedInput,
-        ctx_input: PackedInput,
+        x_input: PackedTensor,
+        ctx_input: PackedTensor,
         *,
         cross_attn_mask: CrossAttentionMask = None,
     ) -> Tensor:

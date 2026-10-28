@@ -43,6 +43,7 @@ def target_context(
     return target, context
 
 
+@pytest.mark.parametrize("legacy_context", [False, True])
 @pytest.mark.parametrize("qk_norm", [False, True])
 @pytest.mark.parametrize("packed", [False, True])
 @pytest.mark.parametrize("kv_heads", [4, 2, 1])
@@ -50,6 +51,7 @@ def test_cached_cross_attention_matches_ordinary_forward(
     target_context: tuple[PaddedInput, PaddedInput],
     device_dtype: tuple[torch.device, torch.dtype],
     qk_norm: bool,
+    legacy_context: bool,
     packed: bool,
     kv_heads: int,
 ) -> None:
@@ -75,7 +77,7 @@ def test_cached_cross_attention_matches_ordinary_forward(
         actual = cached(
             target,
             cache,
-            PaddedSequence(mask=materialize_padding_mask(context)),
+            PaddedSequence(mask=materialize_padding_mask(context)) if legacy_context else context,
         )
 
     torch.testing.assert_close(actual, expected, atol=atol(dtype), rtol=atol(dtype))

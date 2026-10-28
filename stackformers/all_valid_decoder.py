@@ -39,7 +39,7 @@ from stackformers.decoder import (
 )
 from stackformers.decoder_cache import _decoder_layers, _supported_layer, _unwrap_decoder
 from stackformers.result import Err, Ok, Result
-from stackformers.sequence import AllValid, PaddedInput
+from stackformers.sequence import AllValid, PaddedTensor
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -91,10 +91,10 @@ def _allocate_self_cache(layers: nn.ModuleList, capacity: int, dtype: torch.dtyp
     return tuple(buffers)
 
 
-def _validate_token(input: PaddedInput) -> Result[tuple[()], TypeError | ValueError]:
+def _validate_token(input: PaddedTensor) -> Result[tuple[()], TypeError | ValueError]:
     """Reject padding records, multi-sequence batches and multi-token decoder calls."""
-    if not isinstance(input, PaddedInput) or not isinstance(input.mask, AllValid):
-        return Err(TypeError("all-valid decoding requires PaddedInput with mask=AllValid()"))
+    if not isinstance(input, PaddedTensor) or not isinstance(input.mask, AllValid):
+        return Err(TypeError("all-valid decoding requires PaddedTensor with mask=AllValid()"))
     if input.x.shape[0] != 1 or input.x.shape[1] != 1:
         return Err(ValueError("all-valid decoding requires batch size one and exactly one token"))
     if input.abs_positions.shape[:2] != input.x.shape[:2]:
@@ -104,10 +104,10 @@ def _validate_token(input: PaddedInput) -> Result[tuple[()], TypeError | ValueEr
 
 def _decode_layer(
     layer: DecoderLayerBase,
-    input: PaddedInput,
-    self_attention: Callable[[PaddedInput], tuple[Tensor, StateT]],
+    input: PaddedTensor,
+    self_attention: Callable[[PaddedTensor], tuple[Tensor, StateT]],
     context: CrossAttentionKVCache | None,
-) -> tuple[PaddedInput, StateT]:
+) -> tuple[PaddedTensor, StateT]:
     """Select the existing residual equation while substituting only attention execution."""
     cross = partial(
         cross_attention, cast("CrossAttention | PackedCrossAttention", layer.cross_attn)
@@ -189,11 +189,11 @@ class AllValidCrossAttentionCacheBuilder(nn.Module):
         self.layers.training = decoder.training
 
     @override
-    def forward(self, context: PaddedInput) -> LayerCaches:
+    def forward(self, context: PaddedTensor) -> LayerCaches:
         """Return separate immutable K/V tensors; reject empty or multi-sequence memory."""
-        if not isinstance(context, PaddedInput) or not isinstance(context.mask, AllValid):
+        if not isinstance(context, PaddedTensor) or not isinstance(context.mask, AllValid):
             raise TypeError(
-                "all-valid cache construction requires PaddedInput with mask=AllValid()"
+                "all-valid cache construction requires PaddedTensor with mask=AllValid()"
             )
         if context.x.shape[0] != 1 or context.x.shape[1] == 0:
             raise ValueError("all-valid context requires one nonempty sequence")
@@ -237,7 +237,7 @@ class AllValidCachedDecoderWrapper(nn.Module):
 
     @override
     def forward(
-        self, input: PaddedInput, cross_cache: LayerCaches | None, self_kv_cache: LayerCaches
+        self, input: PaddedTensor, cross_cache: LayerCaches | None, self_kv_cache: LayerCaches
     ) -> AllValidDecoderStepOutput:
         """Append one token to each layer cache and return the normalized decoder output."""
         unwrap_or_raise(_validate_token(input))

@@ -126,7 +126,7 @@ def plain_encoder_config(
 ) -> TransformerEncoderConfig:
     """Global SDPA encoder with RoPE-1D, RMSNorm, and SwiGLU FF.
 
-    Pass PaddedInput for inference, PackedInput for training — same model.
+    Pass PaddedTensor for inference, PackedTensor for training — same model.
     """
     dim_head = dim // heads
     return TransformerEncoderConfig(
@@ -154,7 +154,7 @@ def windowed_encoder_config(
 ) -> TransformerEncoderConfig:
     """Sliding-window encoder — O(n·w) attention for long sequences.
 
-    Pass PaddedInput for inference, PackedInput for training — same model.
+    Pass PaddedTensor for inference, PackedTensor for training — same model.
     """
     dim_head = dim // heads
     return TransformerEncoderConfig(
@@ -213,7 +213,7 @@ def node_encoder_config(
 class TransformerEncoder(TransformerEncoderBase[TransformerEncoderConfig]):
     """Concrete encoder for TransformerEncoderConfig.
 
-    Pass PaddedInput for inference, PackedInput for training.
+    Pass PaddedTensor for inference, PackedTensor for training.
     Override build_pos_encoding, build_attn_bias, build_ff, or build_norm to customise
     individual collaborators while keeping the rest of the defaults.
     """

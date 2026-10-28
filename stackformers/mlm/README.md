@@ -33,7 +33,7 @@ One call site covers both modes: in training, `mlm_wrapper` runs the encoder twi
 
 ## Design
 
-`RandomMasking` accepts `PaddedInput(mask=AllValid(), ...)`: every dense position is eligible
+`RandomMasking` accepts `PaddedTensor(mask=AllValid(), ...)`: every dense position is eligible
 without a validity-mask intersection. Custom masking strategies still dispatch on only padded
 and packed sequence layouts; dense mask handling must cover both tensors and `AllValid`.
 
@@ -49,7 +49,7 @@ and packed sequence layouts; dense mask handling must cover both tensors and `Al
 
 **`input.x` is detached once, before it is used for anything — not only as the target.** The masked pass replaces `input` with `input._replace(x=input.x.detach())` up front, so both the unmasked context fed to the encoder and the reconstruction target come from that same detached copy. Detaching only the target is not sufficient: self-attention still mixes the live, undetached unmasked positions into the masked positions' predictions, so a gradient path back to whatever produced `input.x` would otherwise survive at every unmasked position — worse, it grows with the fraction of tokens left unmasked. Severing the whole input removes the standard collapse shortcut for self-supervised regression targets (drive every token toward one constant vector, and reconstruction becomes trivial) — not just the degenerate all-masked case, but the realistic partial-masking case a target-only detach would silently miss. See `tests/mlm/test_wrapper.py::test_wrapper_severs_gradient_to_upstream_input_under_partial_masking` for the regression test.
 
-**No layout dispatch in the wrapper.** `MaskingStrategy` returns a boolean tensor shaped like `input.x`'s leading dims — `(b, n)` for `PaddedInput`, `(nt,)` for `PackedInput`. `torch.where` and boolean advanced indexing both broadcast/gather correctly against either shape, so `MLMWrapper.forward` never matches on the sequence variant; only `RandomMasking` does, internally.
+**No layout dispatch in the wrapper.** `MaskingStrategy` returns a boolean tensor shaped like `input.x`'s leading dims — `(b, n)` for `PaddedTensor`, `(nt,)` for `PackedTensor`. `torch.where` and boolean advanced indexing both broadcast/gather correctly against either shape, so `MLMWrapper.forward` never matches on the sequence variant; only `RandomMasking` does, internally.
 
 **Random masking needs no packed-sequence boundary awareness.** Each token's masking decision is independent of every other token's, so document identity (`cu_seqlens`) never enters the decision. Boundary-awareness only becomes necessary for a contiguous-span (blockwise) strategy, which could otherwise straddle two packed documents — add that logic when that strategy is added, not before.
 

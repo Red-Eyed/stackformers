@@ -95,7 +95,7 @@ def plain_cross_attender_config(
 ) -> CrossAttenderConfig:
     """Global SDPA cross-attender with RMSNorm and SwiGLU FF, no positional encoding.
 
-    Pass PaddedInput for inference, PackedInput for training — same model.
+    Pass PaddedTensor for inference, PackedTensor for training — same model.
     """
     dim_head = dim // heads
     return CrossAttenderConfig(
@@ -110,7 +110,7 @@ def plain_cross_attender_config(
 class CrossAttender(CrossAttenderBase[CrossAttenderConfig]):
     """Concrete cross-attender for CrossAttenderConfig.
 
-    Pass PaddedInput for inference, PackedInput for training.
+    Pass PaddedTensor for inference, PackedTensor for training.
     Override build_pos_encoding, build_ff, or build_norm to customise individual
     collaborators while keeping the rest of the defaults.
     """

@@ -7,10 +7,13 @@ import torch.nn as nn
 from typing_extensions import override
 
 from stackformers.sequence import (
+    AllValid,
     PackedInput,
     PackedSequence,
+    PackedTensor,
     PaddedInput,
     PaddedSequence,
+    PaddedTensor,
     SequenceInfo,
     lengths_to_cu_seqlens,
     make_packed,
@@ -217,3 +220,181 @@ def test_position_ids_export_same_batch_different_seqlens(opset_version: int) ->
         3,
         4,
     ]
+
+
+@pytest.fixture
+def tensor_list(device_dtype: tuple[torch.device, torch.dtype]) -> list[torch.Tensor]:
+    """Provide ragged values including an empty document on each supported device/dtype."""
+    device, dtype = device_dtype
+    return [torch.randn(n, 8, device=device, dtype=dtype) for n in (3, 0, 2)]
+
+
+@pytest.mark.parametrize("tensor_type", [PackedTensor, PaddedTensor])
+def test_tensor_list_roundtrip(
+    tensor_list: list[torch.Tensor], tensor_type: type[PackedTensor] | type[PaddedTensor]
+) -> None:
+    """Constructors preserve token order, empty documents, dtype, and device."""
+    tensor = tensor_type.from_list(tensor_list)
+    for original, restored in zip(tensor_list, tensor.to_list(), strict=True):
+        assert torch.equal(original, restored)
+        assert restored.dtype == original.dtype
+        assert restored.device == original.device
+    packed = tensor.to_packed()
+    assert packed.cu_seqlens.tolist() == [0, 3, 3, 5]
+    assert packed.max_seqlen == 3
+    assert packed.abs_positions[:, 0].tolist() == [0, 1, 2, 0, 1]
+    assert packed.to_packed() is packed
+    padded = tensor.to_padded()
+    assert padded.to_padded() is padded
+
+
+@pytest.mark.parametrize("tensor_type", [PackedTensor, PaddedTensor])
+def test_tensor_nested_roundtrip(
+    tensor_list: list[torch.Tensor], tensor_type: type[PackedTensor] | type[PaddedTensor]
+) -> None:
+    """Jagged conversions retain values and empty document boundaries."""
+    tensor = tensor_type.from_list(tensor_list)
+    nested = tensor.to_nested()
+    assert nested.layout == torch.jagged
+    restored = tensor_type.from_nested(nested)
+    for original, actual in zip(tensor_list, restored.to_list(), strict=True):
+        assert torch.equal(original, actual)
+    if isinstance(tensor, PackedTensor):
+        assert nested.values().data_ptr() == tensor.x.data_ptr()
+
+
+@pytest.mark.parametrize("tensor_type", [PackedTensor, PaddedTensor])
+def test_tensor_custom_positions(
+    tensor_list: list[torch.Tensor], tensor_type: type[PackedTensor] | type[PaddedTensor]
+) -> None:
+    """Layout changes retain explicit multidimensional coordinates and valid values."""
+    positions = [torch.randn(item.shape[0], 2, device=item.device) for item in tensor_list]
+    tensor = tensor_type.from_list(tensor_list, abs_positions=positions)
+    packed = tensor.to_packed()
+    padded = packed.to_padded(padding_value=-7.0)
+    assert torch.equal(padded.to_packed().abs_positions, torch.cat(positions))
+    assert torch.equal(padded.to_packed().x, torch.cat(tensor_list))
+    invalid = ~materialize_padding_mask(padded)
+    assert torch.all(padded.x[invalid] == -7.0)
+    assert torch.all(padded.abs_positions[invalid] == 0)
+
+
+@pytest.mark.parametrize("tensor_type", [PackedTensor, PaddedTensor])
+def test_tensor_all_empty(
+    device_dtype: tuple[torch.device, torch.dtype],
+    tensor_type: type[PackedTensor] | type[PaddedTensor],
+) -> None:
+    """A nonempty batch of empty documents keeps batch and feature dimensions."""
+    device, dtype = device_dtype
+    tensor = tensor_type.from_list([torch.empty(0, 8, device=device, dtype=dtype)] * 2)
+    assert tensor.to_packed().cu_seqlens.tolist() == [0, 0, 0]
+    assert tensor.to_padded().x.shape == (2, 0, 8)
+    assert [item.shape for item in tensor.to_list()] == [(0, 8), (0, 8)]
+
+
+@pytest.mark.parametrize("tensor_type", [PackedTensor, PaddedTensor])
+@pytest.mark.parametrize("route", ["list", "nested", "layout"])
+def test_tensor_conversion_gradients(
+    device: torch.device,
+    tensor_type: type[PackedTensor] | type[PaddedTensor],
+    route: str,
+) -> None:
+    """Every conversion route propagates gradients to the original leaf tensors."""
+    items = [torch.randn(n, 8, device=device, requires_grad=True) for n in (3, 0, 2)]
+    tensor = tensor_type.from_list(items)
+    match route:
+        case "list":
+            values = tensor.to_list()
+        case "nested":
+            values = PackedTensor.from_nested(tensor.to_nested()).to_list()
+        case _:
+            values = tensor.to_packed().to_padded().to_list()
+    torch.stack([item.square().sum() for item in values]).sum().backward()
+    for item in items:
+        assert item.grad is not None
+        torch.testing.assert_close(item.grad, 2 * item.detach())
+
+
+@pytest.mark.parametrize("tensor_type", [PackedTensor, PaddedTensor])
+@pytest.mark.parametrize("invalid", ["empty", "rank", "width", "dtype"])
+def test_tensor_rejects_invalid_list(
+    tensor_type: type[PackedTensor] | type[PaddedTensor], invalid: str
+) -> None:
+    """Reject ambiguous batches before constructing a record."""
+    items: list[torch.Tensor]
+    match invalid:
+        case "empty":
+            items = []
+        case "rank":
+            items = [torch.ones(2)]
+        case "width":
+            items = [torch.ones(2, 3), torch.ones(2, 4)]
+        case _:
+            items = [torch.ones(2, 3), torch.ones(2, 3, dtype=torch.float64)]
+    with pytest.raises(ValueError):
+        tensor_type.from_list(items)
+
+
+@pytest.mark.parametrize("invalid", ["count", "length", "width", "rank"])
+def test_tensor_rejects_invalid_positions(invalid: str) -> None:
+    """Explicit coordinate lists must align with every value tensor."""
+    items = [torch.ones(2, 3), torch.ones(1, 3)]
+    match invalid:
+        case "count":
+            positions = [torch.ones(2, 1)]
+        case "length":
+            positions = [torch.ones(2, 1), torch.ones(2, 1)]
+        case "width":
+            positions = [torch.ones(2, 1), torch.ones(1, 2)]
+        case _:
+            positions = [torch.ones(2), torch.ones(1)]
+    with pytest.raises(ValueError):
+        PackedTensor.from_list(items, abs_positions=positions)
+
+
+def test_tensor_alias_deprecation() -> None:
+    """Both import locations warn while returning the exact canonical classes."""
+    import stackformers
+    import stackformers.sequence as sequence
+
+    for module in (stackformers, sequence):
+        for old_name, new_type in (("PackedInput", PackedTensor), ("PaddedInput", PaddedTensor)):
+            with pytest.warns(DeprecationWarning, match=new_type.__name__):
+                assert getattr(module, old_name) is new_type
+    assert "__deprecated__" in vars(make_packed_input)
+    assert "__deprecated__" in vars(PackedSequence)
+
+
+def test_tensor_all_valid_views(device_dtype: tuple[torch.device, torch.dtype]) -> None:
+    """All-valid conversions avoid allocating masks and share contiguous value storage."""
+    device, dtype = device_dtype
+    x = torch.randn(2, 3, 8, device=device, dtype=dtype)
+    positions = torch.zeros(2, 3, 1, device=device)
+    tensor = PaddedTensor(x, AllValid(), positions)
+    assert tensor.to_packed().x.data_ptr() == x.data_ptr()
+    assert tensor.to_list()[0].data_ptr() == x.data_ptr()
+
+
+class _PackedToPaddedWrapper(nn.Module):
+    """Expose the packed conversion method through a traceable module boundary."""
+
+    @override
+    def forward(self, input: PackedTensor) -> PaddedTensor:
+        """Return the right-padded representation without Python length iteration."""
+        return input.to_padded()
+
+
+def test_tensor_method_export(packed_input_ragged: PackedInput) -> None:
+    """Canonical records and the padded conversion method survive torch.export."""
+    module = _PackedToPaddedWrapper()
+    exported = torch.export.export(module, (packed_input_ragged,))
+    actual = exported.module()(packed_input_ragged)
+    expected = module(packed_input_ragged)
+    torch.testing.assert_close(actual, expected)
+
+
+def test_tensor_method_compile(packed_input_ragged: PackedInput) -> None:
+    """The conversion traces as a full graph with dynamic-output capture enabled."""
+    with torch._dynamo.config.patch(capture_dynamic_output_shape_ops=True):
+        compiled = torch.compile(_PackedToPaddedWrapper(), backend="eager", fullgraph=True)
+        torch.testing.assert_close(compiled(packed_input_ragged), packed_input_ragged.to_padded())

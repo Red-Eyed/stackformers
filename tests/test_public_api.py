@@ -106,6 +106,8 @@ STABLE_4_6_PUBLIC_NAMES = (
 )
 
 PUBLIC_COMPONENT_NAMES = [
+    "PackedTensor",
+    "PaddedTensor",
     "AttnBiasConfig",
     "CachedCrossAttentionWrapper",
     "CachedSelfAttentionWrapper",

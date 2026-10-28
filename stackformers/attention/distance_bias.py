@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from jaxtyping import Float
 
     from stackformers.attention.config import DistanceBiasConfig
-    from stackformers.sequence import PaddedInput
+    from stackformers.sequence import PaddedTensor
 
 
 class RelativeDistanceBias(nn.Module):
@@ -47,7 +47,7 @@ class RelativeDistanceBias(nn.Module):
         return torch.exp(-(((dist.unsqueeze(-1) - centres) / self.width) ** 2))
 
     @override
-    def forward(self, input: PaddedInput) -> Float[Tensor, "b h n s"]:
+    def forward(self, input: PaddedTensor) -> Float[Tensor, "b h n s"]:
         """float32 distances keep half-precision coordinates from collapsing nearby nodes."""
         pos = input.abs_positions.float()
         delta = pos.unsqueeze(2) - pos.unsqueeze(1)  # b n s c

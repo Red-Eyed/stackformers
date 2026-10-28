@@ -78,7 +78,7 @@ class MLMWrapper(nn.Module):
         target = input.x
         should_mask = self.masking_strategy(input)
         # should_mask's shape always matches input.x's leading dims, so this select and
-        # the boolean indexing below both work for PaddedInput and PackedInput alike.
+        # the boolean indexing below both work for PaddedTensor and PackedTensor alike.
         corrupted_x = torch.where(should_mask.unsqueeze(-1), self.mask_token, input.x)
         masked_output = encoder(input._replace(x=corrupted_x))
         return self.head(masked_output[should_mask], target[should_mask])

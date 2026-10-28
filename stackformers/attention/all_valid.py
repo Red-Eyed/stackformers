@@ -20,7 +20,7 @@ from stackformers.sequence import AllValid
 if TYPE_CHECKING:
     from jaxtyping import Float
 
-    from stackformers.sequence import PaddedInput
+    from stackformers.sequence import PaddedTensor
 
 Attention = SelfAttention | PackedSelfAttention | CrossAttention | PackedCrossAttention
 SelfAttentionModule = SelfAttention | PackedSelfAttention
@@ -49,7 +49,7 @@ def attend(
 
 def functional_self_attention(
     attention: SelfAttentionModule,
-    input: PaddedInput,
+    input: PaddedTensor,
     cache: CrossAttentionKVCache,
 ) -> tuple[Tensor, CrossAttentionKVCache]:
     """Append one positioned key and raw value without mutating the incoming cache."""
@@ -62,7 +62,7 @@ def functional_self_attention(
 
 def cross_attention(
     attention: CrossAttention | PackedCrossAttention,
-    input: PaddedInput,
+    input: PaddedTensor,
     cache: CrossAttentionKVCache,
 ) -> Tensor:
     """Project only the current query against an immutable, all-valid context cache."""

@@ -1,6 +1,7 @@
 """stackformers public API."""
 
 from importlib.metadata import version
+from typing import TYPE_CHECKING
 
 __version__ = version("stackformers")
 
@@ -153,10 +154,10 @@ from stackformers.presets.variable_width_encoder import (
 from stackformers.result import Err, Ok, Result
 from stackformers.sequence import (
     AllValid,
-    PackedInput,
     PackedSequence,
-    PaddedInput,
+    PackedTensor,
     PaddedSequence,
+    PaddedTensor,
     SequenceInfo,
     SequenceInput,
     lengths_to_cu_seqlens,
@@ -194,6 +195,8 @@ __all__ = [
     "PaddedSequence",
     "PackedSequence",
     "SequenceInfo",
+    "PaddedTensor",
+    "PackedTensor",
     "PaddedInput",
     "PackedInput",
     "SequenceInput",
@@ -341,3 +344,17 @@ __all__ = [
     "MLMWrapper",
     "MLMOutput",
 ]
+
+
+if TYPE_CHECKING:
+    PackedInput = PackedTensor
+    PaddedInput = PaddedTensor
+
+
+def __getattr__(name: str) -> type[PackedTensor] | type[PaddedTensor]:
+    """Resolve legacy input aliases with the sequence module's deprecation guidance."""
+    from stackformers import sequence
+
+    if name in ("PackedInput", "PaddedInput"):
+        return sequence.__getattr__(name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

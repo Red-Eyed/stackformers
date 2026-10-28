@@ -20,7 +20,7 @@ from stackformers.result import Err, Ok, Result
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from stackformers.sequence import PackedSequence
+    from stackformers.sequence import PackedSequence, PackedTensor
 
 _FALLBACK_NOTE = " Falling back to padded SDPA; performance may be lower."
 _P = ParamSpec("_P")
@@ -109,8 +109,8 @@ def attempt_varlen_attn(
     q: Tensor,
     k: Tensor,
     v: Tensor,
-    q_seq: PackedSequence,
-    k_seq: PackedSequence,
+    q_seq: PackedTensor | PackedSequence,
+    k_seq: PackedTensor | PackedSequence,
     causal: bool,
     window_size: int | None,
     bias: Tensor | None,
@@ -165,8 +165,8 @@ def try_varlen_attn(
     q: Tensor,
     k: Tensor,
     v: Tensor,
-    q_seq: PackedSequence,
-    k_seq: PackedSequence,
+    q_seq: PackedTensor | PackedSequence,
+    k_seq: PackedTensor | PackedSequence,
     causal: bool,
     window_size: int | None,
     bias: Tensor | None,

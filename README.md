@@ -13,6 +13,52 @@ continuous point coordinates, user subclassing, and cached ONNX Runtime deployme
 
 ---
 
+## Tensor batches and conversions
+
+`PackedTensor` and `PaddedTensor` are the public value types: each carries token values,
+layout information, and absolute positions. Pass either directly to a model.
+
+```python
+from stackformers import PackedTensor, PaddedTensor
+
+packed = PackedTensor.from_list(sequences)  # each item has shape (length, features)
+padded = packed.to_padded(padding_value=0.0)
+packed_again = padded.to_packed()
+items = padded.to_list()
+nested = packed.to_nested()  # torch.jagged, sharing the packed values buffer
+restored = PaddedTensor.from_nested(nested)
+```
+
+Both constructors accept zero-length sequences but require a nonempty list with matching
+feature widths, dtypes, and devices. `from_list(..., abs_positions=positions)` accepts one
+coordinate tensor per item; otherwise positions start at zero within each sequence.
+Layout conversions preserve custom coordinates and valid-token order. Padded output is
+padded at the end of each row to the maximum document length; converting a
+mask with holes compacts its valid tokens. Unused coordinates are zero.
+
+These operations never mutate inputs and preserve autograd history, dtype, and device.
+`to_list()` and `to_nested()` export values only, so reconstructing from them generates new
+sequential coordinates. `to_list()` may synchronize GPU lengths; `from_list`, `from_nested`,
+and padded-to-packed conversion are eager adapters. Packed-to-padded conversion supports
+compile/export with dynamic output shapes. Same-layout conversions return the original
+record. Packed list slices and jagged output share value storage; callers must avoid
+mutating shared buffers. Nested adapters require PyTorch's jagged tensor API.
+
+### Deprecated sequence API
+
+`PackedInput` and `PaddedInput` remain exact aliases of the canonical types and warn with
+`DeprecationWarning` when accessed. Replace their imports with `PackedTensor` and
+`PaddedTensor`; direct constructor arguments and model calls remain compatible.
+`PackedSequence`, `PaddedSequence`, `SequenceInfo`, `to_seq_info`, `make_packed`,
+`make_padded`, `make_packed_input`, `make_padded_input`, `packed_batch_size`,
+`padded_to_key_padding_mask`, `packed_to_padded`, and `padded_to_packed` remain available
+as deprecated compatibility APIs. Metadata records and helper functions use static
+PEP 702 deprecation markers without runtime warning wrappers, keeping old graph paths
+traceable. Use tensor constructors, conversion methods, `materialize_padding_mask`, and
+`tensor.cu_seqlens.shape[0] - 1` instead. Existing decoder cache outputs retain their
+mask-only metadata structure; cached calls also accept `PaddedTensor` directly.
+No removal version is assigned.
+
 ## Why
 
 Most transformer libraries grow into a tangle of `if self.use_rope`, `if self.window_size is not None`, and god-config objects with thirty nullable fields. Adding a new variant means touching existing code.
@@ -21,7 +67,7 @@ stackformers takes a different approach:
 
 - **Swap any component without touching anything else** — `SelfAttention(config, pos_encoding=RoPE)` vs `SelfAttention(config, pos_encoding=ALiBi)` — same call site, different object
 - **No `None` checks in `forward()`** — `NoPosEncoding` is a real object that passes q/k unchanged; the branch never exists
-- **Sealed sequence unions** — `PaddedInput | PackedInput` instead of optional `cu_seqlens` and `mask` arguments that conflict with each other
+- **Sealed sequence unions** — `PaddedTensor | PackedTensor` instead of optional `cu_seqlens` and `mask` arguments that conflict with each other
 - **`torch.compile` / `torch.export` safe** — no Python control flow on tensors inside any `forward()`
 - **Structural protocols** — bring your own implementation; no ABC inheritance required
 
@@ -41,16 +87,16 @@ import stackformers as sf
 
 model = sf.TransformerEncoder(sf.plain_encoder_config(dim=512, heads=8, num_layers=6))
 
-x    = torch.randn(2, 128, 512)
-mask = torch.ones(2, 128, dtype=torch.bool)
-out  = model(sf.make_padded_input(x, mask))   # (2, 128, 512)
+sequences = [torch.randn(128, 512), torch.randn(64, 512)]
+padded = sf.PaddedTensor.from_list(sequences)
+out = model(padded)  # (2, 128, 512)
 ```
 
 Switch to packed (variable-length, no padding waste) — same weights:
 
 ```python
-cu  = torch.tensor([0, 64, 128], dtype=torch.int32)
-out = model(sf.make_packed_input(x_flat, cu, max_seqlen=64))  # (128, 512)
+packed = padded.to_packed()
+out = model(packed)  # (192, 512)
 ```
 
 Causal LM backbone:
@@ -231,9 +277,9 @@ packed attention with the same calls and cache tensor layouts. Pack the model be
 cache wrappers, or convert a containing module that registers the model and its existing wrappers
 together so their attention references remain shared. Packing a wrapper alone converts only its
 registered children; references outside that tree still point to the original attention modules.
-Projection packing is independent of the `PackedInput` sequence layout.
+Projection packing is independent of the `PackedTensor` sequence layout.
 
-For deployments with no padding, `PaddedInput(mask=AllValid(), ...)` selects mask-free global
+For deployments with no padding, `PaddedTensor(mask=AllValid(), ...)` selects mask-free global
 attention. `AllValidCachedDecoderWrapper.empty_cache(dtype=...)` derives per-layer self-cache
 geometry automatically.
 `AllValidCachedDecoderWrapper` provides functional one-token decoding at ONNX opsets 23/24;
