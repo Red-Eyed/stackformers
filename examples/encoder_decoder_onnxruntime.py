@@ -10,6 +10,7 @@ import numpy as np
 import onnxruntime as ort
 import torch
 import torch.nn as nn
+from einops import repeat
 from torch import Tensor
 from typing_extensions import override
 
@@ -17,10 +18,9 @@ from stackformers import (
     CachedDecoderWrapper,
     DecoderCrossAttentionCache,
     DecoderCrossAttentionCacheBuilder,
-    PaddedInput,
+    PaddedTensor,
     TransformerDecoder,
     TransformerEncoder,
-    make_padded_input,
     plain_decoder_config,
     plain_encoder_config,
 )
@@ -57,7 +57,7 @@ class EncoderModel(nn.Module):
         self.encoder = TransformerEncoder(plain_encoder_config(DIM, HEADS, LAYERS, ff_mult=3.0))
 
     @override
-    def forward(self, source_input: PaddedInput) -> PaddedInput:
+    def forward(self, source_input: PaddedTensor) -> PaddedTensor:
         """Encode source features while retaining their mask and absolute positions."""
         context = self.encoder(source_input)
         return source_input._replace(x=context)
@@ -76,7 +76,7 @@ class EncoderDecoderModel(nn.Module):
         self.decoder = TransformerDecoder(plain_decoder_config(DIM, HEADS, LAYERS, ff_mult=3.0))
 
     @override
-    def forward(self, source_input: PaddedInput, target_input: PaddedInput) -> Tensor:
+    def forward(self, source_input: PaddedTensor, target_input: PaddedTensor) -> Tensor:
         """Run the ordinary uncached encoder-decoder path."""
         memory = self.encoder(source_input)
         return self.decoder(target_input, memory)
@@ -85,17 +85,18 @@ class EncoderDecoderModel(nn.Module):
         __call__ = forward
 
 
-def _make_input(batch: int, tokens: int, *, seed: int) -> PaddedInput:
+def _make_input(batch: int, tokens: int, *, seed: int) -> PaddedTensor:
     """Create deterministic dense padded input for export examples and runtime checks."""
     generator = torch.Generator().manual_seed(seed)
     x = torch.randn(batch, tokens, DIM, generator=generator)
     mask = torch.ones(batch, tokens, dtype=torch.bool)
-    return make_padded_input(x, mask)
+    positions = repeat(torch.arange(tokens, dtype=torch.float32), "n -> b n 1", b=batch)
+    return PaddedTensor(x=x, mask=mask, abs_positions=positions)
 
 
 def _padded_input_dynamic_shapes(
     module: nn.Module,
-    input: PaddedInput,
+    input: PaddedTensor,
     *,
     token_dim_name: str,
 ) -> dict[str, object]:
@@ -111,7 +112,7 @@ def _padded_input_dynamic_shapes(
 
 def _cached_decoder_dynamic_shapes(
     module: nn.Module,
-    target_input: PaddedInput,
+    target_input: PaddedTensor,
     cross_cache: DecoderCrossAttentionCache,
     self_kv_cache: Tensor,
     step_i: Tensor,
@@ -135,8 +136,8 @@ def _cached_decoder_dynamic_shapes(
 
 def _export_models(
     model: EncoderDecoderModel,
-    source_input: PaddedInput,
-    target_input: PaddedInput,
+    source_input: PaddedTensor,
+    target_input: PaddedTensor,
     output_dir: Path,
 ) -> tuple[Path, Path, Path]:
     """Export separate encoder, cache-construction, and repeated-decoder graphs."""
@@ -230,7 +231,7 @@ def _array_outputs(outputs: Sequence[object]) -> tuple[np.ndarray, ...]:
     return tuple(arrays)
 
 
-def _padded_feeds(prefix: str, input: PaddedInput) -> dict[str, np.ndarray]:
+def _padded_feeds(prefix: str, input: PaddedTensor) -> dict[str, np.ndarray]:
     """Flatten a padded input into the explicit names used by the ONNX graphs."""
     return {
         f"{prefix}_x": _numpy(input.x),
@@ -239,18 +240,18 @@ def _padded_feeds(prefix: str, input: PaddedInput) -> dict[str, np.ndarray]:
     }
 
 
-def _prefix(input: PaddedInput, tokens: int) -> PaddedInput:
+def _prefix(input: PaddedTensor, tokens: int) -> PaddedTensor:
     """Take one growing autoregressive prefix without rebuilding its metadata."""
-    return PaddedInput(
+    return PaddedTensor(
         x=input.x[:, :tokens],
         mask=materialize_padding_mask(input)[:, :tokens],
         abs_positions=input.abs_positions[:, :tokens],
     )
 
 
-def _token(input: PaddedInput, step: int) -> PaddedInput:
+def _token(input: PaddedTensor, step: int) -> PaddedTensor:
     """Select the one target token consumed by a cached decoder invocation."""
-    return PaddedInput(
+    return PaddedTensor(
         x=input.x[:, step : step + 1],
         mask=materialize_padding_mask(input)[:, step : step + 1],
         abs_positions=input.abs_positions[:, step : step + 1],

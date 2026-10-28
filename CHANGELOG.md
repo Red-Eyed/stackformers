@@ -6,6 +6,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/): MAJOR for breaking public API changes,
 MINOR for backwards-compatible features, PATCH for bug fixes and internal changes.
 
+## [5.0.0rc22]
+
+### Documentation
+
+- Lead the README with research use cases and current tensor examples; preserve detailed
+  API, migration, and configuration contracts in a dedicated guide.
+- Add software citation metadata, research reproducibility guidance, compatibility scope,
+  and contributor onboarding. Update runnable examples to use `PaddedTensor` rather than
+  deprecated aliases and constructors.
+
+### Developers
+
+- Add a Python 3.11/3.12 CPU CI matrix running the existing `just check` quality gate.
+
 ## [5.0.0rc21]
 
 ### Deprecations

@@ -4,15 +4,15 @@ build-backend = "hatchling.build"
 
 [project]
 name = "stackformers"
-version = "5.0.0rc21"
-description = "Typed, composable, SOLID transformer library for PyTorch"
+version = "5.0.0rc22"
+description = "Composable PyTorch transformers for vision, spatial, and sequence research"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11"
 authors = [
     { name = "Vadym Stupakov", email = "vadim.stupakov@gmail.com" },
 ]
-keywords = ["pytorch", "transformer", "deep-learning", "attention"]
+keywords = ["pytorch", "transformer", "computer-vision", "attention", "research", "point-cloud"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
@@ -36,6 +36,8 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/Red-Eyed/stackformers"
 Repository = "https://github.com/Red-Eyed/stackformers"
+Documentation = "https://github.com/Red-Eyed/stackformers#documentation"
+Changelog = "https://github.com/Red-Eyed/stackformers/blob/main/CHANGELOG.md"
 "Bug Tracker" = "https://github.com/Red-Eyed/stackformers/issues"
 
 [dependency-groups]

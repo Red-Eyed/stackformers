@@ -9,7 +9,7 @@ import torch.nn as nn
 from torch import Tensor
 from typing_extensions import override
 
-from stackformers import PaddedInput, RoPENDConfig, TransformerEncoder, plain_encoder_config
+from stackformers import PaddedTensor, RoPENDConfig, TransformerEncoder, plain_encoder_config
 
 DIM = 192
 INPUT_FEATURES = 6
@@ -55,7 +55,7 @@ class PointCloudEncoder(nn.Module):
         """Return one encoded vector per point while retaining the input layout."""
         x = self.feature_projection(features)
         positions = _center_coordinates(coordinates, mask)
-        return self.encoder(PaddedInput(x=x, mask=mask, abs_positions=positions))
+        return self.encoder(PaddedTensor(x=x, mask=mask, abs_positions=positions))
 
     if TYPE_CHECKING:
         __call__ = forward

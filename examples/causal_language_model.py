@@ -7,10 +7,11 @@ from typing import TYPE_CHECKING, NamedTuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from einops import repeat
 from torch import Tensor
 from typing_extensions import override
 
-from stackformers import TransformerEncoder, make_padded_input, plain_encoder_config
+from stackformers import PaddedTensor, TransformerEncoder, plain_encoder_config
 
 DIM = 64
 VOCAB_SIZE = 32
@@ -41,7 +42,9 @@ class CausalLanguageModel(nn.Module):
     def forward(self, token_ids: Tensor, mask: Tensor) -> Tensor:
         """Return next-token logits while preventing attention to future positions."""
         embeddings = self.token_embedding(token_ids)
-        hidden = self.backbone(make_padded_input(embeddings, mask))
+        positions = torch.arange(embeddings.shape[1], device=embeddings.device)
+        positions = repeat(positions.to(torch.float32), "n -> b n 1", b=embeddings.shape[0])
+        hidden = self.backbone(PaddedTensor(embeddings, mask, positions))
         output: Tensor = self.lm_head(hidden)
         return output
 

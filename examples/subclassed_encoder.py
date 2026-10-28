@@ -12,6 +12,7 @@ from typing_extensions import override
 
 from stackformers import (
     FeedForward,
+    PaddedTensor,
     RoPE1DConfig,
     RotaryEmbedding1D,
     SelfAttention,
@@ -20,7 +21,6 @@ from stackformers import (
     TransformerEncoderConfig,
     TransformerLayer,
     TransformerLayerBase,
-    make_padded_input,
     plain_encoder_config,
 )
 from stackformers.presets.encoder import TransformerEncoderBase
@@ -125,10 +125,7 @@ def run_example() -> SubclassingResult:
         plain_encoder_config(dim=DIM, heads=1, num_layers=2, ff_mult=3.0)
     ).eval()
     custom = FullyCustomEncoder(UserEncoderConfig(dim=DIM, heads=1, num_layers=2)).eval()
-    input = make_padded_input(
-        torch.randn(2, 5, DIM),
-        torch.ones(2, 5, dtype=torch.bool),
-    )
+    input = PaddedTensor.from_list([torch.randn(5, DIM), torch.randn(5, DIM)])
     with torch.no_grad():
         focused_output = focused(input)
         custom_output = custom(input)

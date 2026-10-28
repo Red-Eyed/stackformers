@@ -11,7 +11,7 @@ from torch import Tensor
 from typing_extensions import override
 
 from stackformers import (
-    PaddedInput,
+    PaddedTensor,
     RoPE2DConfig,
     TransformerEncoder,
     plain_encoder_config,
@@ -42,7 +42,7 @@ class ImagePatchEncoder(nn.Module):
         self.encoder = TransformerEncoder(config)
         self.classifier = nn.Linear(DIM, NUM_CLASSES)
 
-    def _patch_input(self, images: Tensor) -> PaddedInput:
+    def _patch_input(self, images: Tensor) -> PaddedTensor:
         """Convert a dense image batch into tokens with integer row/column coordinates."""
         patches = self.patch_projection(images)
         batch, _, rows, columns = patches.shape
@@ -55,7 +55,7 @@ class ImagePatchEncoder(nn.Module):
         positions = torch.stack((row_ids, column_ids), dim=-1).reshape(1, rows * columns, 2)
         positions = positions.to(dtype=tokens.dtype).expand(batch, -1, -1)
         mask = torch.ones(batch, rows * columns, dtype=torch.bool, device=images.device)
-        return PaddedInput(x=tokens, mask=mask, abs_positions=positions)
+        return PaddedTensor(x=tokens, mask=mask, abs_positions=positions)
 
     @override
     def forward(self, images: Tensor) -> Tensor:
