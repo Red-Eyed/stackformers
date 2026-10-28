@@ -38,8 +38,8 @@ or GPU compatibility.
    report backend/fallback behavior and verify valid-token numerical parity first.
 4. Freeze an exact dependency version for the consuming paper project. Retain its config,
    checkpoints, environment, and reproduction commands; test reconstruction in that project.
-5. Decide when the public API is stable enough for a non-prerelease version using compatibility
-   evidence. Do not remove the release-candidate label for presentation alone.
+5. Preserve the stable 5.0 API contract in subsequent releases. Evaluate new interfaces through
+   opt-in prereleases and document migrations before the next stable version.
 
 ## Discovery and launch preparation
 

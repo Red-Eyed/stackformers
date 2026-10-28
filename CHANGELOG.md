@@ -6,6 +6,57 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/): MAJOR for breaking public API changes,
 MINOR for backwards-compatible features, PATCH for bug fixes and internal changes.
 
+## [5.0.0]
+
+### Highlights
+
+- Release the 5.0 candidate series as stable, with canonical tensor batches, composable
+  architecture variants, and cached deployment adapters. Library runtime behavior is unchanged
+  from `5.0.0rc22`; the sections below summarize migration from 4.x and earlier candidates.
+
+### Backwards Incompatible Changes
+
+- Attention configurations are immutable. Construct a new configuration and model instead of
+  assigning architecture fields on an existing `SelfAttentionConfig` or `CrossAttentionConfig`.
+- Cross-attention requires matching padded/packed query and context layouts. Convert both inputs
+  to the same layout before calling it; mixed layouts raise `ValueError`.
+- Custom reconstruction heads must return a differentiable zero loss when no tokens are selected.
+  For an empty prediction tensor, return `prediction.sum()`.
+- Custom layers and attention implementations must accept and forward the runtime visibility
+  keywords they support (`self_attn_mask` and `cross_attn_mask`).
+- Consumers of core outcomes from early candidates must replace the external `returns` API with
+  `stackformers.result.Ok` / `Err` keyword matching. Earlier `AllValidInput` callers must use
+  `PaddedTensor(x, AllValid(), positions)`.
+
+### Deprecations
+
+- Prefer `PaddedTensor` and `PackedTensor` to the retained `PaddedInput` and `PackedInput` aliases.
+  Use their constructors and conversion methods instead of deprecated sequence helpers. No
+  removal version is assigned; see `5.0.0rc21` for the full compatibility list.
+
+### New Features
+
+- Add list/nested-tensor adapters and padded/packed conversions preserving valid tokens,
+  gradients, and custom coordinates where documented.
+- Add variable-width encoders, per-call attention visibility, and the HardSwishGLU variant.
+- Add opt-in projection packing and unpacking for attention and gated feed-forward modules.
+  Convert before constructing an optimizer and save the resulting configuration with weights.
+- Add cached encoder-decoder deployment adapters, including separate all-valid and preallocated
+  cache strategies. Their supported classes, opsets, and ownership contracts are documented in
+  `docs/inference.md`; custom forwards require their own deployment integration.
+
+### Bug Fixes
+
+- Return finite zero losses for empty built-in MLM selections and zero attention contributions
+  when every key is excluded.
+- Fix attention-mask and dynamic GQA export paths covered by the PyTorch/ONNX Runtime tests.
+
+### Documentation
+
+- Lead installation with PyPI commands for pip and uv. Document opt-in prerelease upgrades with
+  `--pre` or `--prerelease allow`; keep repository cloning in contributor instructions.
+- Add research reproducibility, compatibility, and citation guidance alongside runnable examples.
+
 ## [5.0.0rc22]
 
 ### Documentation

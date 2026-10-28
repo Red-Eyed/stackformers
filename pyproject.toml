@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "stackformers"
-version = "5.0.0rc22"
+version = "5.0.0"
 description = "Composable PyTorch transformers for vision, spatial, and sequence research"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -14,7 +14,7 @@ authors = [
 ]
 keywords = ["pytorch", "transformer", "computer-vision", "attention", "research", "point-cloud"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",

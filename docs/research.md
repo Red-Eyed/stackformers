@@ -20,9 +20,11 @@ the actual version you tested. Commit that project's `uv.lock`; reproduce its en
 with `uv sync --locked`. A repository checkout can use `uv sync --locked --group dev`.
 The library's lockfile alone does not describe your application's full environment.
 
-The current checkout is a release candidate. Do not assume a plain install selects its API
-or that a later release candidate preserves every interface. Consult the
-[release history](../CHANGELOG.md) before upgrading and rerun your experiment's parity checks.
+Stable installations use the published stable release by default. To evaluate a newer
+prerelease, use `pip install --upgrade --pre stackformers` or
+`uv add --upgrade --prerelease allow stackformers`, then pin the exact version you validate.
+Consult the [release history](../CHANGELOG.md) before upgrading and rerun your experiment's
+parity checks; prereleases can change interfaces before the corresponding stable release.
 
 ## Save configuration and weights together
 

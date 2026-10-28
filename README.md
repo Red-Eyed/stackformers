@@ -1,7 +1,7 @@
 # Stackformers
 
 [![CI](https://github.com/Red-Eyed/stackformers/actions/workflows/check.yml/badge.svg)](https://github.com/Red-Eyed/stackformers/actions/workflows/check.yml)
-[![PyPI](https://img.shields.io/pypi/v/stackformers.svg)](https://pypi.org/project/stackformers/)
+[![PyPI](https://img.shields.io/badge/install-PyPI-blue.svg)](https://pypi.org/project/stackformers/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 **Composable PyTorch transformers for research.**
@@ -17,27 +17,38 @@ individual components as your experiments evolve.
 - **Connect research and deployment:** examples cover image patches, point clouds,
   causal modeling, custom components, and cached ONNX Runtime decoding.
 
-## Try the current API
+## Install
 
-Python 3.11 or newer is required. This checkout is on the **5.0 release-candidate series**.
-To run the examples shown here against the matching source:
+Install from [PyPI](https://pypi.org/project/stackformers/) with pip:
 
 ```bash
-git clone https://github.com/Red-Eyed/stackformers.git
-cd stackformers
-uv run examples/padded_and_packed.py
+pip install --upgrade stackformers
 ```
 
-`uv run` prepares the project environment automatically. For a published release in an
-existing project:
+Or add it to your uv project:
 
 ```bash
 uv add stackformers
 ```
 
-An unpinned install may resolve a different stable release whose API differs from this
-checkout. Use the documentation matching your installed version. For experiments, pin the
-exact version or commit you validated; see the [research guide](docs/research.md).
+### Try the latest prerelease
+
+Use `--pre` to include newer prereleases when upgrading:
+
+```bash
+pip install --upgrade --pre stackformers
+```
+
+With uv:
+
+```bash
+uv add --upgrade --prerelease allow stackformers
+```
+
+For an existing virtual environment, `uv pip install --upgrade --pre stackformers`
+is also supported. These commands select the newest compatible published version,
+including prereleases. Pin the version you validate for an experiment; see the
+[research guide](docs/research.md).
 
 ## Run your first encoder
 
@@ -61,19 +72,20 @@ retains batch and sequence axes. See the [layout parity example](examples/padded
 for a numerical comparison. Packed input does not guarantee faster execution: backend,
 hardware, dtype, and length distribution matter.
 
-## Choose an example
+## Explore examples
 
-Examples run on CPU without dataset or model downloads. From a repository checkout,
-`uv run` prepares the project environment automatically.
+Browse complete examples for common tasks:
 
-| Your task | Start here | Run |
-| --- | --- | --- |
-| Image patches and 2-D positions | [Image encoder](examples/image_encoder.py) | `uv run examples/image_encoder.py` |
-| Continuous spatial coordinates | [Point-cloud encoder](examples/point_cloud_encoder.py) | `uv run examples/point_cloud_encoder.py` |
-| Unequal sequence lengths | [Padded and packed](examples/padded_and_packed.py) | `uv run examples/padded_and_packed.py` |
-| Replace a model component | [Custom encoders](examples/subclassed_encoder.py) | `uv run examples/subclassed_encoder.py` |
-| Autoregressive token modeling | [Causal language model](examples/causal_language_model.py) | `uv run examples/causal_language_model.py` |
-| Export an encoder–decoder | [ONNX Runtime guide](examples/README.md#encoderdecoder-onnx-runtime) | `uv run examples/encoder_decoder_onnxruntime.py` |
+| Your task | Example |
+| --- | --- |
+| Image patches and 2-D positions | [Image encoder](examples/image_encoder.py) |
+| Continuous spatial coordinates | [Point-cloud encoder](examples/point_cloud_encoder.py) |
+| Unequal sequence lengths | [Padded and packed](examples/padded_and_packed.py) |
+| Replace a model component | [Custom encoders](examples/subclassed_encoder.py) |
+| Autoregressive token modeling | [Causal language model](examples/causal_language_model.py) |
+| Export an encoder–decoder | [ONNX Runtime guide](examples/README.md#encoderdecoder-onnx-runtime) |
+
+The [examples guide](examples/README.md) includes commands for running the repository examples.
 
 These are integration examples with synthetic inputs, not trained models or task-accuracy
 benchmarks. Stackformers provides transformer components; your application owns tokenization,
