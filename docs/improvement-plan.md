@@ -17,6 +17,8 @@ relationship unless the paper establishes a broader contribution.
 - Separate API reference, research guide, compatibility scope, and contribution instructions.
 - Current tensor API in runnable examples and software citation metadata.
 - Package discovery metadata and a configured Python 3.11/3.12 CPU quality-gate workflow.
+- Public GitHub description and topics, plus bug-report, feature-request, and PR templates.
+- An [upload-ready social preview](assets/social-preview.md) and README status badges.
 
 CI results must be checked after pushing. Local checks do not establish hosted CI success
 or GPU compatibility.
@@ -41,11 +43,11 @@ or GPU compatibility.
 
 ## Discovery and launch preparation
 
-Suggested GitHub description:
+Published GitHub description:
 
 > Composable PyTorch transformers for vision, spatial, and sequence research.
 
-Suggested topics: `pytorch`, `transformer`, `computer-vision`, `point-cloud`,
+Published topics: `pytorch`, `transformers`, `computer-vision`, `point-cloud`,
 `attention`, `research`, `deep-learning`.
 
 Draft introduction:
@@ -58,7 +60,8 @@ Draft introduction:
 
 Publish an accompanying technical walkthrough showing one useful substitution, why it is
 needed, the changed code/configuration, and what remains controlled. Use the benchmark report
-for any efficiency claim. This draft has not been posted and GitHub settings are unchanged.
+for any efficiency claim. This introduction has not been posted externally. The description
+and topics above are live; the social preview still requires upload in repository settings.
 
 ## CVPR-related use
 

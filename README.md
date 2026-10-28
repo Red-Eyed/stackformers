@@ -1,5 +1,9 @@
 # Stackformers
 
+[![CI](https://github.com/Red-Eyed/stackformers/actions/workflows/check.yml/badge.svg)](https://github.com/Red-Eyed/stackformers/actions/workflows/check.yml)
+[![PyPI](https://img.shields.io/pypi/v/stackformers.svg)](https://pypi.org/project/stackformers/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 **Composable PyTorch transformers for research.**
 
 Build vision, spatial, and sequence models with interchangeable attention, positional
