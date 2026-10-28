@@ -3,18 +3,21 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TYPE_CHECKING, TypeAlias, cast
 
 import pytest
 import torch
 import torch.nn as nn
 from onnx import defs
-from onnxruntime.capi.onnxruntime_pybind11_state import InvalidGraph
+from onnxruntime.capi import _pybind_state
 from onnxscript import ir
 from torch.utils import _pytree
 
 if TYPE_CHECKING:
     from _pytest.mark.structures import ParameterSet
+
+# The Python bridge loads the native exception on every platform; extension filenames vary.
+InvalidGraph = cast("type[Exception]", vars(_pybind_state)["InvalidGraph"])
 
 # Export shape trees mirror arbitrary module inputs; torch.export validates their leaves.
 DynamicShapes: TypeAlias = dict[str, object] | tuple[object, ...] | list[object] | None

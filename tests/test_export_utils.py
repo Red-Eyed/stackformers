@@ -8,12 +8,12 @@ from unittest.mock import Mock
 import pytest
 import torch
 from onnx import helper
-from onnxruntime.capi.onnxruntime_pybind11_state import InvalidGraph
 from onnxscript import ir
 
 from tests.export_utils import (
     ONNX_OPSET_CASES,
     ExportShapeMode,
+    InvalidGraph,
     _assert_onnx_opset_version,
     _run_onnx,
     export_and_run,
