@@ -791,3 +791,34 @@ best accuracy, activation range, convergence, or ARM64 latency for the target mo
 sandwich norms constrain what enters the residual stream, but they do not prevent a large raw FFN
 down-projection output before its post-branch norm; that tensor still requires measurement during
 quantization calibration.
+
+
+## Optional internal dimension rounding
+
+### Observation
+
+Attention and feed-forward configs warn when internal widths are not multiples of 64, but
+previously required callers to adjust head dimensions or feed-forward multipliers manually.
+
+### Decision
+
+Add shared immutable `DimensionRoundingConfig` with a positive `multiple_of` and explicit
+`floor`/`ceil` rounding mode. Every attention and feed-forward variant accepts an optional
+`dimension_rounding` policy. Attention stores the effective head width during field validation;
+feed-forward rounds its hidden width after the existing gated/non-gated formula. Existing
+factories and modules consume those dimensions without new forward-path branches. External
+model width is preserved, and a zero-width floor is rejected during config admission. Defaults
+preserve existing widths and warnings. Opting in can change checkpoint shapes and parameter counts.
+
+### Validation
+
+Regression coverage includes both directions, exact multiples, default head widths, invalid
+policies, zero-width floors, every attention/feed-forward variant, JSON round-trips, and output
+parity against explicit effective dimensions across the available device/dtype combinations.
+`just check` passes formatting, lint, and type checks, with 3,481 tests passed, 21 skipped,
+and 252 expected failures on this machine.
+
+### Unproven
+
+No throughput benchmark or training ablation establishes a speed or quality benefit. Rounding
+only selects internal geometry; other matrix dimensions and the workload still affect efficiency.

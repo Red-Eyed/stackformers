@@ -8,12 +8,16 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field, model_validator
 from typing_extensions import override
 
+from stackformers._result import unwrap_or_raise
+from stackformers.dimension_rounding import DimensionRoundingConfig
+
 
 class _FFBase(BaseModel):
     """Provide shared geometry and alignment checks for feed-forward variants."""
 
     dim: int = Field(gt=0)
     mult: float = Field(default=4.0, gt=0.0)
+    dimension_rounding: DimensionRoundingConfig | None = None
     dropout: float = Field(default=0.0, ge=0.0, le=1.0)
 
     _ALIGN = 64  # tensor-core alignment for FP16/BF16
@@ -35,6 +39,16 @@ class _FFBase(BaseModel):
 
     @property
     def inner_dim(self) -> int:
+        """Return the effective hidden width, applying optional rounding after GLU scaling."""
+        dimension = self._unrounded_inner_dim
+        match self.dimension_rounding:
+            case DimensionRoundingConfig() as rounding:
+                return unwrap_or_raise(rounding.round_dimension(dimension))
+            case None:
+                return dimension
+
+    @property
+    def _unrounded_inner_dim(self) -> int:
         """Return the parameter-matched hidden width for gated variants."""
         # Two gate matrices → scale inner dim down to match param count with GELU-4x FFN.
         return int(self.dim * self.mult * 2 / 3)
@@ -83,7 +97,7 @@ class GELUConfig(_FFBase):
 
     @property
     @override
-    def inner_dim(self) -> int:
+    def _unrounded_inner_dim(self) -> int:
         """Return the hidden width for the non-gated network."""
         return int(self.dim * self.mult)
 
@@ -99,7 +113,7 @@ class ReluSquaredConfig(_FFBase):
 
     @property
     @override
-    def inner_dim(self) -> int:
+    def _unrounded_inner_dim(self) -> int:
         """Return the hidden width for the non-gated network."""
         return int(self.dim * self.mult)
 

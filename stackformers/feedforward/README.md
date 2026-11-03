@@ -37,3 +37,23 @@ result of the first.
 1. Add a config class to `config.py` (or reuse `FeedForwardConfig` if parameterisation is identical).
 2. Implement the class satisfying `FeedForward` structurally.
 3. Add a `case` branch in `factory.py::build_ff`.
+
+## Optional dimension rounding
+
+Every variant accepts `dimension_rounding: DimensionRoundingConfig | None`, imported from
+`stackformers`. The default `None` preserves existing widths and warnings. For example:
+
+```python
+from stackformers import DimensionRoundingConfig
+
+rounding = DimensionRoundingConfig(multiple_of=64, rounding_mode="ceil")
+```
+
+Pass `dimension_rounding=rounding` to the config to round `inner_dim` after the gated or
+non-gated width formula.
+`"floor"` rounds down; `"ceil"` rounds up and is the default. Exact multiples stay unchanged;
+a result of zero is rejected during config validation. The external model width stays unchanged.
+This selects actual parameter shapes rather than padding tensors, so enabling it can change
+parameter counts and checkpoint compatibility. Rounding does not guarantee faster execution; alignment warnings still
+apply if the effective width is not a multiple of 64. New variants should reuse the shared
+config behavior so factories and modules consume the same effective width.

@@ -5,9 +5,18 @@ from __future__ import annotations
 import warnings
 from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, BeforeValidator, Field, JsonValue, model_validator
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    Field,
+    JsonValue,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 from stackformers._result import unwrap_or_raise
+from stackformers.dimension_rounding import DimensionRoundingConfig
 from stackformers.result import Err, Ok, Result
 
 _ALIGN = 64  # tensor-core alignment for FP16/BF16
@@ -52,8 +61,10 @@ class _SelfAttentionConfigBase(BaseModel, frozen=True):
         description="Model (embedding) dimension — input and output width of the attention sublayer.",  # noqa: E501
     )
     heads: int = Field(default=8, gt=0, description="Number of query heads.")
+    dimension_rounding: DimensionRoundingConfig | None = None
     dim_head: int = Field(
         default=64,
+        validate_default=True,
         gt=0,
         description=(
             "Dimension per head. Internal query width is heads * dim_head,"
@@ -93,6 +104,16 @@ class _SelfAttentionConfigBase(BaseModel, frozen=True):
             " Stabilises logit scale at large depth or large dim_head."
         ),
     )
+
+    @field_validator("dim_head")
+    @classmethod
+    def _round_dim_head(cls, value: int, info: ValidationInfo) -> int:
+        """Resolve head geometry before admission, warnings, and module construction."""
+        match info.data.get("dimension_rounding"):
+            case DimensionRoundingConfig() as rounding:
+                return unwrap_or_raise(rounding.round_dimension(value))
+            case _:
+                return value
 
     @model_validator(mode="after")
     def _validate(self) -> Self:
@@ -190,8 +211,10 @@ class _CrossAttentionConfigBase(BaseModel, frozen=True):
         description="Model (embedding) dimension — input and output width of the attention sublayer.",  # noqa: E501
     )
     heads: int = Field(default=8, gt=0, description="Number of query heads.")
+    dimension_rounding: DimensionRoundingConfig | None = None
     dim_head: int = Field(
         default=64,
+        validate_default=True,
         gt=0,
         description=(
             "Dimension per head. Internal query width is heads * dim_head,"
@@ -218,6 +241,16 @@ class _CrossAttentionConfigBase(BaseModel, frozen=True):
             " Stabilises logit scale at large depth or large dim_head."
         ),
     )
+
+    @field_validator("dim_head")
+    @classmethod
+    def _round_dim_head(cls, value: int, info: ValidationInfo) -> int:
+        """Resolve head geometry before admission, warnings, and module construction."""
+        match info.data.get("dimension_rounding"):
+            case DimensionRoundingConfig() as rounding:
+                return unwrap_or_raise(rounding.round_dimension(value))
+            case _:
+                return value
 
     @model_validator(mode="after")
     def _validate(self) -> Self:

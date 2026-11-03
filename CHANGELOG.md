@@ -6,6 +6,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/): MAJOR for breaking public API changes,
 MINOR for backwards-compatible features, PATCH for bug fixes and internal changes.
 
+## [5.1.0]
+
+### New Features
+
+- Add optional `DimensionRoundingConfig(multiple_of=..., rounding_mode="floor" | "ceil")`
+  to all attention and feed-forward variants through `dimension_rounding`. Round attention
+  head widths and feed-forward hidden widths without changing the external model dimension.
+  Defaults preserve existing geometry; opting in may change parameter counts and checkpoint
+  shapes. Zero-width rounding results fail config validation.
+
 ## [5.0.0]
 
 ### Highlights
