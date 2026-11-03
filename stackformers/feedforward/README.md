@@ -40,16 +40,16 @@ result of the first.
 
 ## Optional dimension rounding
 
-Every variant accepts `dimension_rounding: DimensionRoundingConfig | None`, imported from
+Every variant accepts `alignment: AlignmentConfig | None`, imported from
 `stackformers`. The default `None` preserves existing widths and warnings. For example:
 
 ```python
-from stackformers import DimensionRoundingConfig
+from stackformers import AlignmentConfig
 
-rounding = DimensionRoundingConfig(multiple_of=64, rounding_mode="ceil")
+rounding = AlignmentConfig(multiple_of=64, rounding_mode="ceil")
 ```
 
-Pass `dimension_rounding=rounding` to the config to round `inner_dim` after the gated or
+Pass `alignment=rounding` to the config to round `inner_dim` after the gated or
 non-gated width formula.
 `"floor"` rounds down; `"ceil"` rounds up and is the default. Exact multiples stay unchanged;
 a result of zero is rejected during config validation. The external model width stays unchanged.

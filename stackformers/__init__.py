@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 __version__ = version("stackformers")
 
+from stackformers.alignment import AlignmentConfig
 from stackformers.all_valid_decoder import (
     AllValidCachedDecoderWrapper,
     AllValidCrossAttentionCacheBuilder,
@@ -65,7 +66,6 @@ from stackformers.decoder_cache import (
     CachedSandwichNormDecoderLayer,
     DecoderCrossAttentionCacheBuilder,
 )
-from stackformers.dimension_rounding import DimensionRoundingConfig
 from stackformers.encoder import Encoder
 from stackformers.feedforward import (
     GEGLU,
@@ -176,7 +176,7 @@ from stackformers.sequence import (
 )
 
 __all__ = [
-    "DimensionRoundingConfig",
+    "AlignmentConfig",
     "AllValid",
     "materialize_padding_mask",
     "AllValidCachedDecoderWrapper",

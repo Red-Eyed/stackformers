@@ -822,3 +822,16 @@ and 252 expected failures on this machine.
 
 No throughput benchmark or training ablation establishes a speed or quality benefit. Rounding
 only selects internal geometry; other matrix dimensions and the workload still affect efficiency.
+
+
+## Alignment configuration naming
+
+Rename the shared policy to `AlignmentConfig` in `alignment.py` and its config field to
+`alignment`, reflecting the hardware goal while retaining `rounding_mode` for the mechanism.
+Update imports, config payloads, tests, and module documentation together. The floor/ceil
+behavior, zero-width rejection, and disabled defaults remain unchanged. This is the requested
+5.1.1 patch naming correction; callers using the previous names must update them.
+
+Validation: repository formatting, lint, and type checks pass; 264 focused alignment,
+attention/feed-forward config, factory, and projection-packing tests pass. Runtime version
+reports 5.1.1.

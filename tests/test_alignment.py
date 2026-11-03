@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from stackformers import DimensionRoundingConfig
+from stackformers import AlignmentConfig
 from stackformers.result import Err, Ok
 
 
@@ -13,13 +13,13 @@ from stackformers.result import Err, Ok
 )
 def test_round_dimension(mode: str, dimension: int, expected: int) -> None:
     """Rounding is directional and leaves exact multiples unchanged."""
-    config = DimensionRoundingConfig.model_validate({"multiple_of": 64, "rounding_mode": mode})
+    config = AlignmentConfig.model_validate({"multiple_of": 64, "rounding_mode": mode})
     assert config.round_dimension(dimension) == Ok(expected)
 
 
 def test_zero_floor() -> None:
     """A floor below one multiple is a recoverable failure."""
-    result = DimensionRoundingConfig(multiple_of=64, rounding_mode="floor").round_dimension(63)
+    result = AlignmentConfig(multiple_of=64, rounding_mode="floor").round_dimension(63)
     assert isinstance(result, Err)
     assert str(result.error) == "Dimension rounding must produce a positive width"
 
@@ -31,4 +31,4 @@ def test_zero_floor() -> None:
 def test_invalid_policy(payload: dict[str, int | str]) -> None:
     """Reject invalid multiples and unsupported rounding modes at the boundary."""
     with pytest.raises(ValidationError):
-        DimensionRoundingConfig.model_validate(payload)
+        AlignmentConfig.model_validate(payload)

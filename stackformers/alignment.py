@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from stackformers.result import Err, Ok, Result
 
 
-class DimensionRoundingConfig(BaseModel, frozen=True):
+class AlignmentConfig(BaseModel, frozen=True):
     """Choose a width multiple and direction; this changes parameter shapes, not padding."""
 
     multiple_of: int = Field(gt=0, description="Positive multiple required of the rounded width.")

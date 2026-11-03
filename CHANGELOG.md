@@ -6,6 +6,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/): MAJOR for breaking public API changes,
 MINOR for backwards-compatible features, PATCH for bug fixes and internal changes.
 
+## [5.1.1]
+
+### Improvements
+
+- Rename `DimensionRoundingConfig` to `AlignmentConfig` and the attention/feed-forward
+  config field `dimension_rounding` to `alignment`. Import the shared type from
+  `stackformers` or `stackformers.alignment`; update existing configuration payloads to
+  use `alignment`. Rounding behavior and defaults are unchanged.
+
 ## [5.1.0]
 
 ### New Features

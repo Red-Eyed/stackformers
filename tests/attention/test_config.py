@@ -6,7 +6,7 @@ import pytest
 import torch
 from pydantic import ValidationError
 
-from stackformers import DimensionRoundingConfig
+from stackformers import AlignmentConfig
 from stackformers.attention.config import (
     CrossAttentionConfig,
     PackedCrossAttentionConfig,
@@ -44,8 +44,8 @@ def config_type(request: pytest.FixtureRequest) -> AttentionConfigType:
 @pytest.mark.parametrize(("mode", "expected"), [("floor", 64), ("ceil", 128)])
 def test_rounded_geometry(config_type: AttentionConfigType, mode: str, expected: int) -> None:
     """Store effective head width while preserving model width and GQA grouping."""
-    rounding = DimensionRoundingConfig.model_validate({"multiple_of": 64, "rounding_mode": mode})
-    config = config_type(dim=256, heads=4, kv_heads=2, dim_head=70, dimension_rounding=rounding)
+    rounding = AlignmentConfig.model_validate({"multiple_of": 64, "rounding_mode": mode})
+    config = config_type(dim=256, heads=4, kv_heads=2, dim_head=70, alignment=rounding)
     assert config.dim == 256
     assert config.dim_head == expected
     assert config.groups == 2
@@ -55,7 +55,7 @@ def test_rounded_geometry(config_type: AttentionConfigType, mode: str, expected:
 
 def test_default_head_width_is_rounded(config_type: AttentionConfigType) -> None:
     """Omitting dim_head still applies the explicitly chosen rounding policy."""
-    config = config_type(dim=512, dimension_rounding=DimensionRoundingConfig(multiple_of=128))
+    config = config_type(dim=512, alignment=AlignmentConfig(multiple_of=128))
     assert config.dim_head == 128
 
 
@@ -72,7 +72,7 @@ def test_floor_rejects_zero(config_type: AttentionConfigType) -> None:
         config_type(
             dim=512,
             dim_head=32,
-            dimension_rounding=DimensionRoundingConfig(multiple_of=64, rounding_mode="floor"),
+            alignment=AlignmentConfig(multiple_of=64, rounding_mode="floor"),
         )
 
 
@@ -86,8 +86,8 @@ def tokens(device_dtype: tuple[torch.device, torch.dtype]) -> PaddedTensor:
 @pytest.mark.parametrize("mode", ["floor", "ceil"])
 def test_rounded_forward(config_type: AttentionConfigType, mode: str, tokens: PaddedTensor) -> None:
     """Rounded geometry constructs the same projections as an explicit head width."""
-    rounding = DimensionRoundingConfig.model_validate({"multiple_of": 64, "rounding_mode": mode})
-    config = config_type(dim=256, heads=4, kv_heads=2, dim_head=70, dimension_rounding=rounding)
+    rounding = AlignmentConfig.model_validate({"multiple_of": 64, "rounding_mode": mode})
+    config = config_type(dim=256, heads=4, kv_heads=2, dim_head=70, alignment=rounding)
     explicit = config_type(dim=256, heads=4, kv_heads=2, dim_head=config.dim_head)
     match config, explicit:
         case SelfAttentionConfig(), SelfAttentionConfig():

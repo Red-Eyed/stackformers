@@ -6,7 +6,7 @@ import pytest
 import torch
 from pydantic import TypeAdapter, ValidationError
 
-from stackformers import DimensionRoundingConfig
+from stackformers import AlignmentConfig
 from stackformers.feedforward.config import (
     FeedForwardConfig,
     GEGLUConfig,
@@ -56,8 +56,8 @@ def test_hidden_width(
     config_type: FeedForwardConfigType, mode: str, gated: int, non_gated: int
 ) -> None:
     """Rounding follows GLU scaling and survives discriminated JSON serialization."""
-    rounding = DimensionRoundingConfig.model_validate({"multiple_of": 64, "rounding_mode": mode})
-    config = config_type(dim=257, dimension_rounding=rounding)
+    rounding = AlignmentConfig.model_validate({"multiple_of": 64, "rounding_mode": mode})
+    config = config_type(dim=257, alignment=rounding)
     expected = non_gated if config.kind in ("gelu", "relu_squared") else gated
     assert config.inner_dim == expected
     restored = TypeAdapter(FeedForwardConfig).validate_json(config.model_dump_json())
@@ -81,9 +81,7 @@ def test_disabled_rounding(config_type: FeedForwardConfigType) -> None:
 def test_floor_rejects_zero(config_type: FeedForwardConfigType) -> None:
     """A zero-width floor is rejected before constructing any layers."""
     with pytest.raises(ValidationError, match="positive width"):
-        config_type(
-            dim=1, dimension_rounding=DimensionRoundingConfig(multiple_of=64, rounding_mode="floor")
-        )
+        config_type(dim=1, alignment=AlignmentConfig(multiple_of=64, rounding_mode="floor"))
 
 
 @pytest.fixture
@@ -98,8 +96,8 @@ def test_rounded_forward(
     config_type: FeedForwardConfigType, mode: str, tokens: torch.Tensor
 ) -> None:
     """Construction from rounded widths matches explicitly chosen hidden geometry."""
-    rounding = DimensionRoundingConfig.model_validate({"multiple_of": 64, "rounding_mode": mode})
-    config = config_type(dim=257, dimension_rounding=rounding)
+    rounding = AlignmentConfig.model_validate({"multiple_of": 64, "rounding_mode": mode})
+    config = config_type(dim=257, alignment=rounding)
     scale = 1.0 if config.kind in ("gelu", "relu_squared") else 2 / 3
     # Add half a unit to avoid float truncation at an exact hidden-width boundary.
     reference_config = config_type(dim=257, mult=(config.inner_dim + 0.5) / (257 * scale))
